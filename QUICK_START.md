@@ -18,52 +18,38 @@ Since we've made major changes, you need to reload the extension:
 
 ### Step 3: Test the Panel
 1. Click the **WebEdit AI** extension icon in your toolbar
-2. Click the **"Open WebEdit AI Panel"** button
-3. The chat panel should slide in from the right! 🎉
+2. The panel appears **instantly** - centered on your screen! 🎉
+3. Click the icon again to close it
+4. No popup window, no extra steps!
 
 ---
 
 ## What You Should See
 
-### The Popup (First Click)
+### The Panel (Instant Open!)
 ```
-┌─────────────────────────────┐
-│         ✨                  │
-│                             │
-│    WebEdit AI               │ ← Gradient logo
-│                             │
-│  Visual editor for any      │
-│  website. Hide, customize,  │
-│  or add elements with AI.   │
-│                             │
-│  ┌───────────────────────┐  │
-│  │ Open WebEdit AI Panel │  │ ← Big gradient button
-│  └───────────────────────┘  │
-│                             │
-│  Click to open the panel    │
-└─────────────────────────────┘
-```
-
-### The Panel (After Opening)
-```
-┌────────────────────────────────────────────────┐
-│ [WebEdit AI]  History  Sign in            [×] │ ← Gradient header
-├────────────────────────────────────────────────┤
-│ Visual Edit  [☰]  [Remove/hide▼]  Pick element│ ← Controls
-├────────────────────────────────────────────────┤
-│                                                │
-│              Hi,                               │
-│    How can I assist you today?                 │
-│                                                │
-│   [Hide an element] [Customize] [Add content]  │ ← Chips
-│                                                │
-│                                                │
-│                (Chat area)                     │
-│                                                │
-│                                                │
-├────────────────────────────────────────────────┤
-│  🪄  What do you want to change?        [➤]   │ ← Input bar
-└────────────────────────────────────────────────┘
+     ┌─────────────────────────────────┐
+     │          AI Chat                │ ← Title
+     ├─────────────────────────────────┤
+     │ (Logo) | History | Sign in  [×] │ ← Gradient nav
+     ├─────────────────────────────────┤
+     │                                 │
+     │         ┌───────────┐           │
+     │         │    Add    │           │ ← Tool
+     │         └───────────┘           │  buttons
+     │         ┌───────────┐           │
+     │         │Remove/hide│ ← Active  │
+     │         └───────────┘           │
+     │         ┌───────────┐           │
+     │         │ Customize │           │
+     │         └───────────┘           │
+     │                                 │
+     ├─────────────────────────────────┤
+     │ Visual Edit [☰]   [Pick element]│ ← Controls
+     ├─────────────────────────────────┤
+     │  What do you want to change?    │ ← Input
+     └─────────────────────────────────┘
+         360px × 640px, centered!
 ```
 
 ---
@@ -121,11 +107,12 @@ Since we've made major changes, you need to reload the extension:
 3. Open browser console (F12) - look for errors
 4. Try on a different website (some sites might block)
 
-### ❌ Can't click extension icon
-**Solution:** The extension might not be pinned
-1. Click the puzzle piece icon in Chrome toolbar
-2. Find WebEdit AI
-3. Click the pin icon
+### ❌ Icon click does nothing
+**Solutions:**
+1. Check you're not on a protected page (chrome://, about:)
+2. Refresh the page (Ctrl+R) and try again
+3. Go to `chrome://extensions` and reload WebEdit AI
+4. Try on a regular website like google.com
 
 ### ❌ Styles not applying
 **Solution:** 
@@ -172,9 +159,10 @@ Click the pre-made suggestions:
 ## Expected Behavior
 
 ### ✅ Panel Opens
-- Slides in from right (smooth animation)
-- Page content shifts left
-- 400px wide panel
+- Appears instantly (centered on screen)
+- Fades in with scale animation
+- 360px × 640px mobile-like design
+- Floats above page (overlay)
 
 ### ✅ Chat Works
 - Type message + Enter = sends

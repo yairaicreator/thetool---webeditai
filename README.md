@@ -43,8 +43,9 @@ webedit-extension/
 ### Opening the Panel
 
 1. **Click the WebEdit AI extension icon** in your toolbar
-2. Click the **"Open WebEdit AI Panel"** button
-3. A chat panel will slide in from the right side of the page
+2. The panel appears **instantly** - no popup, no extra steps!
+3. Click the icon again to close the panel
+4. The centered chat panel floats over the page
 
 ### Basic Workflow
 
@@ -104,9 +105,10 @@ webedit-extension/
 
 ### Architecture
 
-- **Popup**: Minimal UI with a single toggle button
+- **Background Service Worker**: Listens for icon clicks and sends toggle messages
 - **Content Script**: Injects the full chat panel into every page
-- **Panel**: Self-contained React-like component with state management
+- **Panel**: Self-contained component with state management
+- **Direct Toggle**: No popup window - icon click directly controls panel
 
 ### Permissions
 
@@ -116,11 +118,12 @@ webedit-extension/
 
 ### Panel Behavior
 
-- **Width**: 400px (360px on smaller screens)
-- **Position**: Fixed to right side, full height
-- **Layout Shift**: Page content gets `margin-right: 400px` when open
-- **Transitions**: Smooth 0.3s animations for open/close
+- **Size**: 360px × 640px (mobile phone proportions)
+- **Position**: Centered on screen (overlay)
+- **Layout**: Floats above page content, no layout shift
+- **Transitions**: Fade in/out with scale animation (0.3s)
 - **Z-index**: 2147483647 (appears above everything)
+- **Design**: Rounded corners (36px), bordered frame
 
 ### Content Scripts
 
@@ -131,8 +134,11 @@ The extension automatically injects:
 
 ### Message Passing
 
-Simplified to a single message:
-- `WEBEDIT_TOGGLE_PANEL`: Toggle the panel open/closed
+**Flow**: Icon Click → Background Worker → Content Script → Panel Toggle
+
+- Background service worker sends: `WEBEDIT_TOGGLE_PANEL`
+- Content script receives and toggles panel visibility
+- No popup window or intermediate UI
 
 ## 🎨 Design System
 
@@ -208,7 +214,8 @@ body.webedit-panel-open {
 
 ## 🔄 Version History
 
-- **v0.2.0**: Complete refactor to in-page chat panel
+- **v0.3.0**: Direct toggle - Icon click directly controls panel (no popup window)
+- **v0.2.0**: Complete refactor to in-page chat panel with popup toggle
 - **v0.1.0**: Initial popup-based implementation
 
 ## 📄 License

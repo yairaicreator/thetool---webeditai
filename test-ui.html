@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Chat Panel - UI Design</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    /* AI Chat Panel */
+    .chat-panel {
+      width: 360px;
+      height: 640px;
+      background: #d7fbff;
+      border: 3px solid #0f172a;
+      border-radius: 36px;
+      box-shadow: 0 24px 64px rgba(15, 23, 42, 0.3);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* Title at the Top */
+    .panel-title {
+      text-align: center;
+      font-size: 20px;
+      font-weight: 600;
+      color: #0f172a;
+      padding: 16px 0 12px;
+      background: #d7fbff;
+    }
+
+    /* Header Navigation Bar */
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-around;
+      padding: 0;
+      background: linear-gradient(90deg, #5b8def 0%, #b370d9 50%, #ec4899 100%);
+      border-radius: 20px 20px 0 0;
+      position: relative;
+      height: 48px;
+    }
+
+    .nav-btn {
+      border: none;
+      background: transparent;
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      color: white;
+      transition: background 0.2s;
+      border-radius: 8px;
+      flex: 1;
+    }
+
+    .nav-btn:hover {
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    .nav-btn.logo-btn {
+      background: rgba(59, 130, 246, 0.3);
+    }
+
+    .nav-btn.signin-btn {
+      background: rgba(236, 72, 153, 0.3);
+    }
+
+    .close-btn {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      background: rgba(255, 255, 255, 0.25);
+      border: none;
+      color: white;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      cursor: pointer;
+      font-size: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.2s;
+      line-height: 1;
+    }
+
+    .close-btn:hover {
+      background: rgba(255, 255, 255, 0.4);
+    }
+
+    /* Main Content Area */
+    .main-content {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      background: #d7fbff;
+    }
+
+    .chat-placeholder {
+      text-align: center;
+      color: #64748b;
+      font-size: 14px;
+      padding: 40px 20px;
+    }
+
+    .chat-placeholder p {
+      margin: 0;
+      line-height: 1.6;
+    }
+
+    /* Bottom Controls */
+    .bottom-controls {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 24px;
+      background: #d7fbff;
+    }
+
+    .visual-edit {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      position: relative;
+    }
+
+    .tool-label {
+      font-size: 11px;
+      color: #1e293b;
+      font-weight: 500;
+    }
+
+    .hamburger-btn {
+      width: 38px;
+      height: 32px;
+      border-radius: 8px;
+      border: 2px solid #0f172a;
+      background: white;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 4px;
+      cursor: pointer;
+      padding: 6px;
+      transition: background 0.2s;
+    }
+
+    .hamburger-btn:hover {
+      background: #f1f5f9;
+    }
+
+    .hamburger-btn span {
+      display: block;
+      width: 20px;
+      height: 3px;
+      border-radius: 2px;
+      background: #0f172a;
+    }
+
+    /* Tools dropdown menu */
+    .tools-menu {
+      position: absolute;
+      bottom: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      margin-bottom: 8px;
+      background: white;
+      border-radius: 10px;
+      padding: 6px;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.2);
+      display: none;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 140px;
+      z-index: 10;
+    }
+
+    .tools-menu.visible {
+      display: flex;
+    }
+
+    .tool-option {
+      width: 100%;
+      padding: 10px 16px;
+      border: 2px solid #64748b;
+      border-radius: 8px;
+      background: #e2e8f0;
+      color: #1e293b;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-align: center;
+    }
+
+    .tool-option:hover {
+      background: #cbd5e1;
+      border-color: #475569;
+    }
+
+    .tool-option.active {
+      background: #94a3b8;
+      border-color: #334155;
+      font-weight: 600;
+    }
+
+    .pick-btn {
+      border: none;
+      border-radius: 999px;
+      padding: 10px 20px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      background: linear-gradient(90deg, #a78bfa, #ec4899);
+      color: white;
+      transition: transform 0.2s, box-shadow 0.2s;
+      box-shadow: 0 2px 8px rgba(167, 139, 250, 0.3);
+    }
+
+    .pick-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(167, 139, 250, 0.4);
+    }
+
+    /* Chat Input Bar at Bottom */
+    .input-container {
+      padding: 12px 20px 20px;
+      background: #d7fbff;
+    }
+
+    .chat-input {
+      width: 100%;
+      border: none;
+      padding: 14px 20px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #ff6b8a, #a78bfa);
+      color: white;
+      font-size: 13px;
+      outline: none;
+      font-family: inherit;
+      box-shadow: 0 4px 16px rgba(236, 72, 153, 0.3);
+      transition: box-shadow 0.2s;
+    }
+
+    .chat-input:focus {
+      box-shadow: 0 6px 20px rgba(236, 72, 153, 0.4);
+    }
+
+    .chat-input::placeholder {
+      color: rgba(255, 255, 255, 0.85);
+      font-weight: 400;
+    }
+  </style>
+</head>
+<body>
+  <div class="chat-panel">
+    <!-- Title -->
+    <div class="panel-title">AI Chat</div>
+
+    <!-- Header Navigation Bar -->
+    <div class="panel-header">
+      <button class="nav-btn logo-btn">(Logo)</button>
+      <button class="nav-btn history-btn">History</button>
+      <button class="nav-btn signin-btn">Sign in</button>
+      <button class="close-btn">×</button>
+    </div>
+
+    <!-- Main Content Area -->
+    <div class="main-content">
+      <div class="chat-placeholder">
+        <p>Select a tool from Visual Edit menu below to get started</p>
+      </div>
+    </div>
+
+    <!-- Bottom Controls -->
+    <div class="bottom-controls">
+      <div class="visual-edit">
+        <span class="tool-label">Visual Edit</span>
+        <button class="hamburger-btn">
+          <span></span>
+          <span></span>
+          <span></span>
+        </button>
+        <!-- Tools dropdown menu -->
+        <div class="tools-menu">
+          <button class="tool-option" data-tool="add">Add</button>
+          <button class="tool-option active" data-tool="remove">Remove/hide</button>
+          <button class="tool-option" data-tool="customize">Customize</button>
+        </div>
+      </div>
+      <button class="pick-btn">Pick element</button>
+    </div>
+
+    <!-- Chat Input Bar -->
+    <div class="input-container">
+      <input 
+        type="text" 
+        class="chat-input" 
+        placeholder="What to do you want to change?"
+      />
+    </div>
+  </div>
+
+  <script>
+    // Toggle hamburger menu
+    const hamburgerBtn = document.querySelector('.hamburger-btn');
+    const toolsMenu = document.querySelector('.tools-menu');
+    
+    hamburgerBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toolsMenu.classList.toggle('visible');
+    });
+
+    // Close menu when clicking outside
+    document.addEventListener('click', (e) => {
+      if (!hamburgerBtn.contains(e.target) && !toolsMenu.contains(e.target)) {
+        toolsMenu.classList.remove('visible');
+      }
+    });
+
+    // Tool options
+    const toolOptions = document.querySelectorAll('.tool-option');
+    toolOptions.forEach(btn => {
+      btn.addEventListener('click', () => {
+        toolOptions.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        toolsMenu.classList.remove('visible');
+        alert('Selected: ' + btn.textContent);
+      });
+    });
+
+    // Other button handlers
+    const navButtons = document.querySelectorAll('.nav-btn');
+    navButtons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        alert(btn.textContent + ' clicked!');
+      });
+    });
+
+    const pickBtn = document.querySelector('.pick-btn');
+    pickBtn.addEventListener('click', () => {
+      alert('Pick element mode activated!');
+    });
+
+    const closeBtn = document.querySelector('.close-btn');
+    closeBtn.addEventListener('click', () => {
+      alert('Close panel');
+    });
+
+    const chatInput = document.querySelector('.chat-input');
+    chatInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        alert('You entered: ' + chatInput.value);
+        chatInput.value = '';
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,11 +1,13 @@
 {
   "manifest_version": 3,
   "name": "WebEdit AI",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Visually edit any website – hide, customize or add elements with AI assistance.",
   "action": {
-    "default_title": "WebEdit AI",
-    "default_popup": "popup.html"
+    "default_title": "WebEdit AI - Click to toggle panel"
+  },
+  "background": {
+    "service_worker": "background.js"
   },
   "permissions": [
     "activeTab",

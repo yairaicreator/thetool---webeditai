@@ -7,7 +7,6 @@ let selectedEl = null;
 let floatingLabel = null;
 let chatPanel = null;
 let isPanelOpen = false;
-let chatMessages = [];
 
 const WEBEDIT_ATTR = "data-webedit-id";
 
@@ -15,6 +14,11 @@ const WEBEDIT_ATTR = "data-webedit-id";
 // Panel Creation & Management
 // ============================================
 
+/**
+ * Creates and injects the AI chat panel into the page
+ * The panel is a centered, mobile-like interface that floats over the page
+ * Returns the created panel element
+ */
 function createPanel() {
   if (chatPanel) return chatPanel;
 
@@ -22,21 +26,54 @@ function createPanel() {
   panel.id = "webedit-chat-panel";
   panel.className = "hidden";
   panel.innerHTML = `
-    <!-- Header -->
+    <!-- Title -->
+    <div class="webedit-panel-title">AI Chat</div>
+
+    <!-- Header Navigation Bar -->
     <div class="webedit-panel-header">
-      <div class="webedit-logo-pill">
-        <span class="webedit-logo-web">Web</span><span class="webedit-logo-edit">Edit</span>
-        <span class="webedit-logo-ai"> AI</span>
-      </div>
-      <div class="webedit-nav-links">
-        <button class="webedit-nav-link" id="webedit-history-btn">History</button>
-        <button class="webedit-nav-link" id="webedit-signin-btn">Sign in</button>
-      </div>
+      <button class="webedit-nav-btn logo-btn" id="webedit-logo-btn">(Logo)</button>
+      <button class="webedit-nav-btn history-btn" id="webedit-history-btn">History</button>
+      <button class="webedit-nav-btn signin-btn" id="webedit-signin-btn">Sign in</button>
       <button class="webedit-close-btn" id="webedit-close-btn">×</button>
     </div>
 
-    <!-- Controls -->
-    <div class="webedit-controls-section">
+    <!-- Main Content Area -->
+    <div class="webedit-main-content">
+      <div class="webedit-chat-placeholder">
+        <p>Select a tool from Visual Edit menu below to get started</p>
+      </div>
+    </div>
+
+    <!-- Customize Panel (collapsible) -->
+    <div class="webedit-customize-panel" id="webedit-customize-panel">
+      <div class="webedit-customize-header">
+        <h3>Customize Element</h3>
+      </div>
+      <p class="webedit-customize-info">Pick an element to customize its appearance</p>
+      
+      <div class="webedit-field-row">
+        <label>Background:</label>
+        <input type="color" id="webedit-bg-color" value="#ffffff" />
+      </div>
+      
+      <div class="webedit-field-row">
+        <label>Text Color:</label>
+        <input type="color" id="webedit-text-color" value="#000000" />
+      </div>
+      
+      <div class="webedit-field-row">
+        <label>Font Size:</label>
+        <input type="number" id="webedit-font-size" value="16" min="8" max="72" />
+      </div>
+      
+      <div class="webedit-customize-actions">
+        <button class="webedit-btn-small webedit-btn-primary" id="webedit-apply-btn">Apply</button>
+        <button class="webedit-btn-small webedit-btn-secondary" id="webedit-reset-btn">Reset</button>
+      </div>
+    </div>
+
+    <!-- Bottom Controls -->
+    <div class="webedit-bottom-controls">
       <div class="webedit-visual-edit">
         <span class="webedit-tool-label">Visual Edit</span>
         <button class="webedit-hamburger-btn" id="webedit-burger-btn">
@@ -46,83 +83,25 @@ function createPanel() {
         </button>
         <!-- Tools dropdown menu -->
         <div class="webedit-tools-menu" id="webedit-tools-menu">
-          <button class="webedit-tool-chip active" data-tool="remove">Remove / hide</button>
-          <button class="webedit-tool-chip" data-tool="customize">Customize</button>
-          <button class="webedit-tool-chip" data-tool="add">Add</button>
+          <button class="webedit-tool-btn" data-tool="add" id="webedit-add-btn">Add</button>
+          <button class="webedit-tool-btn active" data-tool="remove" id="webedit-remove-btn">Remove/hide</button>
+          <button class="webedit-tool-btn" data-tool="customize" id="webedit-customize-btn">Customize</button>
         </div>
       </div>
-      <button class="webedit-pick-btn" id="webedit-pick-btn">Pick element</button>
+      <button class="webedit-pick-btn-bottom" id="webedit-pick-btn">Pick element</button>
     </div>
 
-    <!-- Customization Panel (hidden by default) -->
-    <div class="webedit-customize-panel" id="webedit-customize-panel">
-      <div class="webedit-customize-header">
-        <h3>Customize selection</h3>
-      </div>
-      <p class="webedit-customize-info" id="webedit-selected-info">
-        No element selected yet. Click "Pick element" and choose something on the page.
-      </p>
-      <div class="webedit-field-row">
-        <label for="webedit-bg-color">Background</label>
-        <input type="color" id="webedit-bg-color" />
-      </div>
-      <div class="webedit-field-row">
-        <label for="webedit-text-color">Text color</label>
-        <input type="color" id="webedit-text-color" />
-      </div>
-      <div class="webedit-field-row">
-        <label for="webedit-font-size">Font size (px)</label>
-        <input type="number" id="webedit-font-size" placeholder="e.g. 16" min="8" max="72" />
-      </div>
-      <div class="webedit-customize-actions">
-        <button class="webedit-btn-small webedit-btn-secondary" id="webedit-reset-btn">Reset</button>
-        <button class="webedit-btn-small webedit-btn-primary" id="webedit-apply-btn">Apply</button>
-      </div>
-    </div>
-
-    <!-- Chat Container -->
-    <div class="webedit-chat-container" id="webedit-chat-container">
-      <div class="webedit-welcome-message">
-        <h2>Hi,</h2>
-        <p>How can I assist you today?</p>
-        <div class="webedit-welcome-actions">
-          <button class="webedit-suggestion-chip" data-suggestion="hide">Hide an element</button>
-          <button class="webedit-suggestion-chip" data-suggestion="customize">Customize styles</button>
-          <button class="webedit-suggestion-chip" data-suggestion="add">Add content</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Chat Input -->
+    <!-- Chat Input Bar (at bottom) -->
     <div class="webedit-input-container">
-      <div class="webedit-input-wrapper">
-        <svg class="webedit-input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 19l7-7 3 3-7 7-3-3z"></path>
-          <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"></path>
-        </svg>
-        <input 
-          type="text" 
-          class="webedit-chat-input" 
-          id="webedit-chat-input" 
-          placeholder="What do you want to change?"
-          autocomplete="off"
-        />
-        <button class="webedit-send-btn" id="webedit-send-btn">
-          <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"></path>
-          </svg>
-        </button>
-      </div>
+      <input 
+        type="text" 
+        class="webedit-chat-input" 
+        id="webedit-chat-input" 
+        placeholder="What to do you want to change?"
+        autocomplete="off"
+      />
     </div>
 
-    <!-- Modal -->
-    <div class="webedit-modal-backdrop" id="webedit-modal-backdrop">
-      <div class="webedit-modal">
-        <h2 id="webedit-modal-title"></h2>
-        <p id="webedit-modal-body"></p>
-        <button class="webedit-modal-close" id="webedit-modal-close">Close</button>
-      </div>
-    </div>
   `;
 
   document.body.appendChild(panel);
@@ -132,6 +111,11 @@ function createPanel() {
   return panel;
 }
 
+/**
+ * Toggle the panel visibility on/off
+ * If panel doesn't exist yet, creates it first
+ * @param {boolean} show - Optional: true to show, false to hide, undefined to toggle
+ */
 function togglePanel(show) {
   if (!chatPanel) {
     createPanel();
@@ -149,9 +133,6 @@ function togglePanel(show) {
   } else {
     chatPanel.classList.add("hidden");
     document.body.classList.remove("webedit-panel-open");
-    // Close tools menu if open
-    const toolsMenu = document.getElementById("webedit-tools-menu");
-    if (toolsMenu) toolsMenu.classList.remove("visible");
   }
 }
 
@@ -167,6 +148,7 @@ function attachPanelEventListeners() {
   // Burger menu toggle
   const burgerBtn = document.getElementById("webedit-burger-btn");
   const toolsMenu = document.getElementById("webedit-tools-menu");
+  
   burgerBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     toolsMenu.classList.toggle("visible");
@@ -179,19 +161,22 @@ function attachPanelEventListeners() {
     }
   });
 
-  // Tool chips
-  const toolChips = toolsMenu.querySelectorAll(".webedit-tool-chip");
-  toolChips.forEach((chip) => {
-    chip.addEventListener("click", () => {
-      toolChips.forEach((c) => c.classList.remove("active"));
-      chip.classList.add("active");
-      currentTool = chip.dataset.tool;
-      toolsMenu.classList.remove("visible");
-
-      // Show customize panel if customize tool is selected
-      const customizePanel = document.getElementById("webedit-customize-panel");
+  // Tool buttons
+  const toolButtons = document.querySelectorAll(".webedit-tool-btn");
+  const customizePanel = document.getElementById("webedit-customize-panel");
+  
+  toolButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      toolButtons.forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      currentTool = btn.dataset.tool;
+      toolsMenu.classList.remove("visible"); // Close menu after selection
+      
+      // Show/hide customize panel based on selected tool
       if (currentTool === "customize") {
         customizePanel.classList.add("visible");
+      } else {
+        customizePanel.classList.remove("visible");
       }
     });
   });
@@ -204,38 +189,40 @@ function attachPanelEventListeners() {
 
   // Chat input
   const chatInput = document.getElementById("webedit-chat-input");
-  const sendBtn = document.getElementById("webedit-send-btn");
-
-  sendBtn.addEventListener("click", () => {
-    sendMessage();
-  });
 
   chatInput.addEventListener("keypress", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      sendMessage();
+      // Input functionality can be added later
     }
   });
 
-  // Suggestion chips
-  const suggestionChips = document.querySelectorAll(".webedit-suggestion-chip");
-  suggestionChips.forEach((chip) => {
-    chip.addEventListener("click", () => {
-      const suggestion = chip.dataset.suggestion;
-      let message = "";
-      if (suggestion === "hide") {
-        message = "I want to hide an element on the page";
-      } else if (suggestion === "customize") {
-        message = "I want to customize the style of an element";
-      } else if (suggestion === "add") {
-        message = "I want to add new content to the page";
-      }
-      chatInput.value = message;
-      sendMessage();
-    });
+  chatInput.addEventListener("focus", () => {
+    chatInput.parentElement.classList.add("focused");
   });
 
-  // Customization controls
+  chatInput.addEventListener("blur", () => {
+    chatInput.parentElement.classList.remove("focused");
+  });
+
+  // Navigation buttons
+  const logoBtn = document.getElementById("webedit-logo-btn");
+  const historyBtn = document.getElementById("webedit-history-btn");
+  const signinBtn = document.getElementById("webedit-signin-btn");
+
+  logoBtn.addEventListener("click", () => {
+    alert("Logo clicked - can navigate to home");
+  });
+
+  historyBtn.addEventListener("click", () => {
+    alert("History feature coming soon");
+  });
+
+  signinBtn.addEventListener("click", () => {
+    alert("Sign in feature coming soon");
+  });
+
+  // Customize panel buttons
   const applyBtn = document.getElementById("webedit-apply-btn");
   const resetBtn = document.getElementById("webedit-reset-btn");
   const bgColorInput = document.getElementById("webedit-bg-color");
@@ -243,185 +230,31 @@ function attachPanelEventListeners() {
   const fontSizeInput = document.getElementById("webedit-font-size");
 
   applyBtn.addEventListener("click", () => {
-    if (!selectedEl) return;
-
-    const elementId = selectedEl.getAttribute(WEBEDIT_ATTR);
-    if (!elementId) return;
-
-    const styles = {};
-    if (bgColorInput.value) styles.backgroundColor = bgColorInput.value;
-    if (textColorInput.value) styles.color = textColorInput.value;
-    if (fontSizeInput.value) styles.fontSize = fontSizeInput.value + "px";
-
-    Object.entries(styles).forEach(([prop, value]) => {
-      selectedEl.style[prop] = value;
-    });
-
-    addAIChatMessage("✓ Styles applied successfully!");
+    if (!selectedEl) {
+      alert("Please pick an element first using the 'Pick element' button");
+      return;
+    }
+    
+    selectedEl.style.backgroundColor = bgColorInput.value;
+    selectedEl.style.color = textColorInput.value;
+    selectedEl.style.fontSize = fontSizeInput.value + "px";
+    alert("✓ Styles applied successfully!");
   });
 
   resetBtn.addEventListener("click", () => {
-    if (!selectedEl) return;
-
-    selectedEl.removeAttribute("style");
-    bgColorInput.value = "";
-    textColorInput.value = "";
-    fontSizeInput.value = "";
-
-    addAIChatMessage("✓ Styles reset to default.");
-  });
-
-  // History and Sign in buttons
-  const historyBtn = document.getElementById("webedit-history-btn");
-  const signinBtn = document.getElementById("webedit-signin-btn");
-
-  historyBtn.addEventListener("click", () => {
-    openModal(
-      "History (coming soon)",
-      "Your edit history will appear here once WebEdit AI is connected to your account and database."
-    );
-  });
-
-  signinBtn.addEventListener("click", () => {
-    openModal(
-      "Sign in (coming soon)",
-      "Authentication will be handled via OAuth later. For now, you can use all local editing features without signing in."
-    );
-  });
-
-  // Modal
-  const modalBackdrop = document.getElementById("webedit-modal-backdrop");
-  const modalClose = document.getElementById("webedit-modal-close");
-
-  modalClose.addEventListener("click", () => {
-    modalBackdrop.classList.remove("visible");
-  });
-
-  modalBackdrop.addEventListener("click", (e) => {
-    if (e.target === modalBackdrop) {
-      modalBackdrop.classList.remove("visible");
+    // Reset input fields to defaults
+    bgColorInput.value = "#ffffff";
+    textColorInput.value = "#000000";
+    fontSizeInput.value = "16";
+    
+    // Remove applied styles from the selected element
+    if (selectedEl) {
+      selectedEl.removeAttribute("style");
+      alert("✓ Styles reset - element restored to original appearance!");
     }
   });
 }
 
-// ============================================
-// Chat Functions
-// ============================================
-
-function sendMessage() {
-  const chatInput = document.getElementById("webedit-chat-input");
-  const message = chatInput.value.trim();
-
-  if (!message) return;
-
-  // Add user message
-  addUserChatMessage(message);
-  chatInput.value = "";
-
-  // Generate AI response
-  setTimeout(() => {
-    generateAIResponse(message);
-  }, 500);
-}
-
-function addUserChatMessage(text) {
-  chatMessages.push({ type: "user", text });
-  renderChatMessage("user", text);
-}
-
-function addAIChatMessage(text) {
-  chatMessages.push({ type: "ai", text });
-  renderChatMessage("ai", text);
-}
-
-function renderChatMessage(type, text) {
-  const chatContainer = document.getElementById("webedit-chat-container");
-
-  // Remove welcome message if it exists
-  const welcomeMsg = chatContainer.querySelector(".webedit-welcome-message");
-  if (welcomeMsg) {
-    welcomeMsg.remove();
-  }
-
-  const messageDiv = document.createElement("div");
-  messageDiv.className = `webedit-chat-message ${type}`;
-
-  const avatar = document.createElement("div");
-  avatar.className = `webedit-message-avatar ${type}`;
-  avatar.textContent = type === "user" ? "👤" : "🤖";
-
-  const bubble = document.createElement("div");
-  bubble.className = "webedit-message-bubble";
-  bubble.textContent = text;
-
-  messageDiv.appendChild(avatar);
-  messageDiv.appendChild(bubble);
-  chatContainer.appendChild(messageDiv);
-
-  // Scroll to bottom
-  chatContainer.scrollTop = chatContainer.scrollHeight;
-}
-
-function generateAIResponse(userMessage) {
-  const lowerMessage = userMessage.toLowerCase();
-  let response = "";
-
-  // Simple command parsing
-  if (lowerMessage.includes("hide") || lowerMessage.includes("remove")) {
-    response = `Got it! I'll help you hide an element.\n\n1. Make sure "Remove / hide" is selected in the Visual Edit menu\n2. Click the "Pick element" button\n3. Hover and click the element you want to hide`;
-    
-    // Auto-select remove tool
-    const toolChips = document.querySelectorAll(".webedit-tool-chip");
-    toolChips.forEach((chip) => {
-      chip.classList.remove("active");
-      if (chip.dataset.tool === "remove") {
-        chip.classList.add("active");
-        currentTool = "remove";
-      }
-    });
-  } else if (lowerMessage.includes("customize") || lowerMessage.includes("style") || lowerMessage.includes("color") || lowerMessage.includes("font")) {
-    response = `Perfect! Let's customize an element.\n\n1. Select "Customize" from the Visual Edit menu\n2. Click "Pick element"\n3. Choose the element you want to style\n4. Use the customization panel to adjust colors and font size`;
-    
-    // Auto-select customize tool and show panel
-    const toolChips = document.querySelectorAll(".webedit-tool-chip");
-    toolChips.forEach((chip) => {
-      chip.classList.remove("active");
-      if (chip.dataset.tool === "customize") {
-        chip.classList.add("active");
-        currentTool = "customize";
-      }
-    });
-    
-    const customizePanel = document.getElementById("webedit-customize-panel");
-    customizePanel.classList.add("visible");
-  } else if (lowerMessage.includes("add") || lowerMessage.includes("insert") || lowerMessage.includes("new")) {
-    response = `Great! I can help you add new content.\n\n1. Select "Add" from the Visual Edit menu\n2. Click "Pick element" to choose where to insert\n3. The new element will appear after your selection\n\nTip: You can customize the new element afterwards!`;
-    
-    // Auto-select add tool
-    const toolChips = document.querySelectorAll(".webedit-tool-chip");
-    toolChips.forEach((chip) => {
-      chip.classList.remove("active");
-      if (chip.dataset.tool === "add") {
-        chip.classList.add("active");
-        currentTool = "add";
-      }
-    });
-  } else {
-    response = `I understand you want to: "${userMessage}"\n\nI can help you with:\n• Hiding/removing elements\n• Customizing colors and fonts\n• Adding new content\n\nWhat would you like to do? Pick an option from the Visual Edit menu and use "Pick element" to select something on the page.`;
-  }
-
-  addAIChatMessage(response);
-}
-
-function openModal(title, body) {
-  const modalBackdrop = document.getElementById("webedit-modal-backdrop");
-  const modalTitle = document.getElementById("webedit-modal-title");
-  const modalBody = document.getElementById("webedit-modal-body");
-
-  modalTitle.textContent = title;
-  modalBody.textContent = body;
-  modalBackdrop.classList.add("visible");
-}
 
 // ============================================
 // Element Picking (preserved from original)
@@ -471,8 +304,6 @@ function pickModeOn(tool) {
 
   document.addEventListener("mousemove", handleMouseMove, true);
   document.addEventListener("click", handleClick, true);
-
-  addAIChatMessage(`🎯 Element picker activated! Hover and click an element on the page.`);
 }
 
 function pickModeOff() {
@@ -523,15 +354,10 @@ function handleClick(event) {
   // Handle based on tool
   if (currentTool === "remove") {
     selectedEl.style.display = "none";
-    addAIChatMessage(`✓ Element hidden successfully!`);
+    alert("✓ Element hidden successfully!");
   } else if (currentTool === "customize") {
-    const customizePanel = document.getElementById("webedit-customize-panel");
-    const selectedInfo = document.getElementById("webedit-selected-info");
-    
-    customizePanel.classList.add("visible");
-    selectedInfo.textContent = `Element selected. Use the controls to customize it, then click Apply.`;
-    
-    addAIChatMessage(`✓ Element selected! Use the customization panel above to change its appearance.`);
+    // Element selected - user can now use the customize panel to adjust styles
+    alert("✓ Element selected! Use the customize panel below to adjust colors and font size, then click 'Apply'.");
   } else if (currentTool === "add") {
     addNewElement(selectedEl);
   }
@@ -555,17 +381,29 @@ function addNewElement(referenceEl) {
     document.body.appendChild(newNode);
   }
 
-  addAIChatMessage(`✓ New element added! You can now customize it if needed.`);
+  alert("✓ New element added! You can now customize it if needed.");
 }
 
 // ============================================
-// Message Listener (for popup toggle)
+// Message Listener (for icon click toggle)
 // ============================================
 
+/**
+ * Listen for messages from background.js
+ * When the extension icon is clicked, background.js sends WEBEDIT_TOGGLE_PANEL
+ * and we toggle the panel open/closed directly on the page (no popup window)
+ */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "WEBEDIT_TOGGLE_PANEL") {
     togglePanel();
     sendResponse({ success: true });
+    return true; // Keep message channel open for async response
+  }
+  
+  // Respond to PING messages (for connection testing)
+  if (message.type === "PING") {
+    sendResponse({ status: "ready" });
+    return true;
   }
 });
 
