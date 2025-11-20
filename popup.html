@@ -3,91 +3,117 @@
 <head>
   <meta charset="UTF-8" />
   <title>WebEdit AI</title>
-  <link rel="stylesheet" href="popup.css" />
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      width: 280px;
+      padding: 20px;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: linear-gradient(135deg, #d7fbff 0%, #f0f9ff 100%);
+    }
+
+    .popup-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      padding: 8px 16px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #3b82f6, #ec4899);
+      color: white;
+      font-weight: 600;
+      font-size: 16px;
+    }
+
+    .logo-web,
+    .logo-edit {
+      font-weight: 700;
+    }
+
+    .logo-ai {
+      font-weight: 500;
+    }
+
+    .description {
+      text-align: center;
+      font-size: 13px;
+      color: #374151;
+      line-height: 1.5;
+    }
+
+    .toggle-btn {
+      width: 100%;
+      padding: 12px 20px;
+      border: none;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #f97316, #6366f1);
+      color: white;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.2s;
+      box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+    }
+
+    .toggle-btn:hover {
+      transform: scale(1.05);
+    }
+
+    .toggle-btn:active {
+      transform: scale(0.98);
+    }
+
+    .status {
+      font-size: 11px;
+      color: #6b7280;
+      text-align: center;
+    }
+
+    .icon {
+      width: 64px;
+      height: 64px;
+      margin: 0 auto;
+      background: linear-gradient(135deg, #3b82f6, #ec4899);
+      border-radius: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 32px;
+      box-shadow: 0 8px 16px rgba(59, 130, 246, 0.3);
+    }
+  </style>
 </head>
 <body>
-  <div class="popup-root">
-    <!-- Top nav -->
-    <header class="top-nav">
-      <div class="logo-pill">
-        <span class="logo-web">Web</span><span class="logo-edit">Edit</span>
-        <span class="logo-ai"> AI</span>
-      </div>
-      <nav class="nav-links">
-        <button class="nav-link" id="historyBtn">History</button>
-        <button class="nav-link" id="signInBtn">Sign in</button>
-      </nav>
-    </header>
-
-    <!-- Main content -->
-    <main class="main-area">
-      <!-- Tool control section -->
-      <section class="tool-section">
-        <div class="tool-column">
-          <span class="tool-label">Visual Edit</span>
-          <button class="hamburger-btn" id="visualEditToggle">
-            <span></span><span></span><span></span>
-          </button>
-        </div>
-
-        <div class="tool-column tool-buttons">
-          <button class="tool-chip active" data-tool="remove" id="removeToolBtn">Remove / hide</button>
-          <button class="tool-chip" data-tool="customize" id="customizeToolBtn">Customize</button>
-          <button class="tool-chip" data-tool="add" id="addToolBtn">Add</button>
-        </div>
-
-        <div class="tool-column right-column">
-          <button class="primary-cta" id="pickElementBtn">
-            Pick element
-          </button>
-        </div>
-      </section>
-
-      <!-- Customization controls (only used after an element is picked) -->
-      <section class="customization-panel" id="customizationPanel">
-        <h2>Customize selection</h2>
-        <p id="selectedInfo">No element selected yet. Click "Pick element" and choose something on the page.</p>
-
-        <div class="field-row">
-          <label for="bgColorInput">Background</label>
-          <input type="color" id="bgColorInput" />
-        </div>
-
-        <div class="field-row">
-          <label for="textColorInput">Text color</label>
-          <input type="color" id="textColorInput" />
-        </div>
-
-        <div class="field-row">
-          <label for="fontSizeInput">Font size (px)</label>
-          <input type="number" id="fontSizeInput" placeholder="e.g. 16" min="8" max="72" />
-        </div>
-
-        <div class="panel-actions">
-          <button class="secondary-btn" id="resetStylesBtn">Reset</button>
-          <button class="primary-small" id="applyStylesBtn">Apply</button>
-        </div>
-      </section>
-
-      <!-- Gradient question bar -->
-      <section class="bottom-question">
-        <button class="gradient-question" id="questionBtn">
-          What do you want to change?
-        </button>
-      </section>
-    </main>
-
-    <!-- Simple modal for "History" / "Sign in" placeholders -->
-    <div class="modal-backdrop" id="modalBackdrop">
-      <div class="modal" id="infoModal">
-        <h2 id="modalTitle"></h2>
-        <p id="modalBody"></p>
-        <button class="primary-small" id="closeModalBtn">Close</button>
-      </div>
+  <div class="popup-container">
+    <div class="icon">✨</div>
+    
+    <div class="logo">
+      <span class="logo-web">Web</span><span class="logo-edit">Edit</span>
+      <span class="logo-ai"> AI</span>
     </div>
+
+    <p class="description">
+      Visual editor for any website. Hide, customize, or add elements with AI assistance.
+    </p>
+
+    <button class="toggle-btn" id="toggleBtn">
+      Open WebEdit AI Panel
+    </button>
+
+    <p class="status" id="status">Click to open the AI chat panel</p>
   </div>
 
   <script src="popup.js"></script>
 </body>
 </html>
-

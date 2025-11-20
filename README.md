@@ -1,24 +1,27 @@
 # WebEdit AI Chrome Extension
 
-A Chrome extension that lets you visually edit any website – hide elements, customize styles, or add new elements.
+A Chrome extension that injects an AI-powered chat panel into any webpage, allowing you to visually edit, hide, customize, or add elements through natural conversation.
 
 ## 🚀 Features
 
+- **In-Page AI Chat Panel**: Sider-style right-side panel that pushes content left
+- **Natural Language Editing**: Describe what you want to change in plain English
+- **Visual Element Picker**: Hover and click to select elements with visual feedback
 - **Remove/Hide**: Click to hide any element on a webpage
 - **Customize**: Change background color, text color, and font size of elements
-- **Add**: Insert new styled elements (double-click the gradient button when in Add mode)
-- **Visual Element Picker**: Hover and click to select elements with visual feedback
+- **Add**: Insert new styled elements at any location
+- **Smart AI Responses**: Context-aware suggestions based on your requests
 
 ## 📁 Project Structure
 
 ```
 webedit-extension/
-├── manifest.json          # Extension configuration
-├── popup.html            # Popup UI structure
-├── popup.css             # Popup styling
-├── popup.js              # Popup logic and event handlers
-├── contentScript.js      # Content script for page manipulation
-├── contentStyles.css     # Styles injected into web pages
+├── manifest.json          # Extension configuration (v0.2.0)
+├── popup.html            # Simple toggle popup
+├── popup.js              # Popup toggle logic
+├── contentScript.js      # Main panel injection & management
+├── contentStyles.css     # Element picking visual feedback
+├── panel.css             # Chat panel styling
 └── Logo/                 # Extension icons
     ├── favicon16.png
     ├── favicon32.png
@@ -37,16 +40,30 @@ webedit-extension/
 
 ## 🎯 How to Use
 
+### Opening the Panel
+
+1. **Click the WebEdit AI extension icon** in your toolbar
+2. Click the **"Open WebEdit AI Panel"** button
+3. A chat panel will slide in from the right side of the page
+
 ### Basic Workflow
 
-1. **Open the extension** on any webpage
-2. **Choose a tool** from the three options:
-   - Remove/hide (default)
+1. **Type your request** in the chat input at the bottom
+   - Examples: "I want to hide an element", "Customize the header", "Add new content"
+2. **The AI will guide you** with step-by-step instructions
+3. **Click the hamburger menu** (☰) to see the three editing tools:
+   - Remove / hide
    - Customize
    - Add
-3. **Click "Pick element"**
-4. **Hover over elements** on the page (they'll highlight in blue)
-5. **Click an element** to apply your chosen action
+4. **Click "Pick element"** to activate element selection
+5. **Hover and click** an element on the page to apply your chosen action
+
+### Chat Features
+
+- **Suggestion Chips**: Quick-start actions for common tasks
+- **Smart Responses**: The AI automatically selects the right tool based on your message
+- **Conversation History**: See all your interactions in the chat thread
+- **Visual Feedback**: Blue outline on hover, pink outline on selection
 
 ### Remove/Hide Mode
 
@@ -55,26 +72,41 @@ webedit-extension/
 
 ### Customize Mode
 
-- After selecting an element, use the customization panel to:
-  - Change **background color** (color picker)
-  - Change **text color** (color picker)
-  - Adjust **font size** (8-72px)
+- After selecting an element, the customization panel appears
+- Adjust:
+  - **Background color** (color picker)
+  - **Text color** (color picker)
+  - **Font size** (8-72px)
 - Click **Apply** to save changes
 - Click **Reset** to remove all custom styles
 
 ### Add Mode
 
 - Select an element as a reference point
-- Double-click the **"What do you want to change?"** button
 - A new styled element will be inserted after your selection
+- You can then customize the new element
 
-### Additional Features
+### Panel Controls
 
 - **History** button: Placeholder for future edit history feature
 - **Sign in** button: Placeholder for future authentication
-- **Question button**: Shows help information about using the extension
+- **Close (×)**: Close the panel and restore normal page width
+
+## 💡 Example Conversations
+
+**User:** "I want to hide the cookie banner"
+**AI:** "Got it! I'll help you hide an element. 1. Make sure 'Remove / hide' is selected 2. Click 'Pick element' 3. Hover and click the element you want to hide"
+
+**User:** "Change the color of the header"
+**AI:** "Perfect! Let's customize an element. 1. Select 'Customize' from the Visual Edit menu 2. Click 'Pick element' 3. Choose the header 4. Use the customization panel to adjust colors"
 
 ## 🛠️ Technical Details
+
+### Architecture
+
+- **Popup**: Minimal UI with a single toggle button
+- **Content Script**: Injects the full chat panel into every page
+- **Panel**: Self-contained React-like component with state management
 
 ### Permissions
 
@@ -82,53 +114,111 @@ webedit-extension/
 - `scripting`: Inject scripts into web pages
 - `<all_urls>`: Work on any website
 
+### Panel Behavior
+
+- **Width**: 400px (360px on smaller screens)
+- **Position**: Fixed to right side, full height
+- **Layout Shift**: Page content gets `margin-right: 400px` when open
+- **Transitions**: Smooth 0.3s animations for open/close
+- **Z-index**: 2147483647 (appears above everything)
+
 ### Content Scripts
 
 The extension automatically injects:
-- `contentScript.js`: Element selection and manipulation logic
-- `contentStyles.css`: Visual feedback styles (hover highlights, selection outlines)
+- `contentScript.js`: Panel creation, chat logic, element manipulation
+- `contentStyles.css`: Visual feedback for element picking
+- `panel.css`: Complete panel styling with gradients and animations
 
 ### Message Passing
 
-The popup and content script communicate via Chrome's message passing API:
-- `WEBEDIT_START_PICK`: Start element picking mode
-- `WEBEDIT_ELEMENT_SELECTED`: Element has been selected
-- `WEBEDIT_APPLY_STYLES`: Apply custom styles to element
-- `WEBEDIT_RESET_STYLES`: Remove custom styles from element
-- `WEBEDIT_ADD_ELEMENT`: Insert new element
+Simplified to a single message:
+- `WEBEDIT_TOGGLE_PANEL`: Toggle the panel open/closed
+
+## 🎨 Design System
+
+### Colors
+
+- **Primary Gradient**: Blue (#3b82f6) to Pink (#ec4899)
+- **Secondary Gradient**: Orange (#f97316) to Indigo (#6366f1)
+- **Background**: Light cyan (#d7fbff)
+- **Text**: Dark gray (#111827)
+
+### Components
+
+- **Logo Pill**: Gradient background with WebEdit AI branding
+- **Tool Chips**: Gray buttons with active state
+- **Chat Bubbles**: User (right, white) vs AI (left, gradient background)
+- **Input Bar**: Gradient wrapper with icon, input, and send button
+- **Customization Panel**: White card with form controls
+
+### Inspiration
+
+- **Mockup Design**: Rounded phone-like frame with gradient header/footer
+- **Sider Panel**: Clean AI chat layout with message bubbles
+- **Original Colors**: Preserved from the popup design
 
 ## 🔮 Future Enhancements
 
-- **Supabase Integration**: Store edits in the cloud
+- **Real AI Integration**: Connect to OpenAI/Anthropic for intelligent editing
+- **Supabase Backend**: Store edits in the cloud
 - **User Authentication**: Sign in with OAuth
-- **Edit History**: View and restore previous edits
-- **AI-Powered Editing**: Natural language commands
+- **Edit History**: View, restore, and share previous edits
 - **Sync Across Devices**: Access your edits anywhere
 - **Advanced Add Tool**: Rich text editor and component library
-
-## 🎨 Design
-
-The extension features a modern UI with:
-- Gradient accents (blue to pink)
-- Light cyan background
-- Clean, minimal design
-- Smooth interactions
-- Mobile-first responsive principles
+- **Voice Commands**: Speak your edits naturally
+- **Element Templates**: Pre-built components to insert
+- **CSS Export**: Download your changes as a stylesheet
 
 ## 📝 Development Notes
 
-- All edits are currently local (not persisted)
-- Refreshing the page will clear all changes
+### Current Implementation
+
+- All edits are **local only** (not persisted)
+- AI responses are **rule-based** (simple keyword matching)
+- Refreshing the page will **clear all changes**
 - Each edited element gets a unique `data-webedit-id` attribute
-- The floating label follows your cursor during element picking
+
+### Code Structure
+
+- **Modular Design**: Easy to add real AI backend
+- **Event-Driven**: Clean separation between UI and logic
+- **Well-Commented**: Clear function purposes and flow
+- **Extensible**: Ready for Supabase, auth, and history features
+
+### Customization
+
+To adjust panel width, edit `panel.css`:
+```css
+#webedit-chat-panel {
+  width: 400px; /* Change this */
+}
+
+body.webedit-panel-open {
+  margin-right: 400px; /* Match the width */
+}
+```
 
 ## 🐛 Known Limitations
 
 - Edits are not saved between page refreshes
 - Some complex web applications may interfere with element picking
 - Very dynamic content (SPAs) may lose edits after navigation
+- Panel may conflict with sites that use similar z-index values
+- First-time load may require page refresh on some sites
+
+## 🔄 Version History
+
+- **v0.2.0**: Complete refactor to in-page chat panel
+- **v0.1.0**: Initial popup-based implementation
 
 ## 📄 License
 
 This is an initial development version. License to be determined.
 
+## 🤝 Contributing
+
+This is a solo project in active development. Suggestions welcome!
+
+---
+
+**Built with ❤️ for visual web editing**

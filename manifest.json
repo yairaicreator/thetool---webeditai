@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "WebEdit AI",
-  "version": "0.1.0",
-  "description": "Visually edit any website – hide, customize or add elements.",
+  "version": "0.2.0",
+  "description": "Visually edit any website – hide, customize or add elements with AI assistance.",
   "action": {
     "default_title": "WebEdit AI",
     "default_popup": "popup.html"
@@ -24,9 +24,8 @@
     {
       "matches": ["<all_urls>"],
       "js": ["contentScript.js"],
-      "css": ["contentStyles.css"],
+      "css": ["contentStyles.css", "panel.css"],
       "run_at": "document_idle"
     }
   ]
 }
-
