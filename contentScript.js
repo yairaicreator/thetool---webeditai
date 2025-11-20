@@ -26,9 +26,6 @@ function createPanel() {
   panel.id = "webedit-chat-panel";
   panel.className = "hidden";
   panel.innerHTML = `
-    <!-- Title -->
-    <div class="webedit-panel-title">AI Chat</div>
-
     <!-- Header Navigation Bar -->
     <div class="webedit-panel-header">
       <button class="webedit-nav-btn logo-btn" id="webedit-logo-btn">(Logo)</button>
