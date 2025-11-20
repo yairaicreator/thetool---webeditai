@@ -1,0 +1,23 @@
+/* Outline around hovered element */
+.webedit-hover-highlight {
+  outline: 2px solid #6366f1 !important;
+  cursor: crosshair !important;
+}
+
+/* Mark selected element */
+.webedit-selected {
+  outline: 2px solid #ec4899 !important;
+}
+
+/* Basic badge (not strictly necessary but nice to have) */
+.webedit-floating-label {
+  position: absolute;
+  z-index: 2147483647;
+  padding: 2px 6px;
+  font-size: 10px;
+  background: #111827;
+  color: white;
+  border-radius: 999px;
+  pointer-events: none;
+}
+

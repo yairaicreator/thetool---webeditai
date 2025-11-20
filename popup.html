@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>WebEdit AI</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="popup-root">
+    <!-- Top nav -->
+    <header class="top-nav">
+      <div class="logo-pill">
+        <span class="logo-web">Web</span><span class="logo-edit">Edit</span>
+        <span class="logo-ai"> AI</span>
+      </div>
+      <nav class="nav-links">
+        <button class="nav-link" id="historyBtn">History</button>
+        <button class="nav-link" id="signInBtn">Sign in</button>
+      </nav>
+    </header>
+
+    <!-- Main content -->
+    <main class="main-area">
+      <!-- Tool control section -->
+      <section class="tool-section">
+        <div class="tool-column">
+          <span class="tool-label">Visual Edit</span>
+          <button class="hamburger-btn" id="visualEditToggle">
+            <span></span><span></span><span></span>
+          </button>
+        </div>
+
+        <div class="tool-column tool-buttons">
+          <button class="tool-chip active" data-tool="remove" id="removeToolBtn">Remove / hide</button>
+          <button class="tool-chip" data-tool="customize" id="customizeToolBtn">Customize</button>
+          <button class="tool-chip" data-tool="add" id="addToolBtn">Add</button>
+        </div>
+
+        <div class="tool-column right-column">
+          <button class="primary-cta" id="pickElementBtn">
+            Pick element
+          </button>
+        </div>
+      </section>
+
+      <!-- Customization controls (only used after an element is picked) -->
+      <section class="customization-panel" id="customizationPanel">
+        <h2>Customize selection</h2>
+        <p id="selectedInfo">No element selected yet. Click "Pick element" and choose something on the page.</p>
+
+        <div class="field-row">
+          <label for="bgColorInput">Background</label>
+          <input type="color" id="bgColorInput" />
+        </div>
+
+        <div class="field-row">
+          <label for="textColorInput">Text color</label>
+          <input type="color" id="textColorInput" />
+        </div>
+
+        <div class="field-row">
+          <label for="fontSizeInput">Font size (px)</label>
+          <input type="number" id="fontSizeInput" placeholder="e.g. 16" min="8" max="72" />
+        </div>
+
+        <div class="panel-actions">
+          <button class="secondary-btn" id="resetStylesBtn">Reset</button>
+          <button class="primary-small" id="applyStylesBtn">Apply</button>
+        </div>
+      </section>
+
+      <!-- Gradient question bar -->
+      <section class="bottom-question">
+        <button class="gradient-question" id="questionBtn">
+          What do you want to change?
+        </button>
+      </section>
+    </main>
+
+    <!-- Simple modal for "History" / "Sign in" placeholders -->
+    <div class="modal-backdrop" id="modalBackdrop">
+      <div class="modal" id="infoModal">
+        <h2 id="modalTitle"></h2>
+        <p id="modalBody"></p>
+        <button class="primary-small" id="closeModalBtn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
+
