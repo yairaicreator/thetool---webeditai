@@ -18,16 +18,45 @@ chrome.action.onClicked.addListener(async (tab) => {
   }
 
   try {
-    // Send message to content script to toggle the panel
+    // First, try to send a message to check if content script is loaded
     await chrome.tabs.sendMessage(tab.id, {
       type: 'WEBEDIT_TOGGLE_PANEL'
     });
     
     console.log('WebEdit AI: Toggle message sent to tab', tab.id);
   } catch (error) {
-    // If content script isn't loaded yet, it will auto-inject on page load
-    console.log('WebEdit AI: Content script not ready yet, will be available after page loads');
-    console.error(error);
+    // Content script not loaded yet, inject it manually
+    console.log('WebEdit AI: Injecting content script...');
+    
+    try {
+      // Inject CSS files
+      await chrome.scripting.insertCSS({
+        target: { tabId: tab.id },
+        files: ['contentStyles.css', 'panel.css']
+      });
+      
+      // Inject JavaScript
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ['contentScript.js']
+      });
+      
+      console.log('WebEdit AI: Content script injected successfully');
+      
+      // Wait a bit for script to initialize, then toggle panel
+      setTimeout(async () => {
+        try {
+          await chrome.tabs.sendMessage(tab.id, {
+            type: 'WEBEDIT_TOGGLE_PANEL'
+          });
+        } catch (e) {
+          console.log('WebEdit AI: Please refresh the page and try again');
+        }
+      }, 100);
+      
+    } catch (injectError) {
+      console.log('WebEdit AI: Could not inject content script. Please refresh the page.');
+    }
   }
 });
 
