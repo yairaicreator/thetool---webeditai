@@ -1,12 +1,12 @@
 // WebEdit AI Bridge Listener - Content Script
-// This script ONLY runs on webeditai.com pages (specifically /auth/bridge)
-// Its purpose is to capture the Supabase session posted from the website
-// and forward it to the extension's background script for storage
+// This script ONLY runs on https://www.webeditai.com pages
+// Its purpose is to capture Supabase sessions posted from the website
+// and forward them to the extension's background script for storage
 
 /**
  * Listen for postMessage events from the website
- * The website's Bridge page posts the Supabase session after OAuth completes
- * We capture it here and send it to the background script
+ * The website posts the Supabase session after OAuth completes or auth state changes
+ * We capture it and send it to the background script
  */
 window.addEventListener("message", (event) => {
   // Only accept messages from the same window
@@ -14,25 +14,41 @@ window.addEventListener("message", (event) => {
 
   const message = event.data;
   
-  // Ignore messages that aren't from our auth system
-  if (!message || message.type !== "WEBEDIT_AUTH") return;
-
-  console.log("🔐 WebEdit AI: Bridge listener received auth session from website");
+  // Ignore non-auth messages
+  if (!message) return;
   
-  // Forward the session to the background script for storage
-  chrome.runtime.sendMessage(
-    {
-      type: "WEBEDIT_STORE_SESSION",
-      session: message.session,
-    },
-    (response) => {
-      if (chrome.runtime.lastError) {
-        console.error("Error sending session to background:", chrome.runtime.lastError);
-        return;
+  let session = null;
+  let isAuthMessage = false;
+  
+  // NEW FORMAT: message.source === "webedit-website" && message.type === "WEBEDIT_SUPABASE_SESSION"
+  if (message.source === "webedit-website" && message.type === "WEBEDIT_SUPABASE_SESSION") {
+    session = message.payload;
+    isAuthMessage = true;
+    console.log("🔐 Bridge listener: Received session (NEW format) from website", session ? `for ${session.user?.email}` : "(sign out)");
+  }
+  // OLD FORMAT: message.type === "WEBEDIT_AUTH" (backward compatibility)
+  else if (message.type === "WEBEDIT_AUTH") {
+    session = message.session;
+    isAuthMessage = true;
+    console.log("🔐 Bridge listener: Received session (OLD format) from website", session ? `for ${session.user?.email}` : "(sign out)");
+  }
+  
+  // If we recognized an auth message, forward it to background
+  if (isAuthMessage) {
+    chrome.runtime.sendMessage(
+      {
+        type: "WEBEDIT_STORE_SUPABASE_SESSION",
+        session: session,
+      },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          console.error("❌ Error forwarding session to background:", chrome.runtime.lastError);
+          return;
+        }
+        console.log("✅ Session forwarded to background:", response);
       }
-      console.log("✅ Session forwarded to background script:", response);
-    }
-  );
+    );
+  }
 });
 
 console.log("🔐 WebEdit AI: Bridge listener initialized on", window.location.href);

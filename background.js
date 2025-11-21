@@ -76,56 +76,78 @@ chrome.runtime.onInstalled.addListener((details) => {
 // Supabase Authentication Handlers
 // ============================================
 
+// PRODUCTION URLs - ALWAYS USE THESE
+const WEBEDIT_PROD_BASE_URL = "https://www.webeditai.com";
+const LOGIN_URL = "https://www.webeditai.com/#/signup";
+const HISTORY_URL = "https://www.webeditai.com/#/history";
+
 /**
- * Get the website URL
- * Returns localhost in development mode, production URL otherwise
- * Development mode is detected by checking if manifest lacks update_url field
- * (unpacked extensions don't have update_url, packed extensions do)
+ * Get the current user from stored session
  */
-function getWebsiteUrl() {
-  const manifest = chrome.runtime.getManifest();
-  const isDevelopment = !('update_url' in manifest);
-  
-  if (isDevelopment) {
-    return 'http://127.0.0.1:8080';
-  }
-  
-  return 'https://www.webeditai.com';
+async function getCurrentUser() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(['webeditSupabaseSession'], (result) => {
+      const session = result.webeditSupabaseSession;
+      if (session && session.user && !isSessionExpired(session)) {
+        resolve(session.user);
+      } else {
+        resolve(null);
+      }
+    });
+  });
+}
+
+/**
+ * Check if session is expired
+ */
+function isSessionExpired(session) {
+  if (!session || !session.expires_at) return true;
+  return Date.now() / 1000 > session.expires_at;
+}
+
+/**
+ * Broadcast session update to all tabs
+ */
+function broadcastSessionUpdate(session) {
+  chrome.tabs.query({}, (tabs) => {
+    tabs.forEach((tab) => {
+      chrome.tabs.sendMessage(tab.id, {
+        type: "WEBEDIT_SESSION_UPDATED",
+        session: session
+      }).catch(() => {
+        // Ignore errors for tabs without content script
+      });
+    });
+  });
 }
 
 /**
  * Listen for authentication-related messages
+ * All URLs use PRODUCTION constants - no dev URLs
  */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // Handle WEBEDIT_STORE_SESSION - Store Supabase session from website
-  if (message.type === "WEBEDIT_STORE_SESSION") {
+  // Handle WEBEDIT_STORE_SUPABASE_SESSION - Store session from website
+  if (message.type === "WEBEDIT_STORE_SUPABASE_SESSION") {
     console.log("💾 Storing Supabase session from website");
     
+    const session = message.session;
+    
     chrome.storage.local.set({ 
-      webedit_supabase_session: message.session,
-      webedit_session_timestamp: Date.now()
+      webeditSupabaseSession: session,
+      webeditSessionTimestamp: Date.now()
     }, () => {
       if (chrome.runtime.lastError) {
-        console.error("Error storing session:", chrome.runtime.lastError);
+        console.error("❌ Error storing session:", chrome.runtime.lastError);
         sendResponse({ ok: false, error: chrome.runtime.lastError.message });
         return;
       }
       
-      console.log("✅ Session stored successfully");
+      console.log("✅ Session stored successfully for user:", session?.user?.email);
       
-      // Notify all tabs that the session has been updated
-      chrome.tabs.query({}, (tabs) => {
-        tabs.forEach((tab) => {
-          chrome.tabs.sendMessage(tab.id, {
-            type: "WEBEDIT_SESSION_UPDATED",
-            session: message.session
-          }).catch(() => {
-            // Ignore errors for tabs that don't have our content script
-          });
-        });
-      });
+      // Broadcast to all tabs
+      broadcastSessionUpdate(session);
       
-      sendResponse({ ok: true });
+      sendResponse({ ok: true, user: session?.user });
     });
     
     return true; // Keep message channel open for async response
@@ -133,66 +155,99 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   
   // Handle WEBEDIT_GET_SESSION - Retrieve stored session
   if (message.type === "WEBEDIT_GET_SESSION") {
-    chrome.storage.local.get(['webedit_supabase_session', 'webedit_session_timestamp'], (result) => {
+    chrome.storage.local.get([
+      'webeditSupabaseSession', 
+      'webeditSessionTimestamp',
+      // Old key names for migration
+      'webedit_supabase_session',
+      'webedit_session_timestamp'
+    ], (result) => {
       if (chrome.runtime.lastError) {
-        console.error("Error retrieving session:", chrome.runtime.lastError);
+        console.error("❌ Error retrieving session:", chrome.runtime.lastError);
         sendResponse({ session: null, error: chrome.runtime.lastError.message });
         return;
       }
       
-      const session = result.webedit_supabase_session || null;
-      const timestamp = result.webedit_session_timestamp || null;
+      let session = result.webeditSupabaseSession || null;
+      let timestamp = result.webeditSessionTimestamp || null;
       
-      console.log("📖 Retrieved session:", session ? "exists" : "none", timestamp ? `(stored ${Date.now() - timestamp}ms ago)` : "");
+      // MIGRATION: Check for old key names and migrate them
+      if (!session && result.webedit_supabase_session) {
+        console.log("🔄 Migrating session from old storage keys...");
+        session = result.webedit_supabase_session;
+        timestamp = result.webedit_session_timestamp || Date.now();
+        
+        // Store with new keys
+        chrome.storage.local.set({
+          webeditSupabaseSession: session,
+          webeditSessionTimestamp: timestamp
+        });
+        
+        // Remove old keys
+        chrome.storage.local.remove(['webedit_supabase_session', 'webedit_session_timestamp']);
+        
+        console.log("✅ Session migrated successfully");
+      }
+      
+      // Check if session is expired
+      if (session && isSessionExpired(session)) {
+        console.log("⚠️ Session expired, clearing...");
+        chrome.storage.local.remove([
+          'webeditSupabaseSession', 
+          'webeditSessionTimestamp',
+          'webedit_supabase_session',
+          'webedit_session_timestamp'
+        ]);
+        sendResponse({ session: null, expired: true });
+        return;
+      }
+      
+      console.log("📖 Retrieved session:", session ? `${session.user?.email}` : "none");
       sendResponse({ session, timestamp });
     });
     
     return true; // Keep message channel open for async response
   }
   
-  // Handle WEBEDIT_OPEN_LOGIN - Open login page on website
-  if (message.type === "WEBEDIT_OPEN_LOGIN") {
-    console.log("🔐 Opening login page for extension auth");
+  // Handle WEBEDIT_OPEN_LOGIN_TAB - Open production login page
+  if (message.type === "WEBEDIT_OPEN_LOGIN_TAB") {
+    console.log("🔐 Opening production login page");
     
-    const websiteUrl = getWebsiteUrl();
-    const loginUrl = `${websiteUrl}/#/signup?from=extension`;
+    const loginUrl = LOGIN_URL + "?from=extension";
     
     chrome.tabs.create({ url: loginUrl }, (tab) => {
-      console.log("✅ Opened login tab:", tab.id);
+      console.log("✅ Opened login tab:", tab.id, loginUrl);
       sendResponse({ ok: true, tabId: tab.id });
     });
     
     return true; // Keep message channel open for async response
   }
   
-  // Handle WEBEDIT_SIGN_OUT - Clear stored session
+  // Handle WEBEDIT_SIGN_OUT - Clear session and sign out
   if (message.type === "WEBEDIT_SIGN_OUT") {
     console.log("👋 Signing out - clearing stored session");
     
-    chrome.storage.local.remove(['webedit_supabase_session', 'webedit_session_timestamp'], () => {
+    // Clear both new and old storage keys for complete cleanup
+    chrome.storage.local.remove([
+      'webeditSupabaseSession', 
+      'webeditSessionTimestamp',
+      'webedit_supabase_session',
+      'webedit_session_timestamp'
+    ], () => {
       if (chrome.runtime.lastError) {
-        console.error("Error clearing session:", chrome.runtime.lastError);
+        console.error("❌ Error clearing session:", chrome.runtime.lastError);
         sendResponse({ ok: false, error: chrome.runtime.lastError.message });
         return;
       }
       
       console.log("✅ Session cleared");
       
-      // Notify all tabs that the session has been cleared
-      chrome.tabs.query({}, (tabs) => {
-        tabs.forEach((tab) => {
-          chrome.tabs.sendMessage(tab.id, {
-            type: "WEBEDIT_SESSION_UPDATED",
-            session: null
-          }).catch(() => {
-            // Ignore errors for tabs that don't have our content script
-          });
-        });
-      });
+      // Broadcast sign out to all tabs
+      broadcastSessionUpdate(null);
       
-      // Optionally open the website to sign out there too
-      const websiteUrl = getWebsiteUrl();
-      chrome.tabs.create({ url: `${websiteUrl}/#/signup?from=extension-logout` });
+      // Open website to sign out there too
+      const logoutUrl = HISTORY_URL + "?from=extension-logout";
+      chrome.tabs.create({ url: logoutUrl });
       
       sendResponse({ ok: true });
     });
@@ -200,13 +255,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true; // Keep message channel open for async response
   }
   
-  // Handle WEBEDIT_OPEN_HISTORY - Open history page on website
+  // Handle WEBEDIT_OPEN_HISTORY - Open production history page
   if (message.type === "WEBEDIT_OPEN_HISTORY") {
-    const websiteUrl = getWebsiteUrl();
-    const historyUrl = `${websiteUrl}/#/history`;
+    console.log("📚 Opening production history page");
     
-    chrome.tabs.create({ url: historyUrl }, (tab) => {
-      console.log("📚 Opened history tab:", tab.id);
+    chrome.tabs.create({ url: HISTORY_URL }, (tab) => {
+      console.log("✅ Opened history tab:", tab.id);
       sendResponse({ ok: true, tabId: tab.id });
     });
     

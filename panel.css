@@ -60,14 +60,95 @@
   background: rgba(236, 72, 153, 0.3);
 }
 
-/* Signed-in state styling */
-.webedit-nav-btn.signin-btn.signed-in {
-  background: rgba(34, 197, 94, 0.3);
-  font-size: 11px;
-  max-width: 150px;
+/* Avatar container */
+.webedit-avatar-container {
+  position: relative;
+  padding: 4px !important;
+  background: rgba(34, 197, 94, 0.3) !important;
+  cursor: pointer;
+}
+
+/* Avatar circle */
+.webedit-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: transform 0.2s;
+}
+
+.webedit-avatar:hover {
+  transform: scale(1.1);
+}
+
+.webedit-avatar-letter {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+/* Avatar dropdown menu */
+.webedit-avatar-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 8px;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  min-width: 200px;
+  z-index: 1000;
+  display: none;
+  overflow: hidden;
+}
+
+.webedit-avatar-menu.visible {
+  display: block;
+}
+
+.webedit-avatar-menu-header {
+  padding: 12px 16px;
+  background: linear-gradient(90deg, #5b8def 0%, #b370d9 50%, #ec4899 100%);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.webedit-avatar-menu-email {
+  color: white;
+  font-size: 13px;
+  font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.webedit-avatar-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: background 0.2s;
+  font-size: 14px;
+  color: #1f2937;
+}
+
+.webedit-avatar-menu-item:hover {
+  background: #f3f4f6;
+}
+
+.webedit-avatar-menu-icon {
+  font-size: 16px;
+}
+
+.webedit-avatar-menu-divider {
+  height: 1px;
+  background: #e5e7eb;
+  margin: 4px 0;
 }
 
 /* Notification styling */

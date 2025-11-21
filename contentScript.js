@@ -23,7 +23,7 @@ async function checkAuthStatus() {
   return new Promise((resolve) => {
     chrome.runtime.sendMessage({ type: "WEBEDIT_GET_SESSION" }, (response) => {
       if (chrome.runtime.lastError) {
-        console.error("Error checking auth status:", chrome.runtime.lastError);
+        console.error("❌ Error checking auth status:", chrome.runtime.lastError);
         resolve(null);
         return;
       }
@@ -39,64 +39,183 @@ async function checkAuthStatus() {
 
 /**
  * Update the UI based on authentication state
- * Shows user email or "Sign in" button
+ * Shows avatar with menu or "Sign in" button
  */
 function updateAuthUI() {
   const signinBtn = document.getElementById("webedit-signin-btn");
   if (!signinBtn) return;
   
   if (currentUser) {
-    // User is signed in - show email and change button text
-    signinBtn.textContent = currentUser.email || "Account";
-    signinBtn.classList.add("signed-in");
-    signinBtn.title = `Signed in as ${currentUser.email}\nClick to sign out`;
+    // User is signed in - show avatar
+    renderAvatar(signinBtn, currentUser);
   } else {
-    // User is not signed in
-    signinBtn.textContent = "Sign in";
-    signinBtn.classList.remove("signed-in");
-    signinBtn.title = "Sign in with Google";
+    // User is not signed in - show sign in button
+    renderSignInButton(signinBtn);
   }
 }
 
 /**
- * Handle sign in button click
- * If signed in, show options to sign out
- * If not signed in, open login page
+ * Render the avatar UI for signed-in user
+ */
+function renderAvatar(container, user) {
+  container.innerHTML = '';
+  container.className = 'webedit-nav-btn signin-btn webedit-avatar-container';
+  container.title = user.email || 'Account';
+  
+  // Create avatar element
+  const avatar = document.createElement('div');
+  avatar.className = 'webedit-avatar';
+  
+  // Check if user has an avatar URL
+  const avatarUrl = user.user_metadata?.avatar_url || user.user_metadata?.picture;
+  
+  if (avatarUrl) {
+    avatar.style.backgroundImage = `url(${avatarUrl})`;
+    avatar.style.backgroundSize = 'cover';
+    avatar.style.backgroundPosition = 'center';
+  } else {
+    // Show first letter of email
+    const initial = (user.email || '?')[0].toUpperCase();
+    avatar.textContent = initial;
+    avatar.classList.add('webedit-avatar-letter');
+  }
+  
+  container.appendChild(avatar);
+  
+  // Create dropdown menu (hidden by default)
+  const menu = document.createElement('div');
+  menu.className = 'webedit-avatar-menu';
+  menu.innerHTML = `
+    <div class="webedit-avatar-menu-header">
+      <div class="webedit-avatar-menu-email">${user.email || 'User'}</div>
+    </div>
+    <div class="webedit-avatar-menu-item" data-action="history">
+      <span class="webedit-avatar-menu-icon">📚</span>
+      <span>View History</span>
+    </div>
+    <div class="webedit-avatar-menu-divider"></div>
+    <div class="webedit-avatar-menu-item" data-action="signout">
+      <span class="webedit-avatar-menu-icon">👋</span>
+      <span>Sign Out</span>
+    </div>
+  `;
+  
+  container.appendChild(menu);
+  
+  // Toggle menu on avatar click
+  avatar.addEventListener('click', (e) => {
+    e.stopPropagation();
+    menu.classList.toggle('visible');
+  });
+  
+  // Handle menu item clicks
+  menu.querySelectorAll('.webedit-avatar-menu-item').forEach(item => {
+    item.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const action = item.dataset.action;
+      menu.classList.remove('visible');
+      
+      if (action === 'history') {
+        handleViewHistory();
+      } else if (action === 'signout') {
+        handleSignOut();
+      }
+    });
+  });
+  
+  // Close menu when clicking outside - store handler on container to avoid duplicates
+  const closeMenuHandler = (e) => {
+    if (!container.contains(e.target)) {
+      menu.classList.remove('visible');
+      document.removeEventListener('click', container._closeMenuHandler);
+      delete container._closeMenuHandler;
+    }
+  };
+  
+  // Store reference to handler for cleanup
+  if (container._closeMenuHandler) {
+    document.removeEventListener('click', container._closeMenuHandler);
+  }
+  container._closeMenuHandler = closeMenuHandler;
+  
+  // Add the listener
+  document.addEventListener('click', closeMenuHandler);
+}
+
+/**
+ * Render the sign in button for non-authenticated users
+ */
+function renderSignInButton(container) {
+  // CRITICAL: Clean up document-level click listener from avatar if it exists
+  if (container._closeMenuHandler) {
+    document.removeEventListener('click', container._closeMenuHandler);
+    delete container._closeMenuHandler;
+  }
+  
+  container.innerHTML = 'Sign in';
+  container.className = 'webedit-nav-btn signin-btn';
+  container.title = 'Sign in with Google';
+  
+  // Remove any existing click listeners by cloning
+  const newContainer = container.cloneNode(true);
+  container.parentNode.replaceChild(newContainer, container);
+  
+  newContainer.addEventListener('click', handleSignInClick);
+}
+
+/**
+ * Handle sign in button click - opens production login page
  */
 function handleSignInClick() {
-  if (currentUser) {
-    // User is already signed in - show sign out confirmation
-    const shouldSignOut = confirm(`Signed in as ${currentUser.email}\n\nWould you like to sign out?`);
-    
-    if (shouldSignOut) {
-      chrome.runtime.sendMessage({ type: "WEBEDIT_SIGN_OUT" }, (response) => {
-        if (chrome.runtime.lastError) {
-          console.error("Error signing out:", chrome.runtime.lastError);
-          alert("Failed to sign out. Please try again.");
-          return;
-        }
-        
-        console.log("✅ Signed out successfully");
-        currentUser = null;
-        updateAuthUI();
-        
-        // Show a success message in the panel
-        showNotification("Signed out successfully", "info");
-      });
+  console.log("🔐 Opening production login page");
+  
+  chrome.runtime.sendMessage({ type: "WEBEDIT_OPEN_LOGIN_TAB" }, (response) => {
+    if (chrome.runtime.lastError) {
+      console.error("❌ Error opening login:", chrome.runtime.lastError);
+      showNotification("Failed to open login page. Please try again.", "error");
+      return;
     }
-  } else {
-    // User is not signed in - open login page
-    chrome.runtime.sendMessage({ type: "WEBEDIT_OPEN_LOGIN" }, (response) => {
-      if (chrome.runtime.lastError) {
-        console.error("Error opening login:", chrome.runtime.lastError);
-        alert("Failed to open login page. Please try again.");
-        return;
-      }
-      
-      // Show a message in the panel
-      showNotification("Opening sign-in page...", "info");
-    });
-  }
+    
+    console.log("✅ Login page opened");
+    showNotification("Opening sign-in page...", "info");
+  });
+}
+
+/**
+ * Handle view history action
+ */
+function handleViewHistory() {
+  console.log("📚 Opening history page");
+  
+  chrome.runtime.sendMessage({ type: "WEBEDIT_OPEN_HISTORY" }, (response) => {
+    if (chrome.runtime.lastError) {
+      console.error("❌ Error opening history:", chrome.runtime.lastError);
+      showNotification("Failed to open history page.", "error");
+      return;
+    }
+    
+    console.log("✅ History page opened");
+  });
+}
+
+/**
+ * Handle sign out action
+ */
+function handleSignOut() {
+  console.log("👋 Signing out");
+  
+  chrome.runtime.sendMessage({ type: "WEBEDIT_SIGN_OUT" }, (response) => {
+    if (chrome.runtime.lastError) {
+      console.error("❌ Error signing out:", chrome.runtime.lastError);
+      showNotification("Failed to sign out. Please try again.", "error");
+      return;
+    }
+    
+    console.log("✅ Signed out successfully");
+    currentUser = null;
+    updateAuthUI();
+    showNotification("Signed out successfully", "success");
+  });
 }
 
 /**
@@ -322,28 +441,19 @@ function attachPanelEventListeners() {
     chatInput.parentElement.classList.remove("focused");
   });
 
-  // Navigation buttons - Auth integration
+  // Navigation buttons
   const logoBtn = document.getElementById("webedit-logo-btn");
   const historyBtn = document.getElementById("webedit-history-btn");
-  const signinBtn = document.getElementById("webedit-signin-btn");
 
   logoBtn.addEventListener("click", () => {
     window.open("https://www.webeditai.com", "_blank");
   });
 
   historyBtn.addEventListener("click", () => {
-    // Open history page - if signed in, will show user's edits
-    chrome.runtime.sendMessage({ type: "WEBEDIT_OPEN_HISTORY" }, (response) => {
-      if (chrome.runtime.lastError) {
-        console.error("Error opening history:", chrome.runtime.lastError);
-        alert("Failed to open history page. Please try again.");
-      }
-    });
+    handleViewHistory();
   });
 
-  signinBtn.addEventListener("click", () => {
-    handleSignInClick();
-  });
+  // Sign in button handled by renderSignInButton() or renderAvatar()
 
   // Customize panel buttons
   const customizeCloseBtn = document.getElementById("webedit-customize-close-btn");
