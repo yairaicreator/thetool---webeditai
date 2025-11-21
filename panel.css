@@ -380,9 +380,39 @@ body.webedit-panel-open {
 }
 
 /* Responsive adjustments */
+@media (max-width: 1200px) {
+  #webedit-chat-panel {
+    width: 360px;
+  }
+  
+  body.webedit-panel-open {
+    margin-right: 360px !important;
+  }
+}
+
 @media (max-width: 768px) {
   #webedit-chat-panel {
     width: 320px;
-    height: 580px;
+  }
+  
+  body.webedit-panel-open {
+    margin-right: 320px !important;
+  }
+}
+
+@media (max-width: 480px) {
+  #webedit-chat-panel {
+    width: 100%;
+    border-left: none;
+    border-radius: 0;
+  }
+  
+  body.webedit-panel-open {
+    margin-right: 0 !important;
+  }
+  
+  /* On very small screens, overlay instead of push to preserve usability */
+  #webedit-chat-panel:not(.hidden) {
+    z-index: 2147483647;
   }
 }

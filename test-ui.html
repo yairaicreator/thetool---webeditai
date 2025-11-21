@@ -32,6 +32,54 @@
       overflow-x: hidden !important;
     }
 
+    /* Responsive adjustments */
+    @media (max-width: 1200px) {
+      .chat-panel {
+        width: 360px;
+      }
+      
+      html.panel-open,
+      body.panel-open {
+        margin-right: 360px !important;
+      }
+    }
+
+    @media (max-width: 768px) {
+      .chat-panel {
+        width: 320px;
+      }
+      
+      html.panel-open,
+      body.panel-open {
+        margin-right: 320px !important;
+      }
+      
+      .page-content {
+        padding: 20px;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .chat-panel {
+        width: 100%;
+        border-left: none;
+        border-radius: 0;
+      }
+      
+      html.panel-open,
+      body.panel-open {
+        margin-right: 0 !important;
+      }
+      
+      .page-content {
+        padding: 15px;
+      }
+      
+      body {
+        padding: 15px;
+      }
+    }
+
     /* Sample page content */
     .page-content {
       max-width: 1200px;
