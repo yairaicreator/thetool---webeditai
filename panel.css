@@ -60,6 +60,72 @@
   background: rgba(236, 72, 153, 0.3);
 }
 
+/* Signed-in state styling */
+.webedit-nav-btn.signin-btn.signed-in {
+  background: rgba(34, 197, 94, 0.3);
+  font-size: 11px;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Notification styling */
+.webedit-notification {
+  margin: 10px 0;
+  padding: 12px 16px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  animation: slideInFromTop 0.3s ease-out;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+@keyframes slideInFromTop {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.webedit-notification-info {
+  background: #dbeafe;
+  border-left: 4px solid #3b82f6;
+  color: #1e40af;
+}
+
+.webedit-notification-success {
+  background: #d1fae5;
+  border-left: 4px solid #10b981;
+  color: #065f46;
+}
+
+.webedit-notification-error {
+  background: #fee2e2;
+  border-left: 4px solid #ef4444;
+  color: #991b1b;
+}
+
+.webedit-notification-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.webedit-notification-icon {
+  font-size: 16px;
+  font-weight: bold;
+}
+
+.webedit-notification-message {
+  font-size: 13px;
+  font-weight: 500;
+}
+
 .webedit-close-btn {
   position: absolute;
   top: 8px;

@@ -11,7 +11,9 @@
   },
   "permissions": [
     "activeTab",
-    "scripting"
+    "scripting",
+    "storage",
+    "tabs"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -27,6 +29,14 @@
       "matches": ["<all_urls>"],
       "js": ["contentScript.js"],
       "css": ["contentStyles.css", "panel.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.webeditai.com/*",
+        "http://127.0.0.1:8080/*"
+      ],
+      "js": ["bridge-listener.js"],
       "run_at": "document_idle"
     }
   ]

@@ -7,8 +7,121 @@ let selectedEl = null;
 let floatingLabel = null;
 let chatPanel = null;
 let isPanelOpen = false;
+let currentUser = null; // Store current authenticated user
 
 const WEBEDIT_ATTR = "data-webedit-id";
+
+// ============================================
+// Supabase Authentication Integration
+// ============================================
+
+/**
+ * Check the current authentication status
+ * Retrieves the stored Supabase session from extension storage
+ */
+async function checkAuthStatus() {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: "WEBEDIT_GET_SESSION" }, (response) => {
+      if (chrome.runtime.lastError) {
+        console.error("Error checking auth status:", chrome.runtime.lastError);
+        resolve(null);
+        return;
+      }
+      
+      const session = response?.session || null;
+      currentUser = session?.user || null;
+      
+      console.log("🔐 Auth status:", currentUser ? `Signed in as ${currentUser.email}` : "Not signed in");
+      resolve(currentUser);
+    });
+  });
+}
+
+/**
+ * Update the UI based on authentication state
+ * Shows user email or "Sign in" button
+ */
+function updateAuthUI() {
+  const signinBtn = document.getElementById("webedit-signin-btn");
+  if (!signinBtn) return;
+  
+  if (currentUser) {
+    // User is signed in - show email and change button text
+    signinBtn.textContent = currentUser.email || "Account";
+    signinBtn.classList.add("signed-in");
+    signinBtn.title = `Signed in as ${currentUser.email}\nClick to sign out`;
+  } else {
+    // User is not signed in
+    signinBtn.textContent = "Sign in";
+    signinBtn.classList.remove("signed-in");
+    signinBtn.title = "Sign in with Google";
+  }
+}
+
+/**
+ * Handle sign in button click
+ * If signed in, show options to sign out
+ * If not signed in, open login page
+ */
+function handleSignInClick() {
+  if (currentUser) {
+    // User is already signed in - show sign out confirmation
+    const shouldSignOut = confirm(`Signed in as ${currentUser.email}\n\nWould you like to sign out?`);
+    
+    if (shouldSignOut) {
+      chrome.runtime.sendMessage({ type: "WEBEDIT_SIGN_OUT" }, (response) => {
+        if (chrome.runtime.lastError) {
+          console.error("Error signing out:", chrome.runtime.lastError);
+          alert("Failed to sign out. Please try again.");
+          return;
+        }
+        
+        console.log("✅ Signed out successfully");
+        currentUser = null;
+        updateAuthUI();
+        
+        // Show a success message in the panel
+        showNotification("Signed out successfully", "info");
+      });
+    }
+  } else {
+    // User is not signed in - open login page
+    chrome.runtime.sendMessage({ type: "WEBEDIT_OPEN_LOGIN" }, (response) => {
+      if (chrome.runtime.lastError) {
+        console.error("Error opening login:", chrome.runtime.lastError);
+        alert("Failed to open login page. Please try again.");
+        return;
+      }
+      
+      // Show a message in the panel
+      showNotification("Opening sign-in page...", "info");
+    });
+  }
+}
+
+/**
+ * Show a temporary notification in the panel
+ */
+function showNotification(message, type = "info") {
+  const mainContent = document.querySelector(".webedit-main-content");
+  if (!mainContent) return;
+  
+  const notification = document.createElement("div");
+  notification.className = `webedit-notification webedit-notification-${type}`;
+  notification.innerHTML = `
+    <div class="webedit-notification-content">
+      <span class="webedit-notification-icon">${type === "success" ? "✓" : type === "error" ? "⚠" : "ℹ"}</span>
+      <span class="webedit-notification-message">${message}</span>
+    </div>
+  `;
+  
+  mainContent.insertBefore(notification, mainContent.firstChild);
+  
+  // Auto-remove after 3 seconds
+  setTimeout(() => {
+    notification.remove();
+  }, 3000);
+}
 
 // ============================================
 // Panel Creation & Management
@@ -113,7 +226,7 @@ function createPanel() {
  * If panel doesn't exist yet, creates it first
  * @param {boolean} show - Optional: true to show, false to hide, undefined to toggle
  */
-function togglePanel(show) {
+async function togglePanel(show) {
   if (!chatPanel) {
     createPanel();
   }
@@ -128,6 +241,10 @@ function togglePanel(show) {
     chatPanel.classList.remove("hidden");
     document.documentElement.classList.add("webedit-panel-open");
     document.body.classList.add("webedit-panel-open");
+    
+    // Check auth status when opening the panel
+    await checkAuthStatus();
+    updateAuthUI();
   } else {
     chatPanel.classList.add("hidden");
     document.documentElement.classList.remove("webedit-panel-open");
@@ -204,21 +321,27 @@ function attachPanelEventListeners() {
     chatInput.parentElement.classList.remove("focused");
   });
 
-  // Navigation buttons
+  // Navigation buttons - Auth integration
   const logoBtn = document.getElementById("webedit-logo-btn");
   const historyBtn = document.getElementById("webedit-history-btn");
   const signinBtn = document.getElementById("webedit-signin-btn");
 
   logoBtn.addEventListener("click", () => {
-    alert("Logo clicked - can navigate to home");
+    window.open("https://www.webeditai.com", "_blank");
   });
 
   historyBtn.addEventListener("click", () => {
-    alert("History feature coming soon");
+    // Open history page - if signed in, will show user's edits
+    chrome.runtime.sendMessage({ type: "WEBEDIT_OPEN_HISTORY" }, (response) => {
+      if (chrome.runtime.lastError) {
+        console.error("Error opening history:", chrome.runtime.lastError);
+        alert("Failed to open history page. Please try again.");
+      }
+    });
   });
 
   signinBtn.addEventListener("click", () => {
-    alert("Sign in feature coming soon");
+    handleSignInClick();
   });
 
   // Customize panel buttons
@@ -397,6 +520,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     togglePanel();
     sendResponse({ success: true });
     return true; // Keep message channel open for async response
+  }
+  
+  // Handle session updates from background script
+  if (message.type === "WEBEDIT_SESSION_UPDATED") {
+    console.log("🔄 Session updated:", message.session ? "User signed in" : "User signed out");
+    currentUser = message.session?.user || null;
+    updateAuthUI();
+    
+    // Show notification if panel is open
+    if (isPanelOpen) {
+      if (currentUser) {
+        showNotification(`Welcome back, ${currentUser.email}!`, "success");
+      } else {
+        showNotification("Signed out successfully", "info");
+      }
+    }
+    
+    sendResponse({ success: true });
+    return true;
   }
   
   // Respond to PING messages (for connection testing)
