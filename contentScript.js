@@ -126,9 +126,11 @@ function togglePanel(show) {
 
   if (show) {
     chatPanel.classList.remove("hidden");
+    document.documentElement.classList.add("webedit-panel-open");
     document.body.classList.add("webedit-panel-open");
   } else {
     chatPanel.classList.add("hidden");
+    document.documentElement.classList.remove("webedit-panel-open");
     document.body.classList.remove("webedit-panel-open");
   }
 }

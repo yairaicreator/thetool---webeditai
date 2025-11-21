@@ -11,16 +11,25 @@
       box-sizing: border-box;
     }
 
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+    }
+
     body {
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       background: #f5f5f5;
       min-height: 100vh;
       padding: 40px;
       transition: margin-right 0.3s ease-in-out;
+      box-sizing: border-box;
     }
 
+    html.panel-open,
     body.panel-open {
-      margin-right: 400px;
+      margin-right: 400px !important;
+      overflow-x: hidden !important;
     }
 
     /* Sample page content */
@@ -321,10 +330,12 @@
   <!-- Sample Page Content -->
   <div class="page-content">
     <h1>WebEdit AI - Side Panel Demo</h1>
-    <p>This is a demonstration of the WebEdit AI side panel, similar to Sider. The panel appears on the right side of the screen and can be toggled on/off.</p>
+    <p><strong>✅ Notice:</strong> When the panel is open, this entire page shifts to the left by 400px. Nothing is hidden behind the panel!</p>
+    <p>This is a demonstration of the WebEdit AI side panel, similar to Sider. The panel appears on the right side of the screen and the page content automatically adjusts to make room for it.</p>
     <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.</p>
     <p>Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.</p>
-    <p>The side panel slides in from the right and the page content adjusts accordingly. This provides a seamless experience similar to modern AI chat assistants.</p>
+    <p><strong>Try it:</strong> Click the "Toggle Panel" button above to see how the page content smoothly shifts left and right as the panel opens and closes.</p>
+    <p>The side panel pushes the website content to the left, ensuring users can interact with both the website and the AI chat panel simultaneously without any overlap!</p>
   </div>
 
   <!-- AI Chat Panel -->
@@ -377,9 +388,11 @@
     // Toggle panel visibility
     function togglePanel() {
       const panel = document.getElementById('chatPanel');
+      const html = document.documentElement;
       const body = document.body;
       
       panel.classList.toggle('hidden');
+      html.classList.toggle('panel-open');
       body.classList.toggle('panel-open');
     }
 

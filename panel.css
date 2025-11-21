@@ -368,8 +368,15 @@
 
 /* Adjust page content when panel is open */
 body.webedit-panel-open {
-  margin-right: 400px;
-  transition: margin-right 0.3s ease-in-out;
+  margin-right: 400px !important;
+  transition: margin-right 0.3s ease-in-out !important;
+  box-sizing: border-box !important;
+}
+
+/* Ensure html and body can accommodate the shift */
+html.webedit-panel-open,
+body.webedit-panel-open {
+  overflow-x: hidden !important;
 }
 
 /* Responsive adjustments */
