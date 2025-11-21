@@ -204,6 +204,29 @@
   font-weight: 600;
 }
 
+.webedit-customize-close-btn {
+  background: #f3f4f6;
+  border: none;
+  color: #6b7280;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  line-height: 1;
+  padding: 0;
+}
+
+.webedit-customize-close-btn:hover {
+  background: #e5e7eb;
+  color: #374151;
+  transform: scale(1.1);
+}
+
 .webedit-customize-info {
   font-size: 11px;
   color: #6b7280;

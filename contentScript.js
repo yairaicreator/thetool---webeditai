@@ -158,6 +158,7 @@ function createPanel() {
     <div class="webedit-customize-panel" id="webedit-customize-panel">
       <div class="webedit-customize-header">
         <h3>Customize Element</h3>
+        <button class="webedit-customize-close-btn" id="webedit-customize-close-btn">×</button>
       </div>
       <p class="webedit-customize-info">Pick an element to customize its appearance</p>
       
@@ -345,11 +346,16 @@ function attachPanelEventListeners() {
   });
 
   // Customize panel buttons
+  const customizeCloseBtn = document.getElementById("webedit-customize-close-btn");
   const applyBtn = document.getElementById("webedit-apply-btn");
   const resetBtn = document.getElementById("webedit-reset-btn");
   const bgColorInput = document.getElementById("webedit-bg-color");
   const textColorInput = document.getElementById("webedit-text-color");
   const fontSizeInput = document.getElementById("webedit-font-size");
+
+  customizeCloseBtn.addEventListener("click", () => {
+    customizePanel.classList.remove("visible");
+  });
 
   applyBtn.addEventListener("click", () => {
     if (!selectedEl) {

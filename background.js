@@ -77,18 +77,20 @@ chrome.runtime.onInstalled.addListener((details) => {
 // ============================================
 
 /**
- * Detect if we're in development or production mode
- * In development: use localhost
- * In production: use the live website
+ * Get the website URL
+ * Returns localhost in development mode, production URL otherwise
+ * Development mode is detected by checking if manifest lacks update_url field
+ * (unpacked extensions don't have update_url, packed extensions do)
  */
 function getWebsiteUrl() {
-  // Check if extension is loaded unpacked (development mode)
   const manifest = chrome.runtime.getManifest();
-  const isDev = !('update_url' in manifest);
+  const isDevelopment = !('update_url' in manifest);
   
-  return isDev 
-    ? 'http://127.0.0.1:8080'
-    : 'https://www.webeditai.com';
+  if (isDevelopment) {
+    return 'http://127.0.0.1:8080';
+  }
+  
+  return 'https://www.webeditai.com';
 }
 
 /**
