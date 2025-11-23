@@ -66,6 +66,15 @@
   padding: 4px !important;
   background: rgba(34, 197, 94, 0.3) !important;
   cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.webedit-avatar-container:hover {
+  background: rgba(34, 197, 94, 0.45) !important;
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.2);
 }
 
 /* Avatar circle */
@@ -81,11 +90,17 @@
   font-weight: 600;
   font-size: 14px;
   cursor: pointer;
-  transition: transform 0.2s;
+  transition: all 0.2s;
+  position: relative;
 }
 
 .webedit-avatar:hover {
-  transform: scale(1.1);
+  transform: scale(1.05);
+  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.4);
+}
+
+.webedit-avatar:active {
+  transform: scale(0.98);
 }
 
 .webedit-avatar-letter {
@@ -100,15 +115,31 @@
   margin-top: 8px;
   background: white;
   border-radius: 8px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
   min-width: 200px;
-  z-index: 1000;
+  z-index: 999999;
   display: none;
   overflow: hidden;
+  opacity: 0;
+  transform: translateY(-10px);
+  transition: opacity 0.2s, transform 0.2s;
+  pointer-events: auto;
 }
 
 .webedit-avatar-menu.visible {
   display: block;
+  animation: dropdownFadeIn 0.2s ease-out forwards;
+}
+
+@keyframes dropdownFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .webedit-avatar-menu-header {
@@ -241,6 +272,17 @@
   overflow-y: auto;
 }
 
+/* Chat messages container */
+.webedit-chat-messages {
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 /* Placeholder for empty chat */
 .webedit-chat-placeholder {
   text-align: center;
@@ -252,6 +294,41 @@
 .webedit-chat-placeholder p {
   margin: 0;
   line-height: 1.6;
+}
+
+/* Chat message styles */
+.webedit-chat-message {
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 85%;
+  word-wrap: break-word;
+}
+
+.webedit-chat-message-user {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  align-self: flex-end;
+  margin-left: auto;
+}
+
+.webedit-chat-message-system,
+.webedit-chat-message-reference {
+  background: #f3f4f6;
+  color: #374151;
+  align-self: flex-start;
+  border-left: 3px solid #6366f1;
+}
+
+.webedit-chat-message-reference {
+  background: #eff6ff;
+  border-left-color: #3b82f6;
+  font-weight: 500;
+}
+
+.webedit-chat-message-content {
+  margin: 0;
 }
 
 /* Customize Panel (collapsible) */
