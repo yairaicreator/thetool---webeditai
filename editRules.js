@@ -124,26 +124,32 @@ function generateElementDescription(element) {
 
 /**
  * Check if extension context is valid
+ * In content scripts, chrome.runtime.id should always exist if we're in extension context
+ * This distinguishes between:
+ * - Content script context (valid) - chrome.runtime.id exists
+ * - Page world context (invalid) - chrome is undefined or chrome.runtime.id doesn't exist
+ * - Extension context invalidated (invalid) - chrome exists but APIs throw errors
  * @returns {boolean} True if extension context is available and valid
  */
 function isExtensionContextValid() {
   try {
-    // Check if chrome object exists
+    // In content scripts, chrome should always be defined
     if (typeof chrome === 'undefined') {
-      return false;
+      return false; // Running in page world, not extension context
     }
     
-    // Check if chrome.runtime exists and has a valid ID (proves extension context is alive)
-    if (!chrome.runtime || !chrome.runtime.id) {
-      return false;
+    // chrome.runtime.id is the definitive check - it only exists in extension context
+    // If it doesn't exist, we're in page world (not extension context)
+    if (!chrome.runtime || typeof chrome.runtime.id === 'undefined') {
+      return false; // Not in extension context
     }
     
-    // Check if chrome.storage exists
+    // Check if chrome.storage exists (should always exist in content scripts)
     if (!chrome.storage || !chrome.storage.local) {
-      return false;
+      return false; // Storage API not available
     }
     
-    return true;
+    return true; // All checks passed - we're in valid extension context
   } catch (error) {
     // Any error accessing chrome APIs means context is invalidated
     return false;
@@ -162,36 +168,49 @@ const StorageManager = {
    */
   async getAllRules() {
     return new Promise((resolve) => {
-      // Early bailout if extension context is invalid
+      // Early bailout if extension context is invalid (page world, not extension context)
       if (!isExtensionContextValid()) {
-        // Silently resolve with empty object - don't spam console
+        // Not in extension context - silently resolve with empty object
+        // This is normal if running in page world, not an error
         resolve({});
         return;
       }
       
       try {
         chrome.storage.local.get([this.STORAGE_KEY], (result) => {
+          // Check for errors AFTER the callback
           if (chrome.runtime.lastError) {
-            // Handle extension context invalidated or other errors
             const errorMsg = chrome.runtime.lastError.message || String(chrome.runtime.lastError);
-            if (errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated')) {
-              // Silently handle - don't spam console
+            
+            // Only treat "Extension context invalidated" as a real error
+            // Other errors (like quota exceeded) are different issues
+            if (errorMsg.includes('Extension context invalidated') || 
+                errorMsg.includes('context invalidated')) {
+              // Context was invalidated AFTER we checked - this is a real error
+              // Log once, then resolve empty to prevent spam
+              console.warn('⚠️ Extension context invalidated - rules cannot be loaded');
               resolve({});
               return;
             } else {
+              // Other storage errors (quota, etc.) - log but don't treat as context invalidated
               console.error('❌ Error loading rules:', chrome.runtime.lastError);
+              resolve({});
+              return;
             }
-            resolve({}); // Resolve with empty object instead of rejecting
-            return;
           }
+          
+          // Success - return the rules
           resolve(result[this.STORAGE_KEY] || {});
         });
       } catch (error) {
-        // Handle synchronous errors (e.g., extension context invalidated)
+        // Synchronous errors (shouldn't happen in content scripts, but handle gracefully)
         const errorMsg = error.message || String(error);
-        if (errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated')) {
-          // Silently handle - don't spam console
+        if (errorMsg.includes('Extension context invalidated') || 
+            errorMsg.includes('context invalidated')) {
+          // Context invalidated - log once
+          console.warn('⚠️ Extension context invalidated - rules cannot be loaded');
         } else {
+          // Other errors
           console.error('❌ Error accessing storage:', error);
         }
         resolve({}); // Resolve with empty object instead of rejecting
@@ -237,8 +256,9 @@ const StorageManager = {
       }
       
       return new Promise((resolve) => {
-        // Early bailout if extension context is invalid
+        // Early bailout if extension context is invalid (page world, not extension context)
         if (!isExtensionContextValid()) {
+          // Not in extension context - can't save
           resolve(false);
           return;
         }
@@ -247,7 +267,10 @@ const StorageManager = {
           chrome.storage.local.set({ [this.STORAGE_KEY]: allRules }, () => {
             if (chrome.runtime.lastError) {
               const errorMsg = chrome.runtime.lastError.message || String(chrome.runtime.lastError);
-              if (errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated')) {
+              // Only log "Extension context invalidated" as a warning (real error)
+              // Other errors are different issues
+              if (errorMsg.includes('Extension context invalidated') || 
+                  errorMsg.includes('context invalidated')) {
                 console.warn('⚠️ Extension context invalidated - rule cannot be saved');
               } else {
                 console.error('❌ Error saving rule:', chrome.runtime.lastError);
@@ -260,7 +283,8 @@ const StorageManager = {
           });
         } catch (error) {
           const errorMsg = error.message || String(error);
-          if (errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated')) {
+          if (errorMsg.includes('Extension context invalidated') || 
+              errorMsg.includes('context invalidated')) {
             console.warn('⚠️ Extension context invalidated - rule cannot be saved');
           } else {
             console.error('❌ Error accessing storage:', error);
@@ -445,8 +469,10 @@ const RuleApplier = {
    * @returns {Promise<number>} Total number of elements affected
    */
   async applyAllRulesForCurrentPage(suppressNoRulesLog = false) {
-    // Early bailout if extension context is invalid
+    // Early bailout if extension context is invalid (page world, not extension context)
     if (!isExtensionContextValid()) {
+      // Not in extension context - can't apply rules
+      // This is normal if running in page world, not an error
       return 0;
     }
     
@@ -471,10 +497,12 @@ const RuleApplier = {
       
       return totalAffected;
     } catch (error) {
-      // Handle errors (e.g., extension context invalidated)
+      // Handle errors
       const errorMsg = error.message || String(error);
-      if (errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated')) {
-        // Silently handle - don't spam console
+      if (errorMsg.includes('Extension context invalidated') || 
+          errorMsg.includes('context invalidated')) {
+        // Context invalidated - log once, then return
+        console.warn('⚠️ Extension context invalidated - cannot apply rules');
         return 0;
       } else {
         console.error('❌ Error applying rules:', error);
@@ -489,8 +517,10 @@ const RuleApplier = {
    * @param {boolean} suppressNoRulesLog - If true, suppress "No rules to apply" log
    */
   reapplyWithDebounce(debounceMs = 100, suppressNoRulesLog = true) {
-    // Early bailout if extension context is invalid
+    // Early bailout if extension context is invalid (page world, not extension context)
     if (!isExtensionContextValid()) {
+      // Not in extension context - can't reapply
+      // This is normal if running in page world, not an error
       return;
     }
     
@@ -506,9 +536,10 @@ const RuleApplier = {
       
       // Catch any promise rejections to prevent uncaught errors
       this.applyAllRulesForCurrentPage(suppressNoRulesLog).catch((error) => {
-        // Silently handle context invalidated errors
+        // Handle errors - only log non-context-invalidated errors
         const errorMsg = error.message || String(error);
-        if (!errorMsg.includes('Extension context invalidated') && !errorMsg.includes('context invalidated')) {
+        if (!errorMsg.includes('Extension context invalidated') && 
+            !errorMsg.includes('context invalidated')) {
           console.error('❌ Unhandled error in reapplyWithDebounce:', error);
         }
       });
@@ -776,9 +807,10 @@ const EditRules = {
       return;
     }
     
-    // Don't setup if extension context is invalid
+    // Don't setup if extension context is invalid (page world, not extension context)
     if (!isExtensionContextValid()) {
-      console.warn('⚠️ Cannot setup mutation observer - extension context invalid');
+      // Not in extension context - can't setup observer
+      // This is normal if running in page world, not an error
       return;
     }
     

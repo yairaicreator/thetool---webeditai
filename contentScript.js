@@ -32,15 +32,24 @@ const WEBEDIT_ATTR = "data-webedit-id";
 
 /**
  * Check if extension context is valid
+ * In content scripts, chrome.runtime.id should always exist if we're in extension context
  * @returns {boolean} True if extension context is available and valid
  */
 function isExtensionContextValid() {
   try {
-    if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.id) {
-      return false;
+    // In content scripts, chrome should always be defined
+    if (typeof chrome === 'undefined') {
+      return false; // Running in page world, not extension context
     }
-    return true;
+    
+    // chrome.runtime.id is the definitive check - it only exists in extension context
+    if (!chrome.runtime || typeof chrome.runtime.id === 'undefined') {
+      return false; // Not in extension context
+    }
+    
+    return true; // All checks passed - we're in valid extension context
   } catch (error) {
+    // Any error accessing chrome APIs means context is invalidated
     return false;
   }
 }
@@ -60,8 +69,10 @@ async function checkAuthStatus() {
       chrome.runtime.sendMessage({ type: "WEBEDIT_GET_SESSION" }, (response) => {
         if (chrome.runtime.lastError) {
           const errorMsg = chrome.runtime.lastError.message || String(chrome.runtime.lastError);
-          // Silently handle connection errors - don't spam console
-          if (!errorMsg.includes('Could not establish connection') && !errorMsg.includes('Receiving end does not exist')) {
+          // Only log non-connection errors (connection errors are expected if background is unloaded)
+          if (!errorMsg.includes('Could not establish connection') && 
+              !errorMsg.includes('Receiving end does not exist') &&
+              !errorMsg.includes('Extension context invalidated')) {
             console.error("❌ Error checking auth status:", chrome.runtime.lastError);
           }
           resolve(null);
@@ -75,7 +86,7 @@ async function checkAuthStatus() {
         resolve(currentUser);
       });
     } catch (error) {
-      // Silently handle errors
+      // Silently handle errors (background might be unloaded)
       resolve(null);
     }
   });
