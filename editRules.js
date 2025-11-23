@@ -517,13 +517,17 @@ const EditRules = {
    * @param {string} action - The action type ("hide", "remove", etc.)
    * @param {Object} metadata - Optional metadata
    * @param {Object} user - Optional authenticated user
+   * @param {string} selector - Optional pre-generated selector (avoids duplicate generation)
    * @returns {Promise<EditRule>} The created rule
    */
-  async createRule(element, action, metadata = {}, user = null) {
+  async createRule(element, action, metadata = {}, user = null, selector = null) {
+    // Use provided selector if available, otherwise generate one
+    const finalSelector = selector || generateSelector(element);
+    
     const rule = {
       id: generateRuleId(),
       pageKey: getPageKey(),
-      selector: generateSelector(element),
+      selector: finalSelector,
       action: action,
       metadata: {
         ...metadata,
