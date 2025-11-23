@@ -1109,7 +1109,12 @@ async function initializeExtension() {
       // Setup mutation observer to reapply rules on DOM changes
       window.EditRules.setupMutationObserver();
     } catch (error) {
-      console.error("❌ Error applying rules:", error);
+      // Handle extension context invalidated or other errors
+      if (error.message?.includes('Extension context invalidated') || error.message?.includes('context invalidated')) {
+        console.warn("⚠️ Extension context invalidated - rules cannot be applied");
+      } else {
+        console.error("❌ Error applying rules:", error);
+      }
     }
   }
   
@@ -1140,12 +1145,21 @@ function handleUrlChange() {
       
       // Handle both Promise and synchronous return
       if (result && typeof result.then === 'function') {
-        result.finally(() => {
-          // Reset flag after rules are applied (with small delay to avoid immediate re-trigger)
-          setTimeout(() => {
-            isApplyingRules = false;
-          }, 100);
-        });
+        result
+          .catch((error) => {
+            // Handle promise rejections (e.g., extension context invalidated)
+            if (error.message?.includes('Extension context invalidated') || error.message?.includes('context invalidated')) {
+              console.warn('⚠️ Extension context invalidated - cannot reapply rules');
+            } else {
+              console.error('❌ Error reapplying rules:', error);
+            }
+          })
+          .finally(() => {
+            // Reset flag after rules are applied (with small delay to avoid immediate re-trigger)
+            setTimeout(() => {
+              isApplyingRules = false;
+            }, 100);
+          });
       } else {
         // Synchronous execution - reset flag after a delay
         setTimeout(() => {

@@ -134,28 +134,50 @@ const StorageManager = {
    */
   async getAllRules() {
     return new Promise((resolve) => {
+      // Safely check if chrome.storage is available (context might be invalidated)
+      let storageAvailable = false;
+      try {
+        storageAvailable = !!(chrome?.storage?.local);
+      } catch (error) {
+        // Context invalidated - chrome object might throw when accessed
+        const errorMsg = error.message || String(error);
+        if (errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated')) {
+          console.warn('⚠️ Extension context invalidated - chrome.storage not available');
+        }
+        resolve({});
+        return;
+      }
+      
+      if (!storageAvailable) {
+        console.warn('⚠️ Extension context invalidated - chrome.storage not available');
+        resolve({});
+        return;
+      }
+      
       try {
         chrome.storage.local.get([this.STORAGE_KEY], (result) => {
           if (chrome.runtime.lastError) {
             // Handle extension context invalidated or other errors
-            if (chrome.runtime.lastError.message?.includes('Extension context invalidated')) {
+            const errorMsg = chrome.runtime.lastError.message || String(chrome.runtime.lastError);
+            if (errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated')) {
               console.warn('⚠️ Extension context invalidated - rules cannot be loaded');
             } else {
               console.error('❌ Error loading rules:', chrome.runtime.lastError);
             }
-            resolve({});
+            resolve({}); // Resolve with empty object instead of rejecting
             return;
           }
           resolve(result[this.STORAGE_KEY] || {});
         });
       } catch (error) {
         // Handle synchronous errors (e.g., extension context invalidated)
-        if (error.message?.includes('Extension context invalidated') || error.message?.includes('context invalidated')) {
+        const errorMsg = error.message || String(error);
+        if (errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated')) {
           console.warn('⚠️ Extension context invalidated - rules cannot be loaded');
         } else {
           console.error('❌ Error accessing storage:', error);
         }
-        resolve({});
+        resolve({}); // Resolve with empty object instead of rejecting
       }
     });
   },
@@ -198,10 +220,31 @@ const StorageManager = {
       }
       
       return new Promise((resolve) => {
+        // Safely check if chrome.storage is available (context might be invalidated)
+        let storageAvailable = false;
+        try {
+          storageAvailable = !!(chrome?.storage?.local);
+        } catch (error) {
+          // Context invalidated - chrome object might throw when accessed
+          const errorMsg = error.message || String(error);
+          if (errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated')) {
+            console.warn('⚠️ Extension context invalidated - chrome.storage not available');
+          }
+          resolve(false);
+          return;
+        }
+        
+        if (!storageAvailable) {
+          console.warn('⚠️ Extension context invalidated - chrome.storage not available');
+          resolve(false);
+          return;
+        }
+        
         try {
           chrome.storage.local.set({ [this.STORAGE_KEY]: allRules }, () => {
             if (chrome.runtime.lastError) {
-              if (chrome.runtime.lastError.message?.includes('Extension context invalidated')) {
+              const errorMsg = chrome.runtime.lastError.message || String(chrome.runtime.lastError);
+              if (errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated')) {
                 console.warn('⚠️ Extension context invalidated - rule cannot be saved');
               } else {
                 console.error('❌ Error saving rule:', chrome.runtime.lastError);
@@ -213,7 +256,8 @@ const StorageManager = {
             resolve(true);
           });
         } catch (error) {
-          if (error.message?.includes('Extension context invalidated') || error.message?.includes('context invalidated')) {
+          const errorMsg = error.message || String(error);
+          if (errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated')) {
             console.warn('⚠️ Extension context invalidated - rule cannot be saved');
           } else {
             console.error('❌ Error accessing storage:', error);
@@ -249,10 +293,31 @@ const StorageManager = {
       }
       
       return new Promise((resolve) => {
+        // Safely check if chrome.storage is available (context might be invalidated)
+        let storageAvailable = false;
+        try {
+          storageAvailable = !!(chrome?.storage?.local);
+        } catch (error) {
+          // Context invalidated - chrome object might throw when accessed
+          const errorMsg = error.message || String(error);
+          if (errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated')) {
+            console.warn('⚠️ Extension context invalidated - chrome.storage not available');
+          }
+          resolve(false);
+          return;
+        }
+        
+        if (!storageAvailable) {
+          console.warn('⚠️ Extension context invalidated - chrome.storage not available');
+          resolve(false);
+          return;
+        }
+        
         try {
           chrome.storage.local.set({ [this.STORAGE_KEY]: allRules }, () => {
             if (chrome.runtime.lastError) {
-              if (chrome.runtime.lastError.message?.includes('Extension context invalidated')) {
+              const errorMsg = chrome.runtime.lastError.message || String(chrome.runtime.lastError);
+              if (errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated')) {
                 console.warn('⚠️ Extension context invalidated - rule cannot be deleted');
               } else {
                 console.error('❌ Error deleting rule:', chrome.runtime.lastError);
@@ -264,7 +329,8 @@ const StorageManager = {
             resolve(true);
           });
         } catch (error) {
-          if (error.message?.includes('Extension context invalidated') || error.message?.includes('context invalidated')) {
+          const errorMsg = error.message || String(error);
+          if (errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated')) {
             console.warn('⚠️ Extension context invalidated - rule cannot be deleted');
           } else {
             console.error('❌ Error accessing storage:', error);
@@ -289,10 +355,31 @@ const StorageManager = {
       delete allRules[pageKey];
       
       return new Promise((resolve) => {
+        // Safely check if chrome.storage is available (context might be invalidated)
+        let storageAvailable = false;
+        try {
+          storageAvailable = !!(chrome?.storage?.local);
+        } catch (error) {
+          // Context invalidated - chrome object might throw when accessed
+          const errorMsg = error.message || String(error);
+          if (errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated')) {
+            console.warn('⚠️ Extension context invalidated - chrome.storage not available');
+          }
+          resolve(false);
+          return;
+        }
+        
+        if (!storageAvailable) {
+          console.warn('⚠️ Extension context invalidated - chrome.storage not available');
+          resolve(false);
+          return;
+        }
+        
         try {
           chrome.storage.local.set({ [this.STORAGE_KEY]: allRules }, () => {
             if (chrome.runtime.lastError) {
-              if (chrome.runtime.lastError.message?.includes('Extension context invalidated')) {
+              const errorMsg = chrome.runtime.lastError.message || String(chrome.runtime.lastError);
+              if (errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated')) {
                 console.warn('⚠️ Extension context invalidated - rules cannot be cleared');
               } else {
                 console.error('❌ Error clearing rules:', chrome.runtime.lastError);
@@ -304,7 +391,8 @@ const StorageManager = {
             resolve(true);
           });
         } catch (error) {
-          if (error.message?.includes('Extension context invalidated') || error.message?.includes('context invalidated')) {
+          const errorMsg = error.message || String(error);
+          if (errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated')) {
             console.warn('⚠️ Extension context invalidated - rules cannot be cleared');
           } else {
             console.error('❌ Error accessing storage:', error);
@@ -381,36 +469,61 @@ const RuleApplier = {
    * Apply all rules for the current page
    * @returns {Promise<number>} Total number of elements affected
    */
-  async applyAllRulesForCurrentPage() {
-    const pageKey = getPageKey();
-    const rules = await StorageManager.getRulesForPage(pageKey);
-    
-    if (rules.length === 0) {
-      console.log('ℹ️ No rules to apply for this page');
-      return 0;
+  async applyAllRulesForCurrentPage(suppressNoRulesLog = false) {
+    try {
+      const pageKey = getPageKey();
+      const rules = await StorageManager.getRulesForPage(pageKey);
+      
+      if (!rules || rules.length === 0) {
+        // Only log if not suppressed (to reduce noise from mutation observer)
+        if (!suppressNoRulesLog) {
+          console.log('ℹ️ No rules to apply for this page');
+        }
+        return 0;
+      }
+      
+      console.log(`📋 Applying ${rules.length} rule(s) for page: ${pageKey}`);
+      
+      let totalAffected = 0;
+      rules.forEach(rule => {
+        totalAffected += this.applyRule(rule);
+      });
+      
+      return totalAffected;
+    } catch (error) {
+      // Handle errors (e.g., extension context invalidated)
+      const errorMsg = error.message || String(error);
+      if (errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated')) {
+        // Suppress warning if called from mutation observer (too noisy)
+        if (!suppressNoRulesLog) {
+          console.warn('⚠️ Extension context invalidated - cannot apply rules');
+        }
+      } else {
+        console.error('❌ Error applying rules:', error);
+      }
+      return 0; // Return 0 instead of throwing
     }
-    
-    console.log(`📋 Applying ${rules.length} rule(s) for page: ${pageKey}`);
-    
-    let totalAffected = 0;
-    rules.forEach(rule => {
-      totalAffected += this.applyRule(rule);
-    });
-    
-    return totalAffected;
   },
   
   /**
    * Reapply rules (useful after DOM changes)
    * @param {number} debounceMs - Debounce delay in milliseconds
+   * @param {boolean} suppressNoRulesLog - If true, suppress "No rules to apply" log
    */
-  reapplyWithDebounce(debounceMs = 100) {
+  reapplyWithDebounce(debounceMs = 100, suppressNoRulesLog = true) {
     if (this._reapplyTimeout) {
       clearTimeout(this._reapplyTimeout);
     }
     
     this._reapplyTimeout = setTimeout(() => {
-      this.applyAllRulesForCurrentPage();
+      // Catch any promise rejections to prevent uncaught errors
+      this.applyAllRulesForCurrentPage(suppressNoRulesLog).catch((error) => {
+        // Errors are already handled in applyAllRulesForCurrentPage, but catch here to prevent uncaught rejections
+        const errorMsg = error.message || String(error);
+        if (!errorMsg.includes('Extension context invalidated') && !errorMsg.includes('context invalidated')) {
+          console.error('❌ Unhandled error in reapplyWithDebounce:', error);
+        }
+      });
     }, debounceMs);
   }
 };
@@ -428,10 +541,31 @@ const SupabaseSyncManager = {
    */
   async getAuthToken() {
     return new Promise((resolve) => {
+      // Safely check if chrome.storage is available (context might be invalidated)
+      let storageAvailable = false;
+      try {
+        storageAvailable = !!(chrome?.storage?.local);
+      } catch (error) {
+        // Context invalidated - chrome object might throw when accessed
+        const errorMsg = error.message || String(error);
+        if (errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated')) {
+          console.warn('⚠️ Extension context invalidated - chrome.storage not available');
+        }
+        resolve(null);
+        return;
+      }
+      
+      if (!storageAvailable) {
+        console.warn('⚠️ Extension context invalidated - chrome.storage not available');
+        resolve(null);
+        return;
+      }
+      
       try {
         chrome.storage.local.get(['webeditSupabaseSession'], (result) => {
           if (chrome.runtime.lastError) {
-            if (chrome.runtime.lastError.message?.includes('Extension context invalidated')) {
+            const errorMsg = chrome.runtime.lastError.message || String(chrome.runtime.lastError);
+            if (errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated')) {
               console.warn('⚠️ Extension context invalidated - cannot get auth token');
             } else {
               console.error('❌ Error getting auth token:', chrome.runtime.lastError);
@@ -447,7 +581,8 @@ const SupabaseSyncManager = {
           }
         });
       } catch (error) {
-        if (error.message?.includes('Extension context invalidated') || error.message?.includes('context invalidated')) {
+        const errorMsg = error.message || String(error);
+        if (errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated')) {
           console.warn('⚠️ Extension context invalidated - cannot get auth token');
         } else {
           console.error('❌ Error accessing storage:', error);
@@ -662,15 +797,42 @@ const EditRules = {
    * Setup mutation observer to reapply rules on DOM changes
    */
   setupMutationObserver() {
-    const observer = new MutationObserver(() => {
-      RuleApplier.reapplyWithDebounce(100);
+    // Only setup if not already set up
+    if (this._mutationObserver) {
+      return;
+    }
+    
+    let mutationCount = 0;
+    const observer = new MutationObserver((mutations) => {
+      // Filter out mutations that are likely from our own rule application
+      const relevantMutations = mutations.filter(mutation => {
+        // Skip if mutation is on WebEdit panel elements
+        if (mutation.target.closest && mutation.target.closest('#webedit-chat-panel')) {
+          return false;
+        }
+        // Skip attribute-only changes (we mainly care about element additions/removals)
+        if (mutation.type === 'attributes' && mutation.attributeName !== 'style') {
+          return false;
+        }
+        return true;
+      });
+      
+      // Only reapply if there are relevant mutations
+      if (relevantMutations.length > 0) {
+        mutationCount++;
+        // Use longer debounce and suppress logs to reduce noise
+        RuleApplier.reapplyWithDebounce(500, true);
+      }
     });
     
     observer.observe(document.body, {
       childList: true,
-      subtree: true
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['style', 'class', 'id'] // Only watch relevant attributes
     });
     
+    this._mutationObserver = observer;
     console.log('👀 Mutation observer setup for rule reapplication');
   }
 };
