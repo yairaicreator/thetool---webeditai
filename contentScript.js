@@ -80,8 +80,12 @@ function updateAuthUI() {
 
 /**
  * Render the avatar UI for signed-in user
+ * CRITICAL: Do NOT replace the DOM element - just update its contents
+ * Otherwise we break event listeners set up in attachPanelEventListeners()
  */
 function renderAvatar(container, user) {
+  console.log("🔧 Rendering avatar for", user.email);
+  
   // CRITICAL: Clean up old event listeners AND pending timeouts
   if (container._closeMenuHandler) {
     document.removeEventListener('click', container._closeMenuHandler);
@@ -94,28 +98,12 @@ function renderAvatar(container, user) {
     delete container._closeMenuTimeoutId;
   }
   
-  // Clear and setup container
-  container.innerHTML = '';
+  // Update container classes and title WITHOUT replacing the element
   container.className = 'webedit-nav-btn signin-btn webedit-avatar-container';
   container.title = user.email || 'Account';
   
-  // Remove old click handler by cloning (same as sign-in button)
-  const newContainer = container.cloneNode(false); // false = don't clone children
-  
-  // IMPORTANT: Preserve the ID so we can find it again
-  newContainer.id = container.id;
-  
-  console.log("🔧 Creating new avatar container, ID:", newContainer.id);
-  
-  // Prevent any click events on the container itself from doing anything
-  newContainer.addEventListener('click', (e) => {
-    // Only prevent default if clicking directly on container (not avatar or menu)
-    if (e.target === newContainer) {
-      e.preventDefault();
-      e.stopPropagation();
-      console.log("🔘 Clicked container itself, ignoring");
-    }
-  });
+  // Clear existing content
+  container.innerHTML = '';
   
   // Create avatar element
   const avatar = document.createElement('div');
@@ -135,7 +123,7 @@ function renderAvatar(container, user) {
     avatar.classList.add('webedit-avatar-letter');
   }
   
-  newContainer.appendChild(avatar);
+  container.appendChild(avatar);
   
   // Create dropdown menu (hidden by default)
   const menu = document.createElement('div');
@@ -155,7 +143,7 @@ function renderAvatar(container, user) {
     </div>
   `;
   
-  newContainer.appendChild(menu);
+  container.appendChild(menu);
   
   // Toggle menu on avatar click
   avatar.addEventListener('click', (e) => {
@@ -186,44 +174,33 @@ function renderAvatar(container, user) {
   
   // Close menu when clicking outside
   const closeMenuHandler = (e) => {
-    if (!newContainer.contains(e.target)) {
+    if (!container.contains(e.target)) {
       menu.classList.remove('visible');
     }
   };
   
-  // Store reference to handler for cleanup
-  newContainer._closeMenuHandler = closeMenuHandler;
+  // Store reference to handler for cleanup on the container
+  container._closeMenuHandler = closeMenuHandler;
   
   // Add the listener with a small delay to avoid immediate closure
-  // Store timeout ID so we can cancel it if renderAvatar is called again quickly
   const timeoutId = setTimeout(() => {
     document.addEventListener('click', closeMenuHandler);
-    delete newContainer._closeMenuTimeoutId; // Clean up timeout ID after it fires
+    delete container._closeMenuTimeoutId;
   }, 100);
   
-  newContainer._closeMenuTimeoutId = timeoutId;
+  container._closeMenuTimeoutId = timeoutId;
   
-  // Replace old container with new one
-  container.parentNode.replaceChild(newContainer, container);
-  
-  console.log("✅ Avatar rendered for", user.email);
-  
-  // Verify the element is in the DOM and can be found
-  setTimeout(() => {
-    const checkElement = document.getElementById("webedit-signin-btn");
-    if (checkElement) {
-      console.log("✅ Avatar element verified in DOM, has avatar:", checkElement.querySelector('.webedit-avatar') !== null);
-      console.log("✅ Avatar element has menu:", checkElement.querySelector('.webedit-avatar-menu') !== null);
-    } else {
-      console.error("❌ Avatar element NOT found in DOM after render!");
-    }
-  }, 50);
+  console.log("✅ Avatar rendered successfully");
 }
 
 /**
  * Render the sign in button for non-authenticated users
+ * CRITICAL: Do NOT replace the DOM element - just update its contents
+ * Otherwise we break event listeners set up in attachPanelEventListeners()
  */
 function renderSignInButton(container) {
+  console.log("🔧 Rendering sign-in button");
+  
   // CRITICAL: Clean up document-level click listener AND pending timeout from avatar
   if (container._closeMenuHandler) {
     document.removeEventListener('click', container._closeMenuHandler);
@@ -236,19 +213,17 @@ function renderSignInButton(container) {
     delete container._closeMenuTimeoutId;
   }
   
+  // Update container WITHOUT replacing it
   container.innerHTML = 'Sign in';
   container.className = 'webedit-nav-btn signin-btn';
   container.title = 'Sign in with Google';
   
-  // Remove any existing click listeners by cloning
-  const newContainer = container.cloneNode(true);
+  // Remove any existing sign-in click listeners by removing and re-adding
+  // This ensures only one listener is active
+  container.removeEventListener('click', handleSignInClick);
+  container.addEventListener('click', handleSignInClick);
   
-  // IMPORTANT: Preserve the ID so we can find it again
-  newContainer.id = container.id;
-  
-  container.parentNode.replaceChild(newContainer, container);
-  
-  newContainer.addEventListener('click', handleSignInClick);
+  console.log("✅ Sign-in button rendered successfully");
 }
 
 /**
@@ -486,9 +461,25 @@ function attachPanelEventListeners() {
   const burgerBtn = document.getElementById("webedit-burger-btn");
   const toolsMenu = document.getElementById("webedit-tools-menu");
   
+  if (!burgerBtn) {
+    console.error("❌ Burger button not found!");
+    return;
+  }
+  
+  if (!toolsMenu) {
+    console.error("❌ Tools menu not found!");
+    return;
+  }
+  
+  console.log("✅ Burger button and tools menu found, attaching listener");
+  
   burgerBtn.addEventListener("click", (e) => {
+    console.log("🔘 Hamburger button clicked!");
     e.stopPropagation();
+    e.preventDefault();
+    const wasVisible = toolsMenu.classList.contains("visible");
     toolsMenu.classList.toggle("visible");
+    console.log(`🔘 Tools menu toggled: ${wasVisible ? 'visible' : 'hidden'} → ${toolsMenu.classList.contains("visible") ? 'visible' : 'hidden'}`);
   });
 
   // Close tools menu when clicking outside
@@ -503,28 +494,37 @@ function attachPanelEventListeners() {
   const customizePanel = document.getElementById("webedit-customize-panel");
   
   toolButtons.forEach((btn) => {
-    btn.addEventListener("click", () => {
+    btn.addEventListener("click", (e) => {
+      console.log("🔘 Tool button clicked:", btn.dataset.tool);
+      
+      // Update active state
       toolButtons.forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
       currentTool = btn.dataset.tool;
       toolsMenu.classList.remove("visible"); // Close menu after selection
       
-      // CRITICAL: Stop all active modes before starting a new one
-      stopRemoveMode();
-      stopPickMode();
-      
       // Handle different tools
       if (currentTool === "remove") {
-        // Start Remove mode immediately
+        // Start Remove mode immediately (it will stop Pick mode if needed)
+        console.log("🗑️ Starting Remove mode from menu");
         startRemoveMode();
         customizePanel.classList.remove("visible");
       } else if (currentTool === "customize") {
+        // Stop any active modes for customize tool
+        stopRemoveMode();
+        stopPickMode();
         customizePanel.classList.add("visible");
         showNotification("Pick an element to customize, or use 'Pick element' button", "info");
       } else if (currentTool === "add") {
+        // Stop any active modes for add tool
+        stopRemoveMode();
+        stopPickMode();
         showNotification("Add tool - Pick an element to add content near it", "info");
         customizePanel.classList.remove("visible");
       } else {
+        // For any other tool, stop active modes
+        stopRemoveMode();
+        stopPickMode();
         customizePanel.classList.remove("visible");
       }
     });
@@ -533,9 +533,8 @@ function attachPanelEventListeners() {
   // Pick element button - starts Pick mode for element selection (not removal)
   const pickBtn = document.getElementById("webedit-pick-btn");
   pickBtn.addEventListener("click", () => {
-    // CRITICAL: Stop all active modes before starting Pick mode
-    stopRemoveMode();
-    stopPickMode();
+    console.log("🔘 Pick Element button clicked");
+    // startPickMode() will handle stopping Remove mode if needed
     startPickMode();
   });
 
@@ -684,9 +683,16 @@ function clearSelected() {
 // ============================================
 
 function startRemoveMode() {
-  if (isRemoveMode || isPickMode) {
-    console.log("Already in a mode, ignoring");
+  // If already in Remove mode, just return
+  if (isRemoveMode) {
+    console.log("⚠️ Already in Remove mode");
     return;
+  }
+  
+  // Stop Pick mode if active
+  if (isPickMode) {
+    console.log("🔄 Stopping Pick mode before starting Remove mode");
+    stopPickMode();
   }
   
   console.log("🗑️ Starting Remove mode");
@@ -764,9 +770,16 @@ async function handleRemoveClick(event) {
 // ============================================
 
 function startPickMode() {
-  if (isRemoveMode || isPickMode) {
-    console.log("Already in a mode, ignoring");
+  // If already in Pick mode, just return
+  if (isPickMode) {
+    console.log("⚠️ Already in Pick mode");
     return;
+  }
+  
+  // Stop Remove mode if active
+  if (isRemoveMode) {
+    console.log("🔄 Stopping Remove mode before starting Pick mode");
+    stopRemoveMode();
   }
   
   console.log("👆 Starting Pick mode");
