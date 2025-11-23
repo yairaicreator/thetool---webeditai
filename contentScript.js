@@ -31,24 +31,53 @@ const WEBEDIT_ATTR = "data-webedit-id";
 // ============================================
 
 /**
+ * Check if extension context is valid
+ * @returns {boolean} True if extension context is available and valid
+ */
+function isExtensionContextValid() {
+  try {
+    if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.id) {
+      return false;
+    }
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+/**
  * Check the current authentication status
  * Retrieves the stored Supabase session from extension storage
  */
 async function checkAuthStatus() {
+  // Early bailout if extension context is invalid
+  if (!isExtensionContextValid()) {
+    return null;
+  }
+  
   return new Promise((resolve) => {
-    chrome.runtime.sendMessage({ type: "WEBEDIT_GET_SESSION" }, (response) => {
-      if (chrome.runtime.lastError) {
-        console.error("❌ Error checking auth status:", chrome.runtime.lastError);
-        resolve(null);
-        return;
-      }
-      
-      const session = response?.session || null;
-      currentUser = session?.user || null;
-      
-      console.log("🔐 Auth status:", currentUser ? `Signed in as ${currentUser.email}` : "Not signed in");
-      resolve(currentUser);
-    });
+    try {
+      chrome.runtime.sendMessage({ type: "WEBEDIT_GET_SESSION" }, (response) => {
+        if (chrome.runtime.lastError) {
+          const errorMsg = chrome.runtime.lastError.message || String(chrome.runtime.lastError);
+          // Silently handle connection errors - don't spam console
+          if (!errorMsg.includes('Could not establish connection') && !errorMsg.includes('Receiving end does not exist')) {
+            console.error("❌ Error checking auth status:", chrome.runtime.lastError);
+          }
+          resolve(null);
+          return;
+        }
+        
+        const session = response?.session || null;
+        currentUser = session?.user || null;
+        
+        console.log("🔐 Auth status:", currentUser ? `Signed in as ${currentUser.email}` : "Not signed in");
+        resolve(currentUser);
+      });
+    } catch (error) {
+      // Silently handle errors
+      resolve(null);
+    }
   });
 }
 
@@ -232,16 +261,31 @@ function renderSignInButton(container) {
 function handleSignInClick() {
   console.log("🔐 Opening production login page");
   
-  chrome.runtime.sendMessage({ type: "WEBEDIT_OPEN_LOGIN_TAB" }, (response) => {
-    if (chrome.runtime.lastError) {
-      console.error("❌ Error opening login:", chrome.runtime.lastError);
-      showNotification("Failed to open login page. Please try again.", "error");
-      return;
-    }
-    
-    console.log("✅ Login page opened");
-    showNotification("Opening sign-in page...", "info");
-  });
+  // Check if extension context is valid
+  if (!isExtensionContextValid()) {
+    showNotification("Extension context invalidated. Please reload the page.", "error");
+    return;
+  }
+  
+  try {
+    chrome.runtime.sendMessage({ type: "WEBEDIT_OPEN_LOGIN_TAB" }, (response) => {
+      if (chrome.runtime.lastError) {
+        const errorMsg = chrome.runtime.lastError.message || String(chrome.runtime.lastError);
+        if (errorMsg.includes('Could not establish connection') || errorMsg.includes('Receiving end does not exist')) {
+          showNotification("Extension background not available. Please reload the page.", "error");
+        } else {
+          console.error("❌ Error opening login:", chrome.runtime.lastError);
+          showNotification("Failed to open login page. Please try again.", "error");
+        }
+        return;
+      }
+      
+      console.log("✅ Login page opened");
+      showNotification("Opening sign-in page...", "info");
+    });
+  } catch (error) {
+    showNotification("Failed to open login page. Please reload the page.", "error");
+  }
 }
 
 /**
@@ -250,15 +294,30 @@ function handleSignInClick() {
 function handleViewHistory() {
   console.log("📚 Opening history page");
   
-  chrome.runtime.sendMessage({ type: "WEBEDIT_OPEN_HISTORY" }, (response) => {
-    if (chrome.runtime.lastError) {
-      console.error("❌ Error opening history:", chrome.runtime.lastError);
-      showNotification("Failed to open history page.", "error");
-      return;
-    }
-    
-    console.log("✅ History page opened");
-  });
+  // Check if extension context is valid
+  if (!isExtensionContextValid()) {
+    showNotification("Extension context invalidated. Please reload the page.", "error");
+    return;
+  }
+  
+  try {
+    chrome.runtime.sendMessage({ type: "WEBEDIT_OPEN_HISTORY" }, (response) => {
+      if (chrome.runtime.lastError) {
+        const errorMsg = chrome.runtime.lastError.message || String(chrome.runtime.lastError);
+        if (errorMsg.includes('Could not establish connection') || errorMsg.includes('Receiving end does not exist')) {
+          showNotification("Extension background not available. Please reload the page.", "error");
+        } else {
+          console.error("❌ Error opening history:", chrome.runtime.lastError);
+          showNotification("Failed to open history page.", "error");
+        }
+        return;
+      }
+      
+      console.log("✅ History page opened");
+    });
+  } catch (error) {
+    showNotification("Failed to open history page. Please reload the page.", "error");
+  }
 }
 
 /**
@@ -268,26 +327,41 @@ function handleViewHistory() {
 function handleSignOut() {
   console.log("👋 Signing out from extension and website");
   
+  // Check if extension context is valid
+  if (!isExtensionContextValid()) {
+    showNotification("Extension context invalidated. Please reload the page.", "error");
+    return;
+  }
+  
   // Show immediate feedback
   showNotification("Signing you out...", "info");
   
-  chrome.runtime.sendMessage({ type: "WEBEDIT_SIGN_OUT" }, (response) => {
-    if (chrome.runtime.lastError) {
-      console.error("❌ Error signing out:", chrome.runtime.lastError);
-      showNotification("Failed to sign out. Please try again.", "error");
-      return;
-    }
-    
-    console.log("✅ Signed out successfully from extension");
-    console.log("🌐 Opening website to complete sign out...");
-    
-    // Update local state immediately
-    currentUser = null;
-    updateAuthUI();
-    
-    // Note: Background script will open the website with logout param
-    // The website will handle the actual Supabase sign out
-  });
+  try {
+    chrome.runtime.sendMessage({ type: "WEBEDIT_SIGN_OUT" }, (response) => {
+      if (chrome.runtime.lastError) {
+        const errorMsg = chrome.runtime.lastError.message || String(chrome.runtime.lastError);
+        if (errorMsg.includes('Could not establish connection') || errorMsg.includes('Receiving end does not exist')) {
+          showNotification("Extension background not available. Please reload the page.", "error");
+        } else {
+          console.error("❌ Error signing out:", chrome.runtime.lastError);
+          showNotification("Failed to sign out. Please try again.", "error");
+        }
+        return;
+      }
+      
+      console.log("✅ Signed out successfully from extension");
+      console.log("🌐 Opening website to complete sign out...");
+      
+      // Update local state immediately
+      currentUser = null;
+      updateAuthUI();
+      
+      // Note: Background script will open the website with logout param
+      // The website will handle the actual Supabase sign out
+    });
+  } catch (error) {
+    showNotification("Failed to sign out. Please reload the page.", "error");
+  }
 }
 
 /**
@@ -532,11 +606,17 @@ function attachPanelEventListeners() {
 
   // Pick element button - starts Pick mode for element selection (not removal)
   const pickBtn = document.getElementById("webedit-pick-btn");
-  pickBtn.addEventListener("click", () => {
-    console.log("🔘 Pick Element button clicked");
-    // startPickMode() will handle stopping Remove mode if needed
-    startPickMode();
-  });
+  if (pickBtn) {
+    pickBtn.addEventListener("click", () => {
+      console.log("🔘 Pick Element button clicked");
+      // Stop all active modes before starting Pick mode
+      stopRemoveMode();
+      stopPickMode();
+      startPickMode();
+    });
+  } else {
+    console.error("❌ Pick element button not found!");
+  }
 
   // Chat input
   const chatInput = document.getElementById("webedit-chat-input");
@@ -1086,6 +1166,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // Initialize
 // ============================================
 
+// Track if extension has been initialized to prevent duplicate logs
+let isInitialized = false;
+
 /**
  * Initialize the extension on page load
  * - Create panel
@@ -1093,6 +1176,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
  * - Setup mutation observer
  */
 async function initializeExtension() {
+  // Prevent duplicate initialization
+  if (isInitialized) {
+    return;
+  }
+  
+  isInitialized = true;
   console.log("🚀 WebEdit AI initializing...");
   
   // Create panel
@@ -1107,12 +1196,14 @@ async function initializeExtension() {
       }
       
       // Setup mutation observer to reapply rules on DOM changes
-      window.EditRules.setupMutationObserver();
+      // Only setup if extension context is valid
+      if (isExtensionContextValid()) {
+        window.EditRules.setupMutationObserver();
+      }
     } catch (error) {
-      // Handle extension context invalidated or other errors
-      if (error.message?.includes('Extension context invalidated') || error.message?.includes('context invalidated')) {
-        console.warn("⚠️ Extension context invalidated - rules cannot be applied");
-      } else {
+      // Silently handle context invalidated errors
+      const errorMsg = error.message || String(error);
+      if (!errorMsg.includes('Extension context invalidated') && !errorMsg.includes('context invalidated')) {
         console.error("❌ Error applying rules:", error);
       }
     }
