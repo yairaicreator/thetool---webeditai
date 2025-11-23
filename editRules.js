@@ -134,14 +134,29 @@ const StorageManager = {
    */
   async getAllRules() {
     return new Promise((resolve) => {
-      chrome.storage.local.get([this.STORAGE_KEY], (result) => {
-        if (chrome.runtime.lastError) {
-          console.error('❌ Error loading rules:', chrome.runtime.lastError);
-          resolve({});
-          return;
+      try {
+        chrome.storage.local.get([this.STORAGE_KEY], (result) => {
+          if (chrome.runtime.lastError) {
+            // Handle extension context invalidated or other errors
+            if (chrome.runtime.lastError.message?.includes('Extension context invalidated')) {
+              console.warn('⚠️ Extension context invalidated - rules cannot be loaded');
+            } else {
+              console.error('❌ Error loading rules:', chrome.runtime.lastError);
+            }
+            resolve({});
+            return;
+          }
+          resolve(result[this.STORAGE_KEY] || {});
+        });
+      } catch (error) {
+        // Handle synchronous errors (e.g., extension context invalidated)
+        if (error.message?.includes('Extension context invalidated') || error.message?.includes('context invalidated')) {
+          console.warn('⚠️ Extension context invalidated - rules cannot be loaded');
+        } else {
+          console.error('❌ Error accessing storage:', error);
         }
-        resolve(result[this.STORAGE_KEY] || {});
-      });
+        resolve({});
+      }
     });
   },
   
@@ -183,15 +198,28 @@ const StorageManager = {
       }
       
       return new Promise((resolve) => {
-        chrome.storage.local.set({ [this.STORAGE_KEY]: allRules }, () => {
-          if (chrome.runtime.lastError) {
-            console.error('❌ Error saving rule:', chrome.runtime.lastError);
-            resolve(false);
-            return;
+        try {
+          chrome.storage.local.set({ [this.STORAGE_KEY]: allRules }, () => {
+            if (chrome.runtime.lastError) {
+              if (chrome.runtime.lastError.message?.includes('Extension context invalidated')) {
+                console.warn('⚠️ Extension context invalidated - rule cannot be saved');
+              } else {
+                console.error('❌ Error saving rule:', chrome.runtime.lastError);
+              }
+              resolve(false);
+              return;
+            }
+            console.log('✅ Rule saved:', rule.id);
+            resolve(true);
+          });
+        } catch (error) {
+          if (error.message?.includes('Extension context invalidated') || error.message?.includes('context invalidated')) {
+            console.warn('⚠️ Extension context invalidated - rule cannot be saved');
+          } else {
+            console.error('❌ Error accessing storage:', error);
           }
-          console.log('✅ Rule saved:', rule.id);
-          resolve(true);
-        });
+          resolve(false);
+        }
       });
     } catch (error) {
       console.error('❌ Error saving rule:', error);
@@ -221,15 +249,28 @@ const StorageManager = {
       }
       
       return new Promise((resolve) => {
-        chrome.storage.local.set({ [this.STORAGE_KEY]: allRules }, () => {
-          if (chrome.runtime.lastError) {
-            console.error('❌ Error deleting rule:', chrome.runtime.lastError);
-            resolve(false);
-            return;
+        try {
+          chrome.storage.local.set({ [this.STORAGE_KEY]: allRules }, () => {
+            if (chrome.runtime.lastError) {
+              if (chrome.runtime.lastError.message?.includes('Extension context invalidated')) {
+                console.warn('⚠️ Extension context invalidated - rule cannot be deleted');
+              } else {
+                console.error('❌ Error deleting rule:', chrome.runtime.lastError);
+              }
+              resolve(false);
+              return;
+            }
+            console.log('✅ Rule deleted:', ruleId);
+            resolve(true);
+          });
+        } catch (error) {
+          if (error.message?.includes('Extension context invalidated') || error.message?.includes('context invalidated')) {
+            console.warn('⚠️ Extension context invalidated - rule cannot be deleted');
+          } else {
+            console.error('❌ Error accessing storage:', error);
           }
-          console.log('✅ Rule deleted:', ruleId);
-          resolve(true);
-        });
+          resolve(false);
+        }
       });
     } catch (error) {
       console.error('❌ Error deleting rule:', error);
@@ -248,15 +289,28 @@ const StorageManager = {
       delete allRules[pageKey];
       
       return new Promise((resolve) => {
-        chrome.storage.local.set({ [this.STORAGE_KEY]: allRules }, () => {
-          if (chrome.runtime.lastError) {
-            console.error('❌ Error clearing rules:', chrome.runtime.lastError);
-            resolve(false);
-            return;
+        try {
+          chrome.storage.local.set({ [this.STORAGE_KEY]: allRules }, () => {
+            if (chrome.runtime.lastError) {
+              if (chrome.runtime.lastError.message?.includes('Extension context invalidated')) {
+                console.warn('⚠️ Extension context invalidated - rules cannot be cleared');
+              } else {
+                console.error('❌ Error clearing rules:', chrome.runtime.lastError);
+              }
+              resolve(false);
+              return;
+            }
+            console.log('✅ Rules cleared for page:', pageKey);
+            resolve(true);
+          });
+        } catch (error) {
+          if (error.message?.includes('Extension context invalidated') || error.message?.includes('context invalidated')) {
+            console.warn('⚠️ Extension context invalidated - rules cannot be cleared');
+          } else {
+            console.error('❌ Error accessing storage:', error);
           }
-          console.log('✅ Rules cleared for page:', pageKey);
-          resolve(true);
-        });
+          resolve(false);
+        }
       });
     } catch (error) {
       console.error('❌ Error clearing rules:', error);
@@ -374,14 +428,32 @@ const SupabaseSyncManager = {
    */
   async getAuthToken() {
     return new Promise((resolve) => {
-      chrome.storage.local.get(['webeditSupabaseSession'], (result) => {
-        const session = result.webeditSupabaseSession;
-        if (session && session.access_token) {
-          resolve(session.access_token);
+      try {
+        chrome.storage.local.get(['webeditSupabaseSession'], (result) => {
+          if (chrome.runtime.lastError) {
+            if (chrome.runtime.lastError.message?.includes('Extension context invalidated')) {
+              console.warn('⚠️ Extension context invalidated - cannot get auth token');
+            } else {
+              console.error('❌ Error getting auth token:', chrome.runtime.lastError);
+            }
+            resolve(null);
+            return;
+          }
+          const session = result.webeditSupabaseSession;
+          if (session && session.access_token) {
+            resolve(session.access_token);
+          } else {
+            resolve(null);
+          }
+        });
+      } catch (error) {
+        if (error.message?.includes('Extension context invalidated') || error.message?.includes('context invalidated')) {
+          console.warn('⚠️ Extension context invalidated - cannot get auth token');
         } else {
-          resolve(null);
+          console.error('❌ Error accessing storage:', error);
         }
-      });
+        resolve(null);
+      }
     });
   },
   
