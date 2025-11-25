@@ -644,7 +644,21 @@ const SupabaseSyncManager = {
       
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('❌ Supabase sync error:', response.status, errorText);
+        let errorData;
+        try {
+          errorData = JSON.parse(errorText);
+        } catch (e) {
+          errorData = { message: errorText };
+        }
+        
+        // Handle 404 (table doesn't exist) gracefully - this is expected if table hasn't been created yet
+        if (response.status === 404) {
+          console.log('ℹ️ Supabase table not found - sync skipped (table may not be created yet)');
+          return false; // Return false but don't log as error
+        }
+        
+        // Handle other errors
+        console.error('❌ Supabase sync error:', response.status, errorData.message || errorText);
         return false;
       }
       
@@ -652,7 +666,12 @@ const SupabaseSyncManager = {
       return true;
       
     } catch (error) {
-      console.error('❌ Error syncing to Supabase:', error);
+      // Network errors or other exceptions - log but don't break rule saving
+      const errorMsg = error.message || String(error);
+      // Don't spam console with network errors
+      if (!errorMsg.includes('Failed to fetch') && !errorMsg.includes('NetworkError')) {
+        console.error('❌ Error syncing to Supabase:', error);
+      }
       return false;
     }
   },
@@ -693,7 +712,21 @@ const SupabaseSyncManager = {
       
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('❌ Supabase fetch error:', response.status, errorText);
+        let errorData;
+        try {
+          errorData = JSON.parse(errorText);
+        } catch (e) {
+          errorData = { message: errorText };
+        }
+        
+        // Handle 404 (table doesn't exist) gracefully - this is expected if table hasn't been created yet
+        if (response.status === 404) {
+          console.log('ℹ️ Supabase table not found - fetch skipped (table may not be created yet)');
+          return []; // Return empty array but don't log as error
+        }
+        
+        // Handle other errors
+        console.error('❌ Supabase fetch error:', response.status, errorData.message || errorText);
         return [];
       }
       
@@ -713,7 +746,12 @@ const SupabaseSyncManager = {
       }));
       
     } catch (error) {
-      console.error('❌ Error fetching from Supabase:', error);
+      // Network errors or other exceptions - log but don't break rule loading
+      const errorMsg = error.message || String(error);
+      // Don't spam console with network errors
+      if (!errorMsg.includes('Failed to fetch') && !errorMsg.includes('NetworkError')) {
+        console.error('❌ Error fetching from Supabase:', error);
+      }
       return [];
     }
   }
