@@ -978,7 +978,7 @@ function handlePickMouseMove(event) {
   setHover(el, event, "Click to Select");
 }
 
-function handlePickClick(event) {
+async function handlePickClick(event) {
   if (!isPickMode) return;
 
   const el = event.target;
