@@ -444,7 +444,10 @@ const RuleApplier = {
           case 'style':
             if (rule.metadata?.styles) {
               Object.entries(rule.metadata.styles).forEach(([prop, value]) => {
-                el.style[prop] = value;
+                // Convert camelCase to kebab-case for CSS properties
+                const cssProperty = prop.replace(/([A-Z])/g, '-$1').toLowerCase();
+                // Apply with !important to ensure styles override existing ones
+                el.style.setProperty(cssProperty, value, 'important');
               });
               el.setAttribute('data-webedit-styled', rule.id);
             }

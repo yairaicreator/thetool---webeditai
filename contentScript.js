@@ -724,10 +724,15 @@ function attachPanelEventListeners() {
       fontSize: fontSizeInput.value + "px"
     };
     
-    // Apply styles immediately
-    targetEl.style.backgroundColor = styles.backgroundColor;
-    targetEl.style.color = styles.color;
-    targetEl.style.fontSize = styles.fontSize;
+    console.log("🎨 Applying styles:", styles, "to element:", targetEl);
+    
+    // Apply styles immediately with !important to override existing styles
+    // Use setProperty with 'important' priority to ensure styles are applied
+    targetEl.style.setProperty('background-color', styles.backgroundColor, 'important');
+    targetEl.style.setProperty('color', styles.color, 'important');
+    targetEl.style.setProperty('font-size', styles.fontSize, 'important');
+    
+    console.log("✅ Styles applied to element. Current fontSize:", window.getComputedStyle(targetEl).fontSize);
     
     // Save as a persistent rule
     const editRules = await waitForEditRules();
@@ -754,9 +759,12 @@ function attachPanelEventListeners() {
     // Remove applied styles from the selected element
     const targetEl = currentEditTarget.element || selectedEl;
     if (targetEl) {
-      targetEl.style.backgroundColor = "";
-      targetEl.style.color = "";
-      targetEl.style.fontSize = "";
+      // Use removeProperty to properly remove styles including those with !important
+      targetEl.style.removeProperty('background-color');
+      targetEl.style.removeProperty('color');
+      targetEl.style.removeProperty('font-size');
+      
+      console.log("🔄 Styles reset for element:", targetEl);
       showNotification("Styles reset - element restored to original appearance!", "success");
     } else {
       showNotification("No element selected", "error");
