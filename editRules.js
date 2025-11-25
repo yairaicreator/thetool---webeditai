@@ -651,9 +651,9 @@ const SupabaseSyncManager = {
           errorData = { message: errorText };
         }
         
-        // Handle 404 (table doesn't exist) gracefully - this is expected if table hasn't been created yet
-        if (response.status === 404) {
-          console.log('ℹ️ Supabase table not found - sync skipped (table may not be created yet)');
+        // Handle 404 (table doesn't exist) or PGRST205 (schema cache issue) gracefully
+        if (response.status === 404 || (errorData && errorData.code === 'PGRST205')) {
+          console.log('ℹ️ Supabase table not found or schema cache stale - sync skipped');
           return false; // Return false but don't log as error
         }
         
@@ -719,9 +719,9 @@ const SupabaseSyncManager = {
           errorData = { message: errorText };
         }
         
-        // Handle 404 (table doesn't exist) gracefully - this is expected if table hasn't been created yet
-        if (response.status === 404) {
-          console.log('ℹ️ Supabase table not found - fetch skipped (table may not be created yet)');
+        // Handle 404 (table doesn't exist) or PGRST205 (schema cache issue) gracefully
+        if (response.status === 404 || (errorData && errorData.code === 'PGRST205')) {
+          console.log('ℹ️ Supabase table not found or schema cache stale - fetch skipped');
           return []; // Return empty array but don't log as error
         }
         
