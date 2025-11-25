@@ -782,11 +782,15 @@ function attachPanelEventListeners() {
  * @param {number} maxWaitMs - Maximum time to wait in milliseconds
  * @returns {Promise<Object|null>} EditRules instance or null if not available
  */
-async function waitForEditRules(maxWaitMs = 2000) {
+async function waitForEditRules(maxWaitMs = 5000) {
+  // Check immediately first
   if (window.EditRules) {
+    console.log('✅ EditRules available immediately');
     return window.EditRules;
   }
 
+  console.log('⏳ Waiting for EditRules to load...');
+  
   // Wait in 100ms increments
   const checkInterval = 100;
   const maxChecks = Math.floor(maxWaitMs / checkInterval);
@@ -794,10 +798,14 @@ async function waitForEditRules(maxWaitMs = 2000) {
   for (let i = 0; i < maxChecks; i++) {
     await new Promise(resolve => setTimeout(resolve, checkInterval));
     if (window.EditRules) {
+      console.log(`✅ EditRules available after ${(i + 1) * checkInterval}ms`);
       return window.EditRules;
     }
   }
 
+  console.error('❌ EditRules not available after waiting', maxWaitMs, 'ms');
+  console.error('   This might indicate an error in editRules.js');
+  console.error('   Check the console for errors in editRules.js');
   return null;
 }
 
@@ -1319,6 +1327,8 @@ async function initializeExtension() {
       const affectedCount = await editRules.applyRules();
       if (affectedCount > 0) {
         console.log(`✅ Applied rules to ${affectedCount} element(s)`);
+      } else {
+        console.log('ℹ️ No rules to apply for this page');
       }
 
       // Setup mutation observer to reapply rules on DOM changes
@@ -1334,7 +1344,16 @@ async function initializeExtension() {
       }
     }
   } else {
-    console.warn("⚠️ EditRules not available during initialization - rules will not be applied");
+    console.error("❌ EditRules not available during initialization - features will not work");
+    console.error("   Please check the console for errors in editRules.js");
+    console.error("   Try refreshing the page or reloading the extension");
+    
+    // Show a user-friendly notification
+    setTimeout(() => {
+      if (chatPanel && !chatPanel.classList.contains('hidden')) {
+        showNotification("Extension not fully loaded. Please refresh the page.", "error");
+      }
+    }, 1000);
   }
 
   console.log("✅ WebEdit AI initialized");

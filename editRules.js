@@ -1,6 +1,8 @@
 // WebEdit AI - Edit Rules Persistence Module
 // Manages persistent edit rules for DOM modifications across page loads
 
+console.log('📦 editRules.js: Starting to load...');
+
 /**
  * EditRule Type Definition
  * @typedef {Object} EditRule
@@ -903,8 +905,16 @@ const EditRules = {
   }
 };
 
-// Export for use in content script
+// Export for use in content script - set immediately after EditRules is defined
+// This ensures window.EditRules is available as soon as possible
 if (typeof window !== 'undefined') {
-  window.EditRules = EditRules;
+  try {
+    window.EditRules = EditRules;
+    console.log('✅ EditRules initialized and exported to window.EditRules');
+  } catch (error) {
+    console.error('❌ Failed to export EditRules to window:', error);
+  }
+} else {
+  console.warn('⚠️ window is not available - EditRules cannot be exported');
 }
 
