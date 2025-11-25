@@ -138,6 +138,28 @@ function renderAvatar(container, user) {
     delete container._closeMenuTimeoutId;
   }
   
+  // CRITICAL: Remove the sign-in button click handler before rendering avatar
+  // This prevents clicks on the gray area around the avatar from triggering sign-in
+  container.removeEventListener('click', handleSignInClick);
+  
+  // Add a handler to prevent clicks on the gray area (container) from doing anything
+  // Only clicks on the avatar itself should toggle the menu
+  const containerClickHandler = (e) => {
+    // If clicking directly on container (not on avatar or menu), prevent default
+    if (e.target === container) {
+      e.preventDefault();
+      e.stopPropagation();
+      console.log("🔘 Clicked gray area around avatar, ignoring");
+    }
+  };
+  
+  // Remove old handler if exists, then add new one
+  if (container._containerClickHandler) {
+    container.removeEventListener('click', container._containerClickHandler);
+  }
+  container._containerClickHandler = containerClickHandler;
+  container.addEventListener('click', containerClickHandler);
+  
   // Update container classes and title WITHOUT replacing the element
   container.className = 'webedit-nav-btn signin-btn webedit-avatar-container';
   container.title = user.email || 'Account';
@@ -251,6 +273,12 @@ function renderSignInButton(container) {
   if (container._closeMenuTimeoutId) {
     clearTimeout(container._closeMenuTimeoutId);
     delete container._closeMenuTimeoutId;
+  }
+  
+  // Remove the container click handler from avatar if it exists
+  if (container._containerClickHandler) {
+    container.removeEventListener('click', container._containerClickHandler);
+    delete container._containerClickHandler;
   }
   
   // Update container WITHOUT replacing it
@@ -942,7 +970,7 @@ function handlePickClick(event) {
     console.log("📋 Edit target set:", currentEditTarget);
     
     // Add reference message to chat
-    addChatMessage("system", `Reference: ${description}`);
+    addChatMessage("reference", `Reference: ${description}`);
     
     showNotification("Element selected for editing", "success");
   } else {
@@ -1085,11 +1113,38 @@ function renderChatMessages() {
       const msgEl = document.createElement("div");
       msgEl.className = `webedit-chat-message webedit-chat-message-${msg.type}`;
       
-      const contentEl = document.createElement("div");
-      contentEl.className = "webedit-chat-message-content";
-      contentEl.textContent = msg.content;
+      // Special handling for reference messages
+      if (msg.type === 'reference') {
+        // Split "Reference: description" into label and text
+        const content = msg.content;
+        let labelText = 'Reference:';
+        let referenceText = content;
+        
+        if (content.startsWith('Reference:')) {
+          referenceText = content.substring(10).trim(); // Remove "Reference:" prefix
+        }
+        
+        // Create label
+        const labelEl = document.createElement("span");
+        labelEl.className = "webedit-reference-label";
+        labelEl.textContent = labelText;
+        
+        // Create reference text
+        const textEl = document.createElement("div");
+        textEl.className = "webedit-reference-text";
+        textEl.textContent = referenceText;
+        
+        msgEl.appendChild(labelEl);
+        msgEl.appendChild(textEl);
+      } else {
+        // Regular message
+        const contentEl = document.createElement("div");
+        contentEl.className = "webedit-chat-message-content";
+        contentEl.textContent = msg.content;
+        
+        msgEl.appendChild(contentEl);
+      }
       
-      msgEl.appendChild(contentEl);
       chatContainer.appendChild(msgEl);
     });
     
