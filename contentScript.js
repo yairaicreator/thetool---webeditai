@@ -730,16 +730,18 @@ function attachPanelEventListeners() {
     targetEl.style.fontSize = styles.fontSize;
     
     // Save as a persistent rule
-    if (window.EditRules) {
+    const editRules = await waitForEditRules();
+
+    if (editRules) {
       try {
-        await window.EditRules.createRule(targetEl, "style", { styles }, currentUser);
+        await editRules.createRule(targetEl, "style", { styles }, currentUser);
         showNotification("Styles applied successfully!", "success");
       } catch (error) {
         console.error("❌ Error saving style rule:", error);
-        showNotification("Styles applied, but couldn't save rule", "error");
+        showNotification("Styles applied, but couldn't save rule. Please try again.", "error");
       }
     } else {
-      showNotification("Styles applied (not persistent)", "success");
+      showNotification("Styles applied, but couldn't save rule. Please refresh the page.", "error");
     }
   });
 
@@ -766,6 +768,30 @@ function attachPanelEventListeners() {
 // ============================================
 // Element Picking - Separate Remove and Pick Modes
 // ============================================
+
+/**
+ * Wait for EditRules to be available (in case it's still loading)
+ * @param {number} maxWaitMs - Maximum time to wait in milliseconds
+ * @returns {Promise<Object|null>} EditRules instance or null if not available
+ */
+async function waitForEditRules(maxWaitMs = 2000) {
+  if (window.EditRules) {
+    return window.EditRules;
+  }
+
+  // Wait in 100ms increments
+  const checkInterval = 100;
+  const maxChecks = Math.floor(maxWaitMs / checkInterval);
+
+  for (let i = 0; i < maxChecks; i++) {
+    await new Promise(resolve => setTimeout(resolve, checkInterval));
+    if (window.EditRules) {
+      return window.EditRules;
+    }
+  }
+
+  return null;
+}
 
 function ensureFloatingLabel() {
   if (floatingLabel) return floatingLabel;
@@ -873,20 +899,23 @@ async function handleRemoveClick(event) {
   // Hide the element immediately
   el.style.display = "none";
 
+  // Wait for EditRules to be available (in case it's still loading)
+  const editRules = await waitForEditRules();
+
   // Create and save a persistent rule
-  if (window.EditRules) {
+  if (editRules) {
     try {
-      const rule = await window.EditRules.createRule(el, "remove", {}, currentUser);
-      console.log("✅ Rule created:", rule);
+      const rule = await editRules.createRule(el, "remove", {}, currentUser);
+      console.log("✅ Rule created and saved:", rule);
 
       showNotification("You successfully removed this element.", "success");
     } catch (error) {
       console.error("❌ Error creating rule:", error);
-      showNotification("Element removed, but couldn't save rule", "error");
+      showNotification("Element removed, but couldn't save rule. Please try again.", "error");
     }
   } else {
-    console.error("❌ EditRules not available");
-    showNotification("Element removed (not persistent)", "error");
+    console.error("❌ EditRules not available after waiting");
+    showNotification("Element removed, but couldn't save rule. Please refresh the page.", "error");
   }
 
   stopRemoveMode();
@@ -962,7 +991,9 @@ function handlePickClick(event) {
   selectedEl.classList.add("webedit-selected");
 
   // Generate selector and description
-  if (window.EditRules) {
+  const editRules = await waitForEditRules();
+  
+  if (editRules) {
     const selector = generateSelectorForElement(el);
     const description = generateDescriptionForElement(el);
     const pageKey = getPageKey();
@@ -982,8 +1013,8 @@ function handlePickClick(event) {
 
     showNotification("Element selected for editing", "success");
   } else {
-    console.error("❌ EditRules not available");
-    showNotification("Element selected (limited functionality)", "error");
+    console.error("❌ EditRules not available after waiting");
+    showNotification("Element selected, but some features may not work. Please refresh the page.", "error");
   }
 
   stopPickMode();
@@ -1272,10 +1303,12 @@ async function initializeExtension() {
   // Create panel
   createPanel();
 
-  // Apply saved rules for this page
-  if (window.EditRules) {
+  // Wait for EditRules to be available, then apply saved rules for this page
+  const editRules = await waitForEditRules();
+  
+  if (editRules) {
     try {
-      const affectedCount = await window.EditRules.applyRules();
+      const affectedCount = await editRules.applyRules();
       if (affectedCount > 0) {
         console.log(`✅ Applied rules to ${affectedCount} element(s)`);
       }
@@ -1283,7 +1316,7 @@ async function initializeExtension() {
       // Setup mutation observer to reapply rules on DOM changes
       // Only setup if extension context is valid
       if (isExtensionContextValid()) {
-        window.EditRules.setupMutationObserver();
+        editRules.setupMutationObserver();
       }
     } catch (error) {
       // Silently handle context invalidated errors
@@ -1292,6 +1325,8 @@ async function initializeExtension() {
         console.error("❌ Error applying rules:", error);
       }
     }
+  } else {
+    console.warn("⚠️ EditRules not available during initialization - rules will not be applied");
   }
 
   console.log("✅ WebEdit AI initialized");

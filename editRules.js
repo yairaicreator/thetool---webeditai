@@ -790,8 +790,13 @@ const EditRules = {
     
     const saved = await StorageManager.saveRule(rule);
     
-    if (saved && user) {
-      // Sync to Supabase in background
+    // Throw error if saving failed - this ensures callers know the rule wasn't persisted
+    if (!saved) {
+      throw new Error('Failed to save rule to storage');
+    }
+    
+    if (user) {
+      // Sync to Supabase in background (don't fail if this fails)
       SupabaseSyncManager.syncRule(rule, user).catch(err => {
         console.error('❌ Failed to sync to Supabase:', err);
       });
