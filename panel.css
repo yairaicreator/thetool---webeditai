@@ -703,3 +703,376 @@ body.webedit-panel-open {
     z-index: 2147483647;
   }
 }
+
+/* ============================================ */
+/* Add Feature Panel */
+/* ============================================ */
+
+.webedit-add-panel {
+  background: white;
+  border-radius: 16px;
+  padding: 16px;
+  margin: 16px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  display: none;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.webedit-add-panel.visible {
+  display: flex;
+}
+
+.webedit-panel-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.webedit-panel-section-header h3 {
+  font-size: 16px;
+  margin: 0;
+  color: #111827;
+  font-weight: 600;
+}
+
+.webedit-panel-close-btn {
+  background: #f3f4f6;
+  border: none;
+  color: #6b7280;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  line-height: 1;
+  padding: 0;
+}
+
+.webedit-panel-close-btn:hover {
+  background: #e5e7eb;
+  color: #374151;
+  transform: scale(1.1);
+}
+
+.webedit-btn-icon {
+  background: transparent;
+  border: none;
+  color: #6b7280;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.webedit-btn-icon:hover {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+/* Step indicator */
+.webedit-steps {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.webedit-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.webedit-step.active {
+  color: #6366f1;
+  font-weight: 500;
+}
+
+.webedit-step.completed {
+  color: #10b981;
+}
+
+.webedit-step-number {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #e5e7eb;
+  color: #9ca3af;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.webedit-step.active .webedit-step-number {
+  background: #6366f1;
+  color: white;
+}
+
+.webedit-step.completed .webedit-step-number {
+  background: #10b981;
+  color: white;
+}
+
+.webedit-step-label {
+  white-space: nowrap;
+}
+
+/* Add step sections */
+.webedit-add-step {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.webedit-section-info {
+  font-size: 12px;
+  color: #6b7280;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.webedit-btn {
+  padding: 10px 16px;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.2s;
+  width: 100%;
+}
+
+.webedit-selected-target {
+  background: #f0fdf4;
+  border: 1px solid #86efac;
+  border-radius: 8px;
+  padding: 12px;
+  margin-top: 8px;
+}
+
+.webedit-target-label {
+  font-size: 11px;
+  color: #16a34a;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.webedit-target-preview {
+  font-size: 12px;
+  color: #374151;
+  font-family: 'Courier New', monospace;
+  word-break: break-all;
+}
+
+/* Form fields */
+.webedit-field-row input[type="text"],
+.webedit-field-row select,
+.webedit-field-row textarea {
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid #d1d5db;
+  font-size: 13px;
+  outline: none;
+  font-family: inherit;
+}
+
+.webedit-field-row input[type="text"]:focus,
+.webedit-field-row select:focus,
+.webedit-field-row textarea:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.webedit-field-row textarea {
+  resize: vertical;
+  min-height: 60px;
+}
+
+.webedit-field-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.webedit-field-row label {
+  font-size: 12px;
+  color: #374151;
+  font-weight: 500;
+}
+
+.webedit-add-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* ============================================ */
+/* Manage Features Panel */
+/* ============================================ */
+
+.webedit-manage-panel {
+  background: white;
+  border-radius: 16px;
+  padding: 16px;
+  margin: 16px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  display: none;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.webedit-manage-panel.visible {
+  display: flex;
+}
+
+.webedit-features-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.webedit-empty-message {
+  font-size: 12px;
+  color: #9ca3af;
+  text-align: center;
+  padding: 24px;
+  margin: 0;
+}
+
+.webedit-feature-item {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: all 0.2s;
+}
+
+.webedit-feature-item.disabled {
+  opacity: 0.5;
+}
+
+.webedit-feature-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.webedit-feature-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.webedit-feature-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.webedit-feature-type {
+  display: inline-block;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #dbeafe;
+  color: #1e40af;
+  margin-top: 4px;
+  font-weight: 500;
+}
+
+.webedit-feature-type.note {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.webedit-feature-type.button {
+  background: #ddd6fe;
+  color: #5b21b6;
+}
+
+.webedit-feature-type.badge {
+  background: #fecaca;
+  color: #991b1b;
+}
+
+.webedit-feature-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.webedit-toggle {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  background: #d1d5db;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+
+.webedit-toggle.enabled {
+  background: #10b981;
+}
+
+.webedit-toggle-slider {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  background: white;
+  border-radius: 50%;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.webedit-toggle.enabled .webedit-toggle-slider {
+  transform: translateX(20px);
+}
+
+.webedit-feature-delete-btn {
+  background: transparent;
+  border: 1px solid #ef4444;
+  color: #ef4444;
+  padding: 4px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 500;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.webedit-feature-delete-btn:hover {
+  background: #ef4444;
+  color: white;
+}
