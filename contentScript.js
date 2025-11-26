@@ -543,7 +543,10 @@ function createPanel() {
     <div class="webedit-manage-panel" id="webedit-manage-panel">
       <div class="webedit-panel-section-header">
         <h3>Features on this site</h3>
-        <button class="webedit-btn-icon" id="webedit-refresh-features-btn" title="Refresh">↻</button>
+        <div style="display: flex; gap: 8px;">
+          <button class="webedit-btn-icon" id="webedit-refresh-features-btn" title="Refresh">↻</button>
+          <button class="webedit-panel-close-btn" id="webedit-manage-close-btn">×</button>
+        </div>
       </div>
       <div class="webedit-features-list" id="webedit-features-list">
         <p class="webedit-empty-message">No features added yet</p>
@@ -809,11 +812,33 @@ function attachPanelEventListeners() {
   if (addCloseBtn) {
     addCloseBtn.addEventListener("click", () => {
       const addPanel = document.getElementById("webedit-add-panel");
+      const managePanel = document.getElementById("webedit-manage-panel");
+      
       if (addPanel) {
         addPanel.classList.remove("visible");
       }
+      
+      // Also hide the Manage Features panel when closing Add panel
+      if (managePanel) {
+        managePanel.classList.remove("visible");
+      }
+      
       // Reset Add feature mode and clean up listeners
       isAddFeatureMode = false;
+      
+      // Reset current edit target
+      currentEditTarget = {
+        element: null,
+        selector: null,
+        description: null,
+        pageKey: null
+      };
+      
+      // Clear selected target display
+      const targetDisplay = document.getElementById("webedit-selected-target");
+      if (targetDisplay) {
+        targetDisplay.style.display = "none";
+      }
       
       // If Pick Mode is active (user clicked "Pick location" but didn't select yet), stop it
       if (isPickMode) {
@@ -832,6 +857,13 @@ function attachPanelEventListeners() {
     pickLocationBtn.addEventListener("click", () => {
       console.log("📍 Pick location clicked");
       isAddFeatureMode = true;
+      
+      // Hide the Manage Features panel when picking location
+      const managePanel = document.getElementById("webedit-manage-panel");
+      if (managePanel) {
+        managePanel.classList.remove("visible");
+      }
+      
       startPickMode();
     });
   }
@@ -906,7 +938,7 @@ function attachPanelEventListeners() {
           element: null,
           selector: null,
           description: null,
-          pageKey: null
+        pageKey: null
         };
         
         // Reset to step 1
@@ -917,7 +949,17 @@ function attachPanelEventListeners() {
         document.removeEventListener("keydown", handleModeEscapeKey, true);
         hideExitModeButton();
         
-        // Update features list
+        // Hide Add panel but show updated Manage panel
+        const addPanel = document.getElementById("webedit-add-panel");
+        if (addPanel) {
+          addPanel.classList.remove("visible");
+        }
+        
+        // Update and show features list
+        const managePanel = document.getElementById("webedit-manage-panel");
+        if (managePanel) {
+          managePanel.classList.add("visible");
+        }
         await renderFeaturesManagementList();
         
         // Clear selected target display
@@ -937,6 +979,17 @@ function attachPanelEventListeners() {
     refreshFeaturesBtn.addEventListener("click", async () => {
       await renderFeaturesManagementList();
       showNotification("Features list refreshed", "info");
+    });
+  }
+
+  // Manage panel close button
+  const manageCloseBtn = document.getElementById("webedit-manage-close-btn");
+  if (manageCloseBtn) {
+    manageCloseBtn.addEventListener("click", () => {
+      const managePanel = document.getElementById("webedit-manage-panel");
+      if (managePanel) {
+        managePanel.classList.remove("visible");
+      }
     });
   }
 
@@ -1130,6 +1183,22 @@ function handleModeEscapeKey(event) {
         description: null,
         pageKey: null
       };
+      
+      // Hide Add and Manage panels
+      const addPanel = document.getElementById("webedit-add-panel");
+      const managePanel = document.getElementById("webedit-manage-panel");
+      if (addPanel) {
+        addPanel.classList.remove("visible");
+      }
+      if (managePanel) {
+        managePanel.classList.remove("visible");
+      }
+      
+      // Clear selected target display
+      const targetDisplay = document.getElementById("webedit-selected-target");
+      if (targetDisplay) {
+        targetDisplay.style.display = "none";
+      }
       
       // Reset chat input placeholder
       const chatInput = document.getElementById("webedit-chat-input");
@@ -1658,9 +1727,10 @@ function renderChatMessages() {
 
     // Render reference messages to their own container
     if (referenceMessages.length > 0) {
-      referenceMessages.forEach(msg => {
+      referenceMessages.forEach((msg, index) => {
         const msgEl = document.createElement("div");
         msgEl.className = `webedit-chat-message webedit-chat-message-${msg.type}`;
+        msgEl.style.position = "relative";
 
         // Split "Reference: description" into label and text
         const content = msg.content;
@@ -1681,8 +1751,24 @@ function renderChatMessages() {
         textEl.className = "webedit-reference-text";
         textEl.textContent = referenceText;
 
+        // Create close button for reference
+        const closeBtn = document.createElement("button");
+        closeBtn.className = "webedit-reference-close-btn";
+        closeBtn.innerHTML = "×";
+        closeBtn.title = "Remove reference";
+        closeBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          // Find the index in chatMessages array
+          const msgIndex = chatMessages.findIndex(m => m.timestamp === msg.timestamp && m.type === 'reference');
+          if (msgIndex !== -1) {
+            chatMessages.splice(msgIndex, 1);
+            renderChatMessages();
+          }
+        });
+
         msgEl.appendChild(labelEl);
         msgEl.appendChild(textEl);
+        msgEl.appendChild(closeBtn);
         referencesContainer.appendChild(msgEl);
       });
     }
