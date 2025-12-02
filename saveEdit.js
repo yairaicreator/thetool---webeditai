@@ -10,8 +10,10 @@ console.log('📦 saveEdit.js: Loading...');
 /**
  * @typedef {Object} Website
  * @property {string} id - UUID
- * @property {string} web_url - The full URL of the site
- * @property {string} web_name - The website title
+ * @property {string} full_url - Exact page URL the user was on
+ * @property {string} origin - Domain / site origin
+ * @property {string} path - Path portion after the origin
+ * @property {string} title - Human-readable page title
  * @property {string} user_id - User UUID (optional)
  */
 
@@ -19,8 +21,13 @@ console.log('📦 saveEdit.js: Loading...');
  * @typedef {Object} Edit
  * @property {string} id - UUID
  * @property {string} website_id - Foreign key to websites
+ * @property {string} edit_type - "add" | "remove" | "customize"
+ * @property {string} status - Edit status (default: active)
+ * @property {string} name - Human-readable edit name
  * @property {string} description - Short text explaining the edit
  * @property {Object} payload - JSON data with full details
+ * @property {string|null} before_image_url - Optional before image reference
+ * @property {string|null} after_image_url - Optional after image reference
  * @property {string} created_at - Timestamp
  * @property {string} user_id - User UUID (optional)
  */
@@ -98,21 +105,32 @@ async function dbRequest(endpoint, method, body = null) {
 
 /**
  * Step A: Ensure a row exists in the 'websites' table
- * Uses web_url as the unique key (conceptually)
+ * Uses full_url as the unique key (conceptually)
  */
 async function getOrCreateWebsite() {
   const fullUrl = window.location.href;
   const title = document.title || 'Untitled Page';
+  let origin = window.location.origin || '';
+  let path = window.location.pathname || '/';
+
+  try {
+    const urlObj = new URL(fullUrl);
+    origin = urlObj.origin || origin;
+    const pathPart = `${urlObj.pathname || '/'}${urlObj.search || ''}${urlObj.hash || ''}`;
+    path = pathPart || '/';
+  } catch (error) {
+    console.warn('[SaveEdit] Failed to parse URL, falling back to location parts:', error);
+  }
 
   const auth = await getAuth();
   if (!auth) return null;
 
   try {
-    // 1. Try to SELECT existing website by web_url
+    // 1. Try to SELECT existing website by full_url
     // Note: In a real app, we'd likely use origin or normalized URL. 
-    // For MVP, we query exact match on web_url for this user.
+    // For MVP, we query exact match on full_url for this user.
     const query = new URLSearchParams({
-      web_url: `eq.${fullUrl}`,
+      full_url: `eq.${fullUrl}`,
       select: 'id'
     });
 
@@ -125,8 +143,10 @@ async function getOrCreateWebsite() {
     // 2. INSERT if not found
     console.log('[SaveEdit] Creating new website row...');
     const newSite = await dbRequest('/rest/v1/websites', 'POST', {
-      web_url: fullUrl,
-      web_name: title,
+      full_url: fullUrl,
+      origin,
+      path,
+      title,
       user_id: auth.userId
     });
 
@@ -158,17 +178,23 @@ async function saveEditToSupabase(params) {
 
     // 2. Prepare Edit Data
     // description fallback
-    const desc = params.description || params.name || `New ${params.type} edit`;
+    const desc = params.description || params.name || `New ${params.type || 'add'} edit`;
 
     // payload is the full details
     const payload = params.payload || {};
+    const name = params.name || desc;
 
     // 3. INSERT into edits table
     const editRow = {
       website_id: website.id,
+      user_id: auth.userId,
+      edit_type: params.type || 'add',
+      status: params.status || 'active',
+      name,
       description: desc,
       payload: payload,
-      user_id: auth.userId,
+      before_image_url: params.beforeImageUrl || params.beforeImage || null,
+      after_image_url: params.afterImageUrl || params.afterImage || null
       // created_at is default now()
     };
 
