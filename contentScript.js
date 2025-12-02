@@ -15,6 +15,7 @@ let isPanelOpen = false;
 let currentUser = null; // Store current authenticated user
 let activeInteractionMode = null; // Track which manual mode is currently active (pick/remove)
 const WEBEDIT_HISTORY_URL = "https://www.webeditai.com/#/history";
+let authUiUpdatePending = false;
 
 // Selected element for editing (used by Pick mode)
 let currentEditTarget = {
@@ -102,12 +103,20 @@ async function checkAuthStatus() {
 function updateAuthUI() {
   console.log("🔄 updateAuthUI called, currentUser:", currentUser ? currentUser.email : "null");
 
-  const signinBtn = document.getElementById("webedit-signin-btn");
-  if (!signinBtn) {
-    console.error("❌ Sign-in button element not found!");
+  if (!chatPanel) {
+    console.log("⏳ Chat panel not ready yet, deferring auth UI update");
+    authUiUpdatePending = true;
     return;
   }
 
+  const signinBtn = document.getElementById("webedit-signin-btn");
+  if (!signinBtn) {
+    console.warn("⚠️ Sign-in button element not available yet, deferring auth UI update");
+    authUiUpdatePending = true;
+    return;
+  }
+
+  authUiUpdatePending = false;
   console.log("✅ Found sign-in button element, ID:", signinBtn.id);
 
   if (currentUser) {
@@ -531,8 +540,8 @@ function createPanel() {
     <!-- Main Content Area -->
     <div class="webedit-main-content">
       <div class="webedit-chat-messages" id="webedit-chat-messages">
-        <div class="webedit-chat-placeholder">
-          <p>Select a tool from Visual Edit menu below to get started</p>
+      <div class="webedit-chat-placeholder">
+        <p>Select a tool from Visual Edit menu below to get started</p>
         </div>
       </div>
       <div class="webedit-references-container" id="webedit-references-container"></div>
@@ -608,6 +617,12 @@ function createPanel() {
   chatPanel = panel;
 
   attachPanelEventListeners();
+
+  if (authUiUpdatePending) {
+    console.log("🔁 Running deferred auth UI update now that panel is ready");
+    updateAuthUI();
+  }
+
   return panel;
 }
 
@@ -734,7 +749,7 @@ function attachPanelEventListeners() {
   // Pick element button - starts Pick mode for element selection (not removal)
   const pickBtn = document.getElementById("webedit-pick-btn");
   if (pickBtn) {
-    pickBtn.addEventListener("click", () => {
+  pickBtn.addEventListener("click", () => {
       console.log("🔘 Pick Element button clicked");
       // Stop all active modes before starting Pick mode
       stopRemoveMode();
@@ -753,7 +768,7 @@ function attachPanelEventListeners() {
       } else if (activeInteractionMode === "remove") {
         stopRemoveMode();
       }
-    });
+  });
   }
 
   // Chat input
@@ -1018,7 +1033,7 @@ function startRemoveMode() {
 
       showNotification("Remove mode active - Click an element to remove it", "info");
       showModeIndicator("remove");
-    }
+}
 
 function stopRemoveMode() {
   console.log("🗑️ Stopping Remove mode");
@@ -1032,14 +1047,14 @@ function stopRemoveMode() {
 function handleRemoveMouseMove(event) {
   if (!isRemoveMode) return;
   const el = event.target;
-
+  
   // Don't pick the panel itself or its children
-  if (!el || el === document.documentElement || el === document.body ||
-    el.closest("#webedit-chat-panel")) {
+  if (!el || el === document.documentElement || el === document.body || 
+      el.closest("#webedit-chat-panel")) {
     clearHover();
     return;
   }
-
+  
   setHover(el, event, "Click to Remove");
 }
 
@@ -1047,10 +1062,10 @@ async function handleRemoveClick(event) {
   if (!isRemoveMode) return;
 
   const el = event.target;
-
+  
   // Don't pick the panel itself or its children
-  if (!el || el === document.documentElement || el === document.body ||
-    el.closest("#webedit-chat-panel")) {
+  if (!el || el === document.documentElement || el === document.body || 
+      el.closest("#webedit-chat-panel")) {
     return;
   }
 
@@ -1219,7 +1234,7 @@ async function handlePickClick(event) {
     }
     console.log("✨ Add feature mode remains active after element selection");
   }
-}
+  }
 
 // Helper functions for Pick mode
 function generateSelectorForElement(el) {
@@ -1401,7 +1416,7 @@ function renderChatMessages() {
 
     // Scroll to bottom of chat
     chatContainer.scrollTop = chatContainer.scrollHeight;
-  }
+}
 }
 
 // ============================================
@@ -1755,7 +1770,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ success: true });
     return true;
   }
-
+  
   // Respond to PING messages (for connection testing)
   if (message.type === "PING") {
     sendResponse({ status: "ready" });
@@ -1786,7 +1801,7 @@ async function initializeExtension() {
   console.log("🚀 WebEdit AI initializing...");
 
   // Create panel
-  createPanel();
+    createPanel();
 
   // Wait for EditRules to be available, then apply saved rules for this page
   const editRules = await waitForEditRules();
@@ -1876,8 +1891,8 @@ function handleUrlChange() {
             setTimeout(() => {
               isApplyingRules = false;
             }, 100);
-          });
-      } else {
+  });
+} else {
         // Synchronous execution - reset flag after a delay
         setTimeout(() => {
           isApplyingRules = false;
