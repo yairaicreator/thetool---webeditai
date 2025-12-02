@@ -99,10 +99,20 @@ async function getCurrentUser() {
 
 /**
  * Check if session is expired
+ * Validates existence of session and expiration time
  */
 function isSessionExpired(session) {
-  if (!session || !session.expires_at) return true;
-  return Date.now() / 1000 > session.expires_at;
+  if (!session) return true;
+  
+  // If no expires_at, assume it's valid (some session objects might be minimal)
+  // or check if we have a user object at least
+  if (!session.expires_at) {
+    // If we have a user, we assume it's valid for now to prevent aggressive logout
+    return !session.user;
+  }
+  
+  // Check expiration with a small buffer (60s) to avoid edge cases
+  return (Date.now() / 1000) > (session.expires_at + 60);
 }
 
 /**
