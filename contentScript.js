@@ -298,6 +298,63 @@ function renderSignInButton(container) {
 }
 
 /**
+ * Check if user is authenticated and show sign-in prompt if not
+ * @returns {boolean} True if authenticated, false otherwise
+ */
+function requireAuthentication() {
+  if (!currentUser) {
+    console.log("🔒 Authentication required - user not signed in");
+    showAuthenticationPrompt();
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Show authentication prompt notification with sign-in button
+ */
+function showAuthenticationPrompt() {
+  const mainContent = document.querySelector(".webedit-main-content");
+  if (!mainContent) return;
+
+  // Remove any existing notification first
+  const existingNotification = mainContent.querySelector(".webedit-notification");
+  if (existingNotification) {
+    existingNotification.remove();
+  }
+
+  const notification = document.createElement("div");
+  notification.className = "webedit-notification webedit-notification-auth";
+  notification.innerHTML = `
+    <div class="webedit-notification-content">
+      <span class="webedit-notification-icon">🔒</span>
+      <div class="webedit-notification-text">
+        <div class="webedit-notification-message">Please sign in to use this feature</div>
+        <button class="webedit-notification-btn" id="webedit-auth-prompt-btn">Sign In</button>
+      </div>
+    </div>
+  `;
+
+  // Append to mainContent (positioned absolutely, so it overlays)
+  mainContent.appendChild(notification);
+
+  // Add click handler to sign-in button
+  const signInBtn = notification.querySelector("#webedit-auth-prompt-btn");
+  if (signInBtn) {
+    signInBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      handleSignInClick();
+      notification.remove();
+    });
+  }
+
+  // Auto-remove after 5 seconds
+  setTimeout(() => {
+    notification.remove();
+  }, 5000);
+}
+
+/**
  * Handle sign in button click - opens production login page
  */
 function handleSignInClick() {
@@ -706,6 +763,13 @@ function attachPanelEventListeners() {
     btn.addEventListener("click", async (e) => {
       console.log("🔘 Tool button clicked:", btn.dataset.tool);
       
+      // Check authentication before allowing tool use
+      if (!requireAuthentication()) {
+        // Close menu without changing state
+        toolsMenu.classList.remove("visible");
+        return;
+      }
+      
       // Update active state
       toolButtons.forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
@@ -760,6 +824,12 @@ function attachPanelEventListeners() {
   if (pickBtn) {
     pickBtn.addEventListener("click", () => {
       console.log("🔘 Pick Element button clicked");
+      
+      // Check authentication before allowing pick mode
+      if (!requireAuthentication()) {
+        return;
+      }
+      
       // Stop all active modes before starting Pick mode
       stopRemoveMode();
       stopPickMode();
@@ -856,6 +926,12 @@ function attachPanelEventListeners() {
   if (pickLocationBtn) {
     pickLocationBtn.addEventListener("click", () => {
       console.log("📍 Pick location clicked");
+      
+      // Check authentication (redundant check as panel shouldn't be visible, but for safety)
+      if (!requireAuthentication()) {
+        return;
+      }
+      
       isAddFeatureMode = true;
       
       // Hide the Manage Features panel when picking location
@@ -877,6 +953,11 @@ function attachPanelEventListeners() {
   if (createFeatureBtn) {
     createFeatureBtn.addEventListener("click", async () => {
       console.log("✨ Create feature clicked");
+      
+      // Check authentication (redundant check as panel shouldn't be visible, but for safety)
+      if (!requireAuthentication()) {
+        return;
+      }
       
       // Get form values
       const name = document.getElementById("webedit-feature-name").value.trim();
@@ -1014,6 +1095,11 @@ function attachPanelEventListeners() {
   });
 
   applyBtn.addEventListener("click", async () => {
+    // Check authentication
+    if (!requireAuthentication()) {
+      return;
+    }
+    
     // Use current edit target if available, otherwise use selectedEl
     const targetEl = currentEditTarget.element || selectedEl;
     
@@ -2325,6 +2411,11 @@ async function renderFeaturesManagementList() {
   // Attach event listeners to toggles and delete buttons
   featuresList.querySelectorAll('.webedit-toggle').forEach(toggle => {
     toggle.addEventListener('click', async (e) => {
+      // Check authentication
+      if (!requireAuthentication()) {
+        return;
+      }
+      
       const featureId = toggle.dataset.featureId;
       const currentlyEnabled = toggle.classList.contains('enabled');
       const newEnabled = !currentlyEnabled;
@@ -2363,6 +2454,11 @@ async function renderFeaturesManagementList() {
   
   featuresList.querySelectorAll('.webedit-feature-delete-btn').forEach(btn => {
     btn.addEventListener('click', async (e) => {
+      // Check authentication
+      if (!requireAuthentication()) {
+        return;
+      }
+      
       const featureId = btn.dataset.featureId;
       
       if (!confirm('Delete this feature?')) return;

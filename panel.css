@@ -227,6 +227,12 @@
   color: #991b1b;
 }
 
+.webedit-notification-auth {
+  background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+  border-left: 4px solid #f59e0b;
+  color: #92400e;
+}
+
 .webedit-notification-content {
   display: flex;
   align-items: center;
@@ -236,11 +242,39 @@
 .webedit-notification-icon {
   font-size: 16px;
   font-weight: bold;
+  flex-shrink: 0;
+}
+
+.webedit-notification-text {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
 }
 
 .webedit-notification-message {
   font-size: 13px;
   font-weight: 500;
+}
+
+.webedit-notification-btn {
+  background: linear-gradient(90deg, #f59e0b, #d97706);
+  color: white;
+  border: none;
+  padding: 6px 16px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 2px 4px rgba(245, 158, 11, 0.3);
+  align-self: flex-start;
+}
+
+.webedit-notification-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 3px 6px rgba(245, 158, 11, 0.4);
+  background: linear-gradient(90deg, #d97706, #b45309);
 }
 
 .webedit-close-btn {
