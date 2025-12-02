@@ -925,22 +925,34 @@ const EditRules = {
     
     // Export to window
     window.EditRules = EditRules;
-    console.log('✅ EditRules initialized and exported to window.EditRules');
     
-    // Also set a flag to indicate successful export
+    // Set flag immediately after successful export to prevent overwrite
     window.__webeditEditRulesLoaded = true;
+    
+    console.log('✅ EditRules initialized and exported to window.EditRules');
     
   } catch (error) {
     console.error('❌ Failed to export EditRules to window:', error);
     console.error('   Error stack:', error.stack);
     
-    // Try to export a minimal error handler
+    // Only set error object if export hasn't already succeeded
+    // Check if window.EditRules exists and is valid (not an error object)
     if (typeof window !== 'undefined') {
-      window.EditRules = {
-        _error: true,
-        _errorMessage: error.message,
-        _errorStack: error.stack
-      };
+      const existingEditRules = window.EditRules;
+      
+      // Only overwrite if:
+      // 1. EditRules doesn't exist yet, OR
+      // 2. EditRules exists but is an error object (previous failed attempt)
+      if (!existingEditRules || (existingEditRules._error === true)) {
+        window.EditRules = {
+          _error: true,
+          _errorMessage: error.message,
+          _errorStack: error.stack
+        };
+      } else {
+        // Export succeeded but something else failed - don't overwrite the valid export
+        console.warn('⚠️ Error occurred after successful EditRules export - keeping valid export');
+      }
     }
   }
 })();
