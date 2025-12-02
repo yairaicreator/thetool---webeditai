@@ -103,7 +103,7 @@ async function dbRequest(endpoint, method, body = null) {
 async function getOrCreateWebsite() {
   const fullUrl = window.location.href;
   const title = document.title || 'Untitled Page';
-  
+
   const auth = await getAuth();
   if (!auth) return null;
 
@@ -125,9 +125,9 @@ async function getOrCreateWebsite() {
     // 2. INSERT if not found
     console.log('[SaveEdit] Creating new website row...');
     const newSite = await dbRequest('/rest/v1/websites', 'POST', {
-      web_url: full_url,
+      web_url: fullUrl,
       web_name: title,
-      user_id: auth.user_id
+      user_id: auth.userId
     });
 
     console.log('[SaveEdit] ✅ Created website:', newSite.id);
@@ -144,7 +144,7 @@ async function getOrCreateWebsite() {
  */
 async function saveEditToSupabase(params) {
   // params: { type, name, description, payload, ... }
-  
+
   const auth = await getAuth();
   if (!auth) {
     console.log('[SaveEdit] User not signed in. Edit saved locally but not to Supabase.');
@@ -159,21 +159,21 @@ async function saveEditToSupabase(params) {
     // 2. Prepare Edit Data
     // description fallback
     const desc = params.description || params.name || `New ${params.type} edit`;
-    
+
     // payload is the full details
     const payload = params.payload || {};
 
     // 3. INSERT into edits table
     const editRow = {
-      website_id: website_id,
-      description: description,
+      website_id: website.id,
+      description: desc,
       payload: payload,
-      user_id: auth.user_id,
+      user_id: auth.userId,
       // created_at is default now()
     };
 
     const savedEdit = await dbRequest('/rest/v1/edits', 'POST', editRow);
-    
+
     console.log('[SaveEdit] ✅ Edit saved to Supabase:', savedEdit);
 
   } catch (error) {

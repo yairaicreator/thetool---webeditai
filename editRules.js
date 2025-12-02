@@ -44,7 +44,7 @@ function generateSelector(element) {
   if (element.id) {
     return `#${element.id}`;
   }
-  
+
   // Try unique class combination
   if (element.className && typeof element.className === 'string') {
     const classes = element.className.trim().split(/\s+/).filter(c => c && !c.startsWith('webedit-'));
@@ -56,20 +56,20 @@ function generateSelector(element) {
       }
     }
   }
-  
+
   // Build path from body
   const path = [];
   let current = element;
-  
+
   while (current && current !== document.body) {
     let selector = current.tagName.toLowerCase();
-    
+
     if (current.id) {
       selector += `#${current.id}`;
       path.unshift(selector);
       break;
     }
-    
+
     // Add nth-child if needed for uniqueness
     const parent = current.parentElement;
     if (parent) {
@@ -81,11 +81,11 @@ function generateSelector(element) {
         selector += `:nth-child(${index})`;
       }
     }
-    
+
     path.unshift(selector);
     current = parent;
   }
-  
+
   return path.join(' > ');
 }
 
@@ -97,12 +97,12 @@ function generateSelector(element) {
 function generateElementDescription(element) {
   const tagName = element.tagName.toLowerCase();
   const id = element.id ? `#${element.id}` : '';
-  const classes = element.className && typeof element.className === 'string' 
-    ? '.' + element.className.trim().split(/\s+/).filter(c => c && !c.startsWith('webedit-')).join('.') 
+  const classes = element.className && typeof element.className === 'string'
+    ? '.' + element.className.trim().split(/\s+/).filter(c => c && !c.startsWith('webedit-')).join('.')
     : '';
-  
+
   let description = tagName + id + classes;
-  
+
   // Add text content if short enough
   const text = element.textContent?.trim() || '';
   if (text && text.length < 50) {
@@ -110,17 +110,17 @@ function generateElementDescription(element) {
   } else if (text && text.length >= 50) {
     description += ` "${text.substring(0, 47)}..."`;
   }
-  
+
   // Add href for links
   if (element.tagName === 'A' && element.href) {
     description += ` → ${element.href}`;
   }
-  
+
   // Add src for images
   if (element.tagName === 'IMG' && element.src) {
     description += ` src="${element.src}"`;
   }
-  
+
   return description;
 }
 
@@ -139,18 +139,18 @@ function isExtensionContextValid() {
     if (typeof chrome === 'undefined') {
       return false; // Running in page world, not extension context
     }
-    
+
     // chrome.runtime.id is the definitive check - it only exists in extension context
     // If it doesn't exist, we're in page world (not extension context)
     if (!chrome.runtime || typeof chrome.runtime.id === 'undefined') {
       return false; // Not in extension context
     }
-    
+
     // Check if chrome.storage exists (should always exist in content scripts)
     if (!chrome.storage || !chrome.storage.local) {
       return false; // Storage API not available
     }
-    
+
     return true; // All checks passed - we're in valid extension context
   } catch (error) {
     // Any error accessing chrome APIs means context is invalidated
@@ -163,7 +163,7 @@ function isExtensionContextValid() {
  */
 const StorageManager = {
   STORAGE_KEY: 'webeditRules',
-  
+
   /**
    * Get all rules from storage
    * @returns {Promise<Object>} Object with pageKey as keys, arrays of rules as values
@@ -177,17 +177,17 @@ const StorageManager = {
         resolve({});
         return;
       }
-      
+
       try {
         chrome.storage.local.get([this.STORAGE_KEY], (result) => {
           // Check for errors AFTER the callback
           if (chrome.runtime.lastError) {
             const errorMsg = chrome.runtime.lastError.message || String(chrome.runtime.lastError);
-            
+
             // Only treat "Extension context invalidated" as a real error
             // Other errors (like quota exceeded) are different issues
-            if (errorMsg.includes('Extension context invalidated') || 
-                errorMsg.includes('context invalidated')) {
+            if (errorMsg.includes('Extension context invalidated') ||
+              errorMsg.includes('context invalidated')) {
               // Context was invalidated AFTER we checked - this is a real error
               // Log once, then resolve empty to prevent spam
               console.warn('⚠️ Extension context invalidated - rules cannot be loaded');
@@ -200,15 +200,15 @@ const StorageManager = {
               return;
             }
           }
-          
+
           // Success - return the rules
           resolve(result[this.STORAGE_KEY] || {});
         });
       } catch (error) {
         // Synchronous errors (shouldn't happen in content scripts, but handle gracefully)
         const errorMsg = error.message || String(error);
-        if (errorMsg.includes('Extension context invalidated') || 
-            errorMsg.includes('context invalidated')) {
+        if (errorMsg.includes('Extension context invalidated') ||
+          errorMsg.includes('context invalidated')) {
           // Context invalidated - log once
           console.warn('⚠️ Extension context invalidated - rules cannot be loaded');
         } else {
@@ -219,7 +219,7 @@ const StorageManager = {
       }
     });
   },
-  
+
   /**
    * Get rules for a specific page
    * @param {string} pageKey - The page key
@@ -229,7 +229,7 @@ const StorageManager = {
     const allRules = await this.getAllRules();
     return allRules[pageKey] || [];
   },
-  
+
   /**
    * Save a new rule
    * @param {EditRule} rule - The rule to save
@@ -239,16 +239,16 @@ const StorageManager = {
     try {
       const allRules = await this.getAllRules();
       const pageKey = rule.pageKey;
-      
+
       if (!allRules[pageKey]) {
         allRules[pageKey] = [];
       }
-      
+
       // Check if rule already exists (by selector and action)
       const existingIndex = allRules[pageKey].findIndex(
         r => r.selector === rule.selector && r.action === rule.action
       );
-      
+
       if (existingIndex >= 0) {
         // Update existing rule
         allRules[pageKey][existingIndex] = rule;
@@ -256,7 +256,7 @@ const StorageManager = {
         // Add new rule
         allRules[pageKey].push(rule);
       }
-      
+
       return new Promise((resolve) => {
         // Early bailout if extension context is invalid (page world, not extension context)
         if (!isExtensionContextValid()) {
@@ -264,15 +264,15 @@ const StorageManager = {
           resolve(false);
           return;
         }
-        
+
         try {
           chrome.storage.local.set({ [this.STORAGE_KEY]: allRules }, () => {
             if (chrome.runtime.lastError) {
               const errorMsg = chrome.runtime.lastError.message || String(chrome.runtime.lastError);
               // Only log "Extension context invalidated" as a warning (real error)
               // Other errors are different issues
-              if (errorMsg.includes('Extension context invalidated') || 
-                  errorMsg.includes('context invalidated')) {
+              if (errorMsg.includes('Extension context invalidated') ||
+                errorMsg.includes('context invalidated')) {
                 console.warn('⚠️ Extension context invalidated - rule cannot be saved');
               } else {
                 console.error('❌ Error saving rule:', chrome.runtime.lastError);
@@ -285,8 +285,8 @@ const StorageManager = {
           });
         } catch (error) {
           const errorMsg = error.message || String(error);
-          if (errorMsg.includes('Extension context invalidated') || 
-              errorMsg.includes('context invalidated')) {
+          if (errorMsg.includes('Extension context invalidated') ||
+            errorMsg.includes('context invalidated')) {
             console.warn('⚠️ Extension context invalidated - rule cannot be saved');
           } else {
             console.error('❌ Error accessing storage:', error);
@@ -299,7 +299,7 @@ const StorageManager = {
       return false;
     }
   },
-  
+
   /**
    * Delete a rule by ID
    * @param {string} pageKey - The page key
@@ -309,25 +309,25 @@ const StorageManager = {
   async deleteRule(pageKey, ruleId) {
     try {
       const allRules = await this.getAllRules();
-      
+
       if (!allRules[pageKey]) {
         return true;
       }
-      
+
       allRules[pageKey] = allRules[pageKey].filter(r => r.id !== ruleId);
-      
+
       // Remove page key if no rules left
       if (allRules[pageKey].length === 0) {
         delete allRules[pageKey];
       }
-      
+
       return new Promise((resolve) => {
         // Early bailout if extension context is invalid
         if (!isExtensionContextValid()) {
           resolve(false);
           return;
         }
-        
+
         try {
           chrome.storage.local.set({ [this.STORAGE_KEY]: allRules }, () => {
             if (chrome.runtime.lastError) {
@@ -358,7 +358,7 @@ const StorageManager = {
       return false;
     }
   },
-  
+
   /**
    * Clear all rules for a specific page
    * @param {string} pageKey - The page key
@@ -368,14 +368,14 @@ const StorageManager = {
     try {
       const allRules = await this.getAllRules();
       delete allRules[pageKey];
-      
+
       return new Promise((resolve) => {
         // Early bailout if extension context is invalid
         if (!isExtensionContextValid()) {
           resolve(false);
           return;
         }
-        
+
         try {
           chrome.storage.local.set({ [this.STORAGE_KEY]: allRules }, () => {
             if (chrome.runtime.lastError) {
@@ -419,30 +419,30 @@ const RuleApplier = {
    */
   applyRule(rule) {
     if (!rule.active) return 0;
-    
+
     try {
       const elements = document.querySelectorAll(rule.selector);
-      
+
       if (elements.length === 0) {
         console.warn(`⚠️ No elements found for selector: ${rule.selector}`);
         return 0;
       }
-      
+
       elements.forEach(el => {
         // Skip WebEdit panel elements
         if (el.closest('#webedit-chat-panel')) return;
-        
+
         switch (rule.action) {
           case 'hide':
             el.style.display = 'none';
             el.setAttribute('data-webedit-hidden', rule.id);
             break;
-            
+
           case 'remove':
             el.style.display = 'none';
             el.setAttribute('data-webedit-removed', rule.id);
             break;
-            
+
           case 'style':
             if (rule.metadata?.styles) {
               Object.entries(rule.metadata.styles).forEach(([prop, value]) => {
@@ -454,21 +454,21 @@ const RuleApplier = {
               el.setAttribute('data-webedit-styled', rule.id);
             }
             break;
-            
+
           default:
             console.warn(`⚠️ Unknown action: ${rule.action}`);
         }
       });
-      
+
       console.log(`✅ Applied rule ${rule.id} to ${elements.length} element(s)`);
       return elements.length;
-      
+
     } catch (error) {
       console.error(`❌ Error applying rule ${rule.id}:`, error);
       return 0;
     }
   },
-  
+
   /**
    * Apply all rules for the current page
    * @returns {Promise<number>} Total number of elements affected
@@ -480,11 +480,11 @@ const RuleApplier = {
       // This is normal if running in page world, not an error
       return 0;
     }
-    
+
     try {
       const pageKey = getPageKey();
       const rules = await StorageManager.getRulesForPage(pageKey);
-      
+
       if (!rules || rules.length === 0) {
         // Only log if not suppressed (to reduce noise from mutation observer)
         if (!suppressNoRulesLog) {
@@ -492,20 +492,20 @@ const RuleApplier = {
         }
         return 0;
       }
-      
+
       console.log(`📋 Applying ${rules.length} rule(s) for page: ${pageKey}`);
-      
+
       let totalAffected = 0;
       rules.forEach(rule => {
         totalAffected += this.applyRule(rule);
       });
-      
+
       return totalAffected;
     } catch (error) {
       // Handle errors
       const errorMsg = error.message || String(error);
-      if (errorMsg.includes('Extension context invalidated') || 
-          errorMsg.includes('context invalidated')) {
+      if (errorMsg.includes('Extension context invalidated') ||
+        errorMsg.includes('context invalidated')) {
         // Context invalidated - log once, then return
         console.warn('⚠️ Extension context invalidated - cannot apply rules');
         return 0;
@@ -515,7 +515,7 @@ const RuleApplier = {
       return 0; // Return 0 instead of throwing
     }
   },
-  
+
   /**
    * Reapply rules (useful after DOM changes)
    * @param {number} debounceMs - Debounce delay in milliseconds
@@ -528,23 +528,23 @@ const RuleApplier = {
       // This is normal if running in page world, not an error
       return;
     }
-    
+
     if (this._reapplyTimeout) {
       clearTimeout(this._reapplyTimeout);
     }
-    
+
     this._reapplyTimeout = setTimeout(() => {
       // Check again before applying (context might have been invalidated during debounce)
       if (!isExtensionContextValid()) {
         return;
       }
-      
+
       // Catch any promise rejections to prevent uncaught errors
       this.applyAllRulesForCurrentPage(suppressNoRulesLog).catch((error) => {
         // Handle errors - only log non-context-invalidated errors
         const errorMsg = error.message || String(error);
-        if (!errorMsg.includes('Extension context invalidated') && 
-            !errorMsg.includes('context invalidated')) {
+        if (!errorMsg.includes('Extension context invalidated') &&
+          !errorMsg.includes('context invalidated')) {
           console.error('❌ Unhandled error in reapplyWithDebounce:', error);
         }
       });
@@ -556,9 +556,6 @@ const RuleApplier = {
  * Supabase Sync Manager - syncs rules to Supabase for authenticated users
  */
 const SupabaseSyncManager = {
-  SUPABASE_URL: "https://eqfjkvjwsswjxkmomxax.supabase.co",
-  SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVxZmprdmp3c3N3anhrbW9teGF4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYxMTU1MDYsImV4cCI6MjA3MTY5MTUwNn0.sh5d5Hj5hshIOndyAodK_rlP0K1pERYyWyNqNxp-E7k",
-  
   /**
    * Get the auth token for the current user
    * @returns {Promise<string|null>} Auth token or null
@@ -570,7 +567,7 @@ const SupabaseSyncManager = {
         resolve(null);
         return;
       }
-      
+
       try {
         chrome.storage.local.get(['webeditSupabaseSession'], (result) => {
           if (chrome.runtime.lastError) {
@@ -601,7 +598,15 @@ const SupabaseSyncManager = {
       }
     });
   },
-  
+
+  getSupabaseUrl() {
+    return window.SupabaseClient ? window.SupabaseClient.url : "https://eqfjkvjwsswjxkmomxax.supabase.co";
+  },
+
+  getSupabaseKey() {
+    return window.SupabaseClient ? window.SupabaseClient.anonKey : "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVxZmprdmp3c3N3anhrbW9teGF4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYxMTU1MDYsImV4cCI6MjA3MTY5MTUwNn0.sh5d5Hj5hshIOndyAodK_rlP0K1pERYyWyNqNxp-E7k";
+  },
+
   /**
    * Sync a rule to Supabase
    * @param {EditRule} rule - The rule to sync
@@ -613,14 +618,14 @@ const SupabaseSyncManager = {
       console.log('ℹ️ No user authenticated, skipping Supabase sync');
       return false;
     }
-    
+
     try {
       const token = await this.getAuthToken();
       if (!token) {
         console.log('ℹ️ No auth token available, skipping Supabase sync');
         return false;
       }
-      
+
       // Prepare rule data for Supabase
       const ruleData = {
         id: rule.id,
@@ -632,21 +637,21 @@ const SupabaseSyncManager = {
         active: rule.active,
         created_at: new Date(rule.createdAt).toISOString()
       };
-      
+
       console.log('🔄 Syncing rule to Supabase:', rule.id);
-      
+
       // Make REST API call to Supabase
-      const response = await fetch(`${this.SUPABASE_URL}/rest/v1/edit_rules`, {
+      const response = await fetch(`${this.getSupabaseUrl()}/rest/v1/edit_rules`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'apikey': this.SUPABASE_ANON_KEY,
+          'apikey': this.getSupabaseKey(),
           'Authorization': `Bearer ${token}`,
           'Prefer': 'resolution=merge-duplicates'
         },
         body: JSON.stringify(ruleData)
       });
-      
+
       if (!response.ok) {
         const errorText = await response.text();
         let errorData;
@@ -655,21 +660,21 @@ const SupabaseSyncManager = {
         } catch (e) {
           errorData = { message: errorText };
         }
-        
+
         // Handle 404 (table doesn't exist) or PGRST205 (schema cache issue) gracefully
         if (response.status === 404 || (errorData && errorData.code === 'PGRST205')) {
           console.log('ℹ️ Supabase table not found or schema cache stale - sync skipped');
           return false; // Return false but don't log as error
         }
-        
+
         // Handle other errors
         console.error('❌ Supabase sync error:', response.status, errorData.message || errorText);
         return false;
       }
-      
+
       console.log('✅ Rule synced to Supabase:', rule.id);
       return true;
-      
+
     } catch (error) {
       // Network errors or other exceptions - log but don't break rule saving
       const errorMsg = error.message || String(error);
@@ -680,7 +685,7 @@ const SupabaseSyncManager = {
       return false;
     }
   },
-  
+
   /**
    * Fetch rules from Supabase for the current user
    * @param {Object} user - The authenticated user
@@ -692,29 +697,29 @@ const SupabaseSyncManager = {
       console.log('ℹ️ No user authenticated, skipping Supabase fetch');
       return [];
     }
-    
+
     try {
       const token = await this.getAuthToken();
       if (!token) {
         console.log('ℹ️ No auth token available, skipping Supabase fetch');
         return [];
       }
-      
-      let url = `${this.SUPABASE_URL}/rest/v1/edit_rules?user_id=eq.${user.id}&active=eq.true`;
+
+      let url = `${this.getSupabaseUrl()}/rest/v1/edit_rules?user_id=eq.${user.id}&active=eq.true`;
       if (pageKey) {
         url += `&page_key=eq.${encodeURIComponent(pageKey)}`;
       }
-      
+
       console.log('📥 Fetching rules from Supabase');
-      
+
       const response = await fetch(url, {
         method: 'GET',
         headers: {
-          'apikey': this.SUPABASE_ANON_KEY,
+          'apikey': this.getSupabaseKey(),
           'Authorization': `Bearer ${token}`
         }
       });
-      
+
       if (!response.ok) {
         const errorText = await response.text();
         let errorData;
@@ -723,21 +728,21 @@ const SupabaseSyncManager = {
         } catch (e) {
           errorData = { message: errorText };
         }
-        
+
         // Handle 404 (table doesn't exist) or PGRST205 (schema cache issue) gracefully
         if (response.status === 404 || (errorData && errorData.code === 'PGRST205')) {
           console.log('ℹ️ Supabase table not found or schema cache stale - fetch skipped');
           return []; // Return empty array but don't log as error
         }
-        
+
         // Handle other errors
         console.error('❌ Supabase fetch error:', response.status, errorData.message || errorText);
         return [];
       }
-      
+
       const data = await response.json();
       console.log(`✅ Fetched ${data.length} rule(s) from Supabase`);
-      
+
       // Convert Supabase format to EditRule format
       return data.map(item => ({
         id: item.id,
@@ -749,7 +754,7 @@ const SupabaseSyncManager = {
         active: item.active,
         userId: item.user_id
       }));
-      
+
     } catch (error) {
       // Network errors or other exceptions - log but don't break rule loading
       const errorMsg = error.message || String(error);
@@ -778,7 +783,7 @@ const EditRules = {
   async createRule(element, action, metadata = {}, user = null, selector = null) {
     // Use provided selector if available, otherwise generate one
     const finalSelector = selector || generateSelector(element);
-    
+
     const rule = {
       id: generateRuleId(),
       pageKey: getPageKey(),
@@ -792,24 +797,24 @@ const EditRules = {
       active: true,
       userId: user?.id || null
     };
-    
+
     const saved = await StorageManager.saveRule(rule);
-    
+
     // Throw error if saving failed - this ensures callers know the rule wasn't persisted
     if (!saved) {
       throw new Error('Failed to save rule to storage');
     }
-    
+
     if (user) {
       // Sync to Supabase in background (don't fail if this fails)
       SupabaseSyncManager.syncRule(rule, user).catch(err => {
         console.error('❌ Failed to sync to Supabase:', err);
       });
     }
-    
+
     return rule;
   },
-  
+
   /**
    * Apply all rules for the current page
    * @returns {Promise<number>} Number of elements affected
@@ -817,7 +822,7 @@ const EditRules = {
   async applyRules() {
     return RuleApplier.applyAllRulesForCurrentPage();
   },
-  
+
   /**
    * Delete a rule
    * @param {string} ruleId - The rule ID
@@ -827,7 +832,7 @@ const EditRules = {
     const pageKey = getPageKey();
     return StorageManager.deleteRule(pageKey, ruleId);
   },
-  
+
   /**
    * Get all rules for current page
    * @returns {Promise<EditRule[]>} Array of rules
@@ -836,7 +841,7 @@ const EditRules = {
     const pageKey = getPageKey();
     return StorageManager.getRulesForPage(pageKey);
   },
-  
+
   /**
    * Clear all rules for current page
    * @returns {Promise<boolean>} Success status
@@ -845,7 +850,7 @@ const EditRules = {
     const pageKey = getPageKey();
     return StorageManager.clearPageRules(pageKey);
   },
-  
+
   /**
    * Setup mutation observer to reapply rules on DOM changes
    */
@@ -854,14 +859,14 @@ const EditRules = {
     if (this._mutationObserver) {
       return;
     }
-    
+
     // Don't setup if extension context is invalid (page world, not extension context)
     if (!isExtensionContextValid()) {
       // Not in extension context - can't setup observer
       // This is normal if running in page world, not an error
       return;
     }
-    
+
     let mutationCount = 0;
     const observer = new MutationObserver((mutations) => {
       // Check if context is still valid before processing
@@ -871,7 +876,7 @@ const EditRules = {
         this._mutationObserver = null;
         return;
       }
-      
+
       // Filter out mutations that are likely from our own rule application
       const relevantMutations = mutations.filter(mutation => {
         // Skip if mutation is on WebEdit panel elements
@@ -884,7 +889,7 @@ const EditRules = {
         }
         return true;
       });
-      
+
       // Only reapply if there are relevant mutations
       if (relevantMutations.length > 0) {
         mutationCount++;
@@ -892,14 +897,14 @@ const EditRules = {
         RuleApplier.reapplyWithDebounce(500, true);
       }
     });
-    
+
     observer.observe(document.body, {
       childList: true,
       subtree: true,
       attributes: true,
       attributeFilter: ['style', 'class', 'id'] // Only watch relevant attributes
     });
-    
+
     this._mutationObserver = observer;
     console.log('👀 Mutation observer setup for rule reapplication');
   }
