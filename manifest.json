@@ -27,7 +27,7 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["messages.js", "editRules.js", "contentScript.js"],
+      "js": ["supabaseClient.js", "saveEdit.js", "injector.js", "messages.js", "editRules.js", "contentScript.js"],
       "css": ["contentStyles.css", "panel.css"],
       "run_at": "document_idle"
     },

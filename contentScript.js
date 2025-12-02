@@ -126,7 +126,7 @@ function requireAuth(actionName = "perform this action") {
   if (!currentUser) {
     console.log(`🔒 Auth required for: ${actionName}`);
     showNotification(`Please sign in to ${actionName}`, "error");
-    
+
     // Highlight the sign-in button briefly
     const signinBtn = document.getElementById("webedit-signin-btn");
     if (signinBtn) {
@@ -135,7 +135,7 @@ function requireAuth(actionName = "perform this action") {
         signinBtn.style.animation = "";
       }, 1500);
     }
-    
+
     return false;
   }
   return true;
@@ -163,14 +163,14 @@ async function syncAuthFromWebsite() {
         if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
           console.log(`ℹ️ [Auth Sync] Found potential auth key: ${key}`);
           websiteSessionStr = localStorage.getItem(key);
-          break; 
+          break;
         }
       }
     }
-    
+
     if (websiteSessionStr) {
       const sessionData = JSON.parse(websiteSessionStr);
-      
+
       // Check if extension already has this session
       const extensionSession = await new Promise((resolve) => {
         chrome.storage.local.get(['webeditSupabaseSession'], (result) => {
@@ -179,12 +179,12 @@ async function syncAuthFromWebsite() {
       });
 
       // If sessions don't match, sync from website to extension
-      if (!extensionSession || 
-          extensionSession.access_token !== sessionData.access_token ||
-          extensionSession.user?.id !== sessionData.user?.id) {
-        
+      if (!extensionSession ||
+        extensionSession.access_token !== sessionData.access_token ||
+        extensionSession.user?.id !== sessionData.user?.id) {
+
         console.log("🔄 Syncing auth from website to extension...");
-        
+
         // Store session in extension
         await new Promise((resolve) => {
           chrome.storage.local.set({
@@ -196,7 +196,7 @@ async function syncAuthFromWebsite() {
         // Update current user
         currentUser = sessionData.user || null;
         updateAuthUI();
-        
+
         console.log("✅ Auth synced from website:", currentUser?.email);
         showNotification("Signed in successfully!", "success");
       }
@@ -238,18 +238,18 @@ async function syncAuthToWebsite() {
     if (extensionSession) {
       const exactKey = 'sb-eqfjkvjwsswjxkmomxax-auth-token';
       let websiteSession = localStorage.getItem(exactKey);
-      
+
       // Check for other keys if exact not found
       if (!websiteSession) {
-         for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
-            if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
-              websiteSession = localStorage.getItem(key);
-              break;
-            }
-         }
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
+            websiteSession = localStorage.getItem(key);
+            break;
+          }
+        }
       }
-      
+
       // If website doesn't have session but extension does, sync to website
       // Default to exact key for writing
       if (!websiteSession) {
@@ -786,10 +786,20 @@ function createPanel() {
   panel.innerHTML = `
     <!-- Header Navigation Bar -->
     <div class="webedit-panel-header">
-      <button class="webedit-nav-btn logo-btn" id="webedit-logo-btn">(Logo)</button>
-      <button class="webedit-nav-btn history-btn" id="webedit-history-btn">History</button>
+      <button class="webedit-header-hamburger" id="webedit-header-hamburger">☰</button>
+      <button class="webedit-nav-btn logo-btn" id="webedit-logo-btn">WebEdit</button>
+      <button class="webedit-nav-btn history-btn" id="webedit-history-btn" style="display:none">History</button>
       <button class="webedit-nav-btn signin-btn" id="webedit-signin-btn">Sign in</button>
       <button class="webedit-close-btn" id="webedit-close-btn">×</button>
+    </div>
+
+    <!-- History Sidebar -->
+    <div class="webedit-history-sidebar" id="webedit-history-sidebar">
+      <div class="webedit-history-header">
+        <span>Chat History</span>
+        <button class="webedit-new-chat-btn" id="webedit-new-chat-btn">New Chat</button>
+      </div>
+      <div class="webedit-history-list" id="webedit-history-list"></div>
     </div>
 
     <!-- Main Content Area -->
@@ -902,7 +912,7 @@ async function togglePanel(show, options = {}) {
     chatPanel.classList.remove("hidden");
     document.documentElement.classList.add("webedit-panel-open");
     document.body.classList.add("webedit-panel-open");
-    
+
     // Check auth status when opening the panel
     console.log("🔍 Checking auth status...");
     const user = await checkAuthStatus();
@@ -927,22 +937,51 @@ function attachPanelEventListeners() {
   const closeBtn = document.getElementById("webedit-close-btn");
   closeBtn.addEventListener("click", () => togglePanel(false));
 
+  // History Sidebar Toggle
+  const headerHamburger = document.getElementById("webedit-header-hamburger");
+  const historySidebar = document.getElementById("webedit-history-sidebar");
+
+  if (headerHamburger && historySidebar) {
+    headerHamburger.addEventListener("click", (e) => {
+      e.stopPropagation();
+      historySidebar.classList.toggle("visible");
+    });
+
+    // Close sidebar when clicking outside
+    document.addEventListener("click", (e) => {
+      if (historySidebar.classList.contains("visible") &&
+        !historySidebar.contains(e.target) &&
+        !headerHamburger.contains(e.target)) {
+        historySidebar.classList.remove("visible");
+      }
+    });
+  }
+
+  // New Chat Button
+  const newChatBtn = document.getElementById("webedit-new-chat-btn");
+  if (newChatBtn) {
+    newChatBtn.addEventListener("click", () => {
+      startNewChat();
+      if (historySidebar) historySidebar.classList.remove("visible");
+    });
+  }
+
   // Burger menu toggle
   const burgerBtn = document.getElementById("webedit-burger-btn");
   const toolsMenu = document.getElementById("webedit-tools-menu");
-  
+
   if (!burgerBtn) {
     console.error("❌ Burger button not found!");
     return;
   }
-  
+
   if (!toolsMenu) {
     console.error("❌ Tools menu not found!");
     return;
   }
-  
+
   console.log("✅ Burger button and tools menu found, attaching listener");
-  
+
   burgerBtn.addEventListener("click", (e) => {
     console.log("🔘 Hamburger button clicked!");
     e.stopPropagation();
@@ -962,13 +1001,13 @@ function attachPanelEventListeners() {
   // Tool buttons
   const toolButtons = document.querySelectorAll(".webedit-tool-btn");
   const customizePanel = document.getElementById("webedit-customize-panel");
-  
+
   toolButtons.forEach((btn) => {
     btn.addEventListener("click", (e) => {
       console.log("🔘 Tool button clicked:", btn.dataset.tool);
-      
+
       const tool = btn.dataset.tool;
-      
+
       // Check authorization for all editing tools
       if (tool === "remove" && !requireAuth("remove elements")) {
         return;
@@ -979,11 +1018,11 @@ function attachPanelEventListeners() {
       if (tool === "add" && !requireAuth("add features")) {
         return;
       }
-      
+
       // Update active state
       setActiveToolButton(tool);
       toolsMenu.classList.remove("visible"); // Close menu after selection
-      
+
       // Handle different tools
       if (currentTool === "remove") {
         // Start Remove mode immediately (it will stop Pick mode if needed)
@@ -1010,7 +1049,7 @@ function attachPanelEventListeners() {
         stopPickMode();
         isAddFeatureMode = true;
         customizePanel.classList.remove("visible");
-        
+
         // Show instruction and start Pick mode
         showNotification("Pick an element to add content near it", "info");
         updateChatInputPrompt("Pick an element to name your edit...");
@@ -1032,12 +1071,12 @@ function attachPanelEventListeners() {
   if (pickBtn) {
     pickBtn.addEventListener("click", () => {
       console.log("🔘 Pick Element button clicked");
-      
+
       // Check authorization
       if (!requireAuth("pick elements")) {
         return;
       }
-      
+
       // Stop all active modes before starting Pick mode
       stopRemoveMode();
       stopPickMode();
@@ -1055,7 +1094,7 @@ function attachPanelEventListeners() {
       } else if (activeInteractionMode === "remove") {
         stopRemoveMode();
       }
-  });
+    });
   }
 
   // Chat input
@@ -1064,13 +1103,13 @@ function attachPanelEventListeners() {
   chatInput.addEventListener("keypress", async (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      
+
       const userText = chatInput.value.trim();
       if (!userText) {
         chatInput.value = "";
         return;
       }
-      
+
       // Clear input immediately
       chatInput.value = "";
 
@@ -1121,45 +1160,45 @@ function attachPanelEventListeners() {
     if (!requireAuth("apply customizations")) {
       return;
     }
-    
+
     // Use current edit target if available, otherwise use selectedEl
     const targetEl = currentEditTarget.element || selectedEl;
-    
+
     if (!targetEl) {
       showNotification("Please pick an element first using the 'Pick element' button", "error");
       return;
     }
-    
+
     const styles = {
       backgroundColor: bgColorInput.value,
       color: textColorInput.value,
       fontSize: fontSizeInput.value + "px"
     };
-    
+
     console.log("🎨 Applying styles:", styles, "to element:", targetEl);
-    
+
     // Apply styles immediately with !important to override existing styles
     // Use setProperty with 'important' priority to ensure styles are applied
     targetEl.style.setProperty('background-color', styles.backgroundColor, 'important');
     targetEl.style.setProperty('color', styles.color, 'important');
     targetEl.style.setProperty('font-size', styles.fontSize, 'important');
-    
+
     console.log("✅ Styles applied to element. Current fontSize:", window.getComputedStyle(targetEl).fontSize);
-    
+
     // Save as a persistent rule
     const editRules = await waitForEditRules();
 
     if (editRules) {
       try {
         const rule = await editRules.createRule(targetEl, "style", { styles }, currentUser);
-        
+
         // Save to Supabase (non-blocking)
         if (window.SaveEdit && window.SaveEdit.saveCustomizeEdit) {
           window.SaveEdit.saveCustomizeEdit(targetEl, rule).catch(err => {
             console.error('[Customize] Failed to save to Supabase:', err);
           });
         }
-        
+
         showNotification("Styles applied successfully!", "success");
       } catch (error) {
         console.error("❌ Error saving style rule:", error);
@@ -1175,7 +1214,7 @@ function attachPanelEventListeners() {
     bgColorInput.value = "#ffffff";
     textColorInput.value = "#000000";
     fontSizeInput.value = "16";
-    
+
     // Remove applied styles from the selected element
     const targetEl = currentEditTarget.element || selectedEl;
     if (targetEl) {
@@ -1183,7 +1222,7 @@ function attachPanelEventListeners() {
       targetEl.style.removeProperty('background-color');
       targetEl.style.removeProperty('color');
       targetEl.style.removeProperty('font-size');
-      
+
       console.log("🔄 Styles reset for element:", targetEl);
       showNotification("Styles reset - element restored to original appearance!", "success");
     } else {
@@ -1210,7 +1249,7 @@ async function waitForEditRules(maxWaitMs = 5000) {
   }
 
   console.log('⏳ Waiting for EditRules to load...');
-  
+
   // Wait in 100ms increments
   const checkInterval = 100;
   const maxChecks = Math.floor(maxWaitMs / checkInterval);
@@ -1272,27 +1311,27 @@ function clearSelected() {
 // ============================================
 
 function startRemoveMode() {
-      // If already in Remove mode, just return
-      if (isRemoveMode) {
-        console.log("⚠️ Already in Remove mode");
-        return;
-      }
+  // If already in Remove mode, just return
+  if (isRemoveMode) {
+    console.log("⚠️ Already in Remove mode");
+    return;
+  }
 
-      // Stop Pick mode if active
-      if (isPickMode) {
-        console.log("🔄 Stopping Pick mode before starting Remove mode");
-        stopPickMode();
-      }
+  // Stop Pick mode if active
+  if (isPickMode) {
+    console.log("🔄 Stopping Pick mode before starting Remove mode");
+    stopPickMode();
+  }
 
-      console.log("🗑️ Starting Remove mode");
-      isRemoveMode = true;
-      isPickMode = false;
+  console.log("🗑️ Starting Remove mode");
+  isRemoveMode = true;
+  isPickMode = false;
 
-      document.addEventListener("mousemove", handleRemoveMouseMove, true);
-      document.addEventListener("click", handleRemoveClick, true);
+  document.addEventListener("mousemove", handleRemoveMouseMove, true);
+  document.addEventListener("click", handleRemoveClick, true);
 
-      showNotification("Remove mode active - Click an element to remove it", "info");
-      showModeIndicator("remove");
+  showNotification("Remove mode active - Click an element to remove it", "info");
+  showModeIndicator("remove");
 }
 
 function stopRemoveMode() {
@@ -1307,14 +1346,14 @@ function stopRemoveMode() {
 function handleRemoveMouseMove(event) {
   if (!isRemoveMode) return;
   const el = event.target;
-  
+
   // Don't pick the panel itself or its children
-  if (!el || el === document.documentElement || el === document.body || 
-      el.closest("#webedit-chat-panel")) {
+  if (!el || el === document.documentElement || el === document.body ||
+    el.closest("#webedit-chat-panel")) {
     clearHover();
     return;
   }
-  
+
   setHover(el, event, "Click to Remove");
 }
 
@@ -1322,10 +1361,10 @@ async function handleRemoveClick(event) {
   if (!isRemoveMode) return;
 
   const el = event.target;
-  
+
   // Don't pick the panel itself or its children
-  if (!el || el === document.documentElement || el === document.body || 
-      el.closest("#webedit-chat-panel")) {
+  if (!el || el === document.documentElement || el === document.body ||
+    el.closest("#webedit-chat-panel")) {
     return;
   }
 
@@ -1401,7 +1440,7 @@ function stopPickMode() {
   document.removeEventListener("mousemove", handlePickMouseMove, true);
   document.removeEventListener("click", handlePickClick, true);
   hideModeIndicator("pick");
-  
+
   // Reset chat input placeholder only when not in Add feature flow
   if (!isAddFeatureMode) {
     updateChatInputPrompt("What do you want to change?");
@@ -1444,7 +1483,7 @@ async function handlePickClick(event) {
 
   // Generate selector and description
   const editRules = await waitForEditRules();
-  
+
   const wasInAddFeatureMode = isAddFeatureMode;
 
   if (editRules) {
@@ -1489,7 +1528,7 @@ async function handlePickClick(event) {
     }
     console.log("✨ Add feature mode remains active after element selection");
   }
-  }
+}
 
 // Helper functions for Pick mode
 function generateSelectorForElement(el) {
@@ -1603,7 +1642,162 @@ function addChatMessage(type, content) {
   chatMessages.push(message);
   renderChatMessages();
   schedulePanelStateSave();
+  saveChatHistory(); // Save to persistent storage
 }
+
+// ============================================
+// Chat History Persistence
+// ============================================
+
+const CHAT_HISTORY_KEY = 'webedit-chat-history-v2';
+const CURRENT_SESSION_KEY = 'webedit-current-session-id';
+
+let currentSessionId = null;
+
+function saveChatHistory() {
+  if (!currentSessionId) {
+    currentSessionId = Date.now().toString();
+    localStorage.setItem(CURRENT_SESSION_KEY, currentSessionId);
+  }
+
+  const session = {
+    id: currentSessionId,
+    timestamp: Date.now(),
+    messages: chatMessages,
+    preview: chatMessages.length > 0 ?
+      (chatMessages.find(m => m.type === 'user')?.content || 'New Chat') : 'Empty Chat'
+  };
+
+  try {
+    // Get existing history
+    let history = [];
+    const raw = localStorage.getItem(CHAT_HISTORY_KEY);
+    if (raw) {
+      history = JSON.parse(raw);
+    }
+
+    // Update or add current session
+    const index = history.findIndex(s => s.id === currentSessionId);
+    if (index >= 0) {
+      history[index] = session;
+    } else {
+      history.unshift(session); // Add to top
+    }
+
+    // Limit history size (e.g., 50 sessions)
+    if (history.length > 50) {
+      history = history.slice(0, 50);
+    }
+
+    localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(history));
+    renderHistoryList();
+  } catch (e) {
+    console.warn('Failed to save chat history:', e);
+  }
+}
+
+function loadChatHistory() {
+  try {
+    // Load current session ID
+    currentSessionId = localStorage.getItem(CURRENT_SESSION_KEY);
+
+    const raw = localStorage.getItem(CHAT_HISTORY_KEY);
+    if (raw) {
+      const history = JSON.parse(raw);
+
+      // Render the list
+      renderHistoryList(history);
+
+      // Restore messages for current session
+      if (currentSessionId) {
+        const session = history.find(s => s.id === currentSessionId);
+        if (session && Array.isArray(session.messages)) {
+          chatMessages = session.messages;
+          renderChatMessages();
+          console.log('✅ Chat history restored for session:', currentSessionId);
+          return;
+        }
+      }
+
+      // If no current session or not found, start new
+      startNewChat(false);
+    }
+  } catch (e) {
+    console.warn('Failed to load chat history:', e);
+  }
+}
+
+function renderHistoryList(historyData = null) {
+  const listContainer = document.getElementById("webedit-history-list");
+  if (!listContainer) return;
+
+  if (!historyData) {
+    try {
+      const raw = localStorage.getItem(CHAT_HISTORY_KEY);
+      if (raw) historyData = JSON.parse(raw);
+    } catch (e) { }
+  }
+
+  if (!historyData || historyData.length === 0) {
+    listContainer.innerHTML = '<div style="padding:10px; color:#9ca3af; font-size:12px; text-align:center">No history yet</div>';
+    return;
+  }
+
+  listContainer.innerHTML = '';
+
+  historyData.sort((a, b) => b.timestamp - a.timestamp).forEach(session => {
+    const item = document.createElement('div');
+    item.className = `webedit-history-item ${session.id === currentSessionId ? 'active' : ''}`;
+
+    const date = new Date(session.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+    item.innerHTML = `
+      <div class="webedit-history-date">${date}</div>
+      <div class="webedit-history-preview">${escapeHtml(session.preview || 'New Chat')}</div>
+    `;
+
+    item.addEventListener('click', () => loadSession(session.id));
+    listContainer.appendChild(item);
+  });
+}
+
+function loadSession(sessionId) {
+  try {
+    const raw = localStorage.getItem(CHAT_HISTORY_KEY);
+    if (raw) {
+      const history = JSON.parse(raw);
+      const session = history.find(s => s.id === sessionId);
+      if (session) {
+        currentSessionId = sessionId;
+        localStorage.setItem(CURRENT_SESSION_KEY, currentSessionId);
+        chatMessages = session.messages || [];
+        renderChatMessages();
+        renderHistoryList(history); // Update active state
+
+        // Close sidebar on mobile/small screens or just for UX
+        const sidebar = document.getElementById("webedit-history-sidebar");
+        if (sidebar && window.innerWidth < 768) {
+          sidebar.classList.remove("visible");
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load session:', e);
+  }
+}
+
+function startNewChat(saveOld = true) {
+  if (saveOld && chatMessages.length > 0) {
+    saveChatHistory();
+  }
+
+  currentSessionId = Date.now().toString();
+  localStorage.setItem(CURRENT_SESSION_KEY, currentSessionId);
+  chatMessages = [];
+  renderChatMessages();
+  saveChatHistory(); // Create entry for new chat
+}
+
 
 function renderChatMessages() {
   const chatContainer = document.getElementById("webedit-chat-messages");
@@ -1672,7 +1866,7 @@ function renderChatMessages() {
 
     // Scroll to bottom of chat
     chatContainer.scrollTop = chatContainer.scrollHeight;
-}
+  }
 }
 
 // ============================================
@@ -1724,7 +1918,7 @@ function escapeHtml(str = '') {
 function buildFeatureTemplate({ name, description, type = 'note' }) {
   const safeName = escapeHtml(name || 'WebEdit note');
   const safeDescription = escapeHtml(description || '');
-  
+
   switch (type) {
     case 'badge':
       return {
@@ -1870,11 +2064,11 @@ async function restorePanelState() {
     console.warn('[WebEdit Panel] Failed to read panel state:', error);
     return;
   }
-  
+
   if (!rawState) {
     return;
   }
-  
+
   let state;
   try {
     state = JSON.parse(rawState);
@@ -1882,22 +2076,22 @@ async function restorePanelState() {
     console.warn('[WebEdit Panel] Invalid panel state JSON:', error);
     return;
   }
-  
+
   isRestoringPanelState = true;
-  
+
   if (Array.isArray(state.chatMessages)) {
     chatMessages = state.chatMessages.slice(-MAX_SAVED_CHAT_MESSAGES);
     renderChatMessages();
   }
-  
+
   if (typeof state.currentTool === 'string') {
     setActiveToolButton(state.currentTool);
   }
-  
+
   if (typeof state.isAddFeatureMode === 'boolean') {
     isAddFeatureMode = state.isAddFeatureMode;
   }
-  
+
   if (state.addFeaturePrompt && typeof state.addFeaturePrompt === 'object') {
     addFeaturePrompt.step = state.addFeaturePrompt.step || 'idle';
     addFeaturePrompt.name = state.addFeaturePrompt.name || '';
@@ -1906,22 +2100,22 @@ async function restorePanelState() {
     addFeaturePrompt.type = state.addFeaturePrompt.type || 'note';
     addFeaturePrompt.targetSelector = null; // DOM references cannot survive reload
   }
-  
+
   const chatInput = document.getElementById("webedit-chat-input");
   if (chatInput && state.chatPlaceholder) {
     chatInput.placeholder = state.chatPlaceholder;
   }
-  
+
   if (state.isPanelOpen) {
     await togglePanel(true, { skipSave: true });
   }
-  
+
   if (isAddFeatureMode) {
     addChatMessage("system", "Reminder: pick an element again to continue Add feature.");
     isAddFeatureMode = false;
     resetAddFeaturePromptState();
   }
-  
+
   isRestoringPanelState = false;
   schedulePanelStateSave();
 }
@@ -2098,7 +2292,7 @@ function getFeatureStorageKey() {
  */
 async function injectFeature(spec) {
   console.log("[WebEdit Add] Injecting feature", spec);
-  
+
   try {
     const { html, css } = ensureFeatureTemplate(spec);
     const injectorSpec = {
@@ -2156,12 +2350,12 @@ async function injectFeature(spec) {
         targetEl.parentElement.insertBefore(container, targetEl);
         console.log(`[WebEdit Add] Inserted feature BEFORE target element (fallback)`);
         break;
-        
+
       case "inside":
         targetEl.insertBefore(container, targetEl.firstChild);
         console.log(`[WebEdit Add] Inserted feature INSIDE target element (fallback)`);
         break;
-        
+
       case "after":
       default:
         if (targetEl.nextSibling) {
@@ -2172,9 +2366,9 @@ async function injectFeature(spec) {
         console.log(`[WebEdit Add] Inserted feature AFTER target element (fallback)`);
         break;
     }
-    
+
     console.log(`[WebEdit Add] ✅ Feature injected successfully via fallback: ${spec.id}`);
-    
+
   } catch (error) {
     console.error("[WebEdit Add] ❌ Error injecting feature:", error);
   }
@@ -2193,10 +2387,10 @@ async function saveAddedFeature(feature) {
       resolve(false);
       return;
     }
-    
+
     try {
       const storageKey = getFeatureStorageKey();
-      
+
       // Get existing features for this page
       chrome.storage.local.get([storageKey], (result) => {
         if (chrome.runtime.lastError) {
@@ -2204,12 +2398,12 @@ async function saveAddedFeature(feature) {
           resolve(false);
           return;
         }
-        
+
         const existingFeatures = result[storageKey] || [];
-        
+
         // Check if feature already exists (by ID)
         const existingIndex = existingFeatures.findIndex(f => f.id === feature.id);
-        
+
         if (existingIndex >= 0) {
           // Update existing feature
           existingFeatures[existingIndex] = feature;
@@ -2217,7 +2411,7 @@ async function saveAddedFeature(feature) {
           // Add new feature
           existingFeatures.push(feature);
         }
-        
+
         // Save back to storage
         chrome.storage.local.set({ [storageKey]: existingFeatures }, () => {
           if (chrome.runtime.lastError) {
@@ -2225,7 +2419,7 @@ async function saveAddedFeature(feature) {
             resolve(false);
             return;
           }
-          
+
           console.log(`[WebEdit Add] ✅ Feature saved to storage: ${feature.id}`);
           resolve(true);
         });
@@ -2248,33 +2442,33 @@ async function restoreAddedFeatures() {
       resolve(0);
       return;
     }
-    
+
     try {
       const storageKey = getFeatureStorageKey();
-      
+
       chrome.storage.local.get([storageKey], async (result) => {
         if (chrome.runtime.lastError) {
           console.error("[WebEdit Add] Error loading features:", chrome.runtime.lastError);
           resolve(0);
           return;
         }
-        
+
         const features = result[storageKey] || [];
-        
+
         if (features.length === 0) {
           resolve(0);
           return;
         }
-        
+
         console.log(`[WebEdit Add] Restoring ${features.length} feature(s) from storage`);
-        
+
         // Inject each feature
         let successCount = 0;
         for (const feature of features) {
           await injectFeature(feature);
           successCount++;
         }
-        
+
         console.log(`[WebEdit Add] ✅ Restored ${successCount} feature(s)`);
         resolve(successCount);
       });
@@ -2294,7 +2488,7 @@ async function restoreAddedFeatures() {
  */
 async function generateFeatureSpecFromChat(input) {
   console.log("[WebEdit Add] Generating feature spec from chat (no AI yet)");
-  
+
   // TEMP: no AI yet - just wrap user text into a feature spec
   return {
     id: generateFeatureId(),
@@ -2325,17 +2519,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Handle Add Feature requests
   if (message.type === "WEBEDIT_ADD_FEATURE") {
     console.log("[WebEdit Add] Received ADD_FEATURE message", message.payload);
-    
+
     (async () => {
       try {
         const spec = message.payload;
-        
+
         // Inject the feature
         await injectFeature(spec);
-        
+
         // Save to storage for persistence
         const saved = await saveAddedFeature(spec);
-        
+
         if (saved) {
           sendResponse({ success: true, featureId: spec.id });
         } else {
@@ -2346,7 +2540,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ success: false, error: error.message });
       }
     })();
-    
+
     return true; // Keep message channel open for async response
   }
 
@@ -2378,7 +2572,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ success: true });
     return true;
   }
-  
+
   // Respond to PING messages (for connection testing)
   if (message.type === "PING") {
     sendResponse({ status: "ready" });
@@ -2394,86 +2588,58 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 let isInitialized = false;
 
 /**
- * Initialize the extension on page load
  * - Create panel
  * - Apply saved rules
  * - Setup mutation observer
  */
-async function initializeExtension() {
-  // Prevent duplicate initialization
-  if (isInitialized) {
-    return;
-  }
-
+async function initialize() {
+  if (isInitialized) return;
   isInitialized = true;
-  console.log("🚀 WebEdit AI initializing...");
 
-  // Create panel
+  console.log("🚀 WebEdit AI: Initializing...");
+
+  // 1. Create Panel (hidden)
   createPanel();
   await restorePanelState();
 
-  // Wait for EditRules to be available, then apply saved rules for this page
-  const editRules = await waitForEditRules();
-  
-  if (editRules) {
-    try {
-      const affectedCount = await editRules.applyRules();
-      if (affectedCount > 0) {
-        console.log(`✅ Applied rules to ${affectedCount} element(s)`);
-      } else {
-        console.log('ℹ️ No rules to apply for this page');
-      }
+  // 2. Load Chat History
+  loadChatHistory();
 
-      // Setup mutation observer to reapply rules on DOM changes
-      // Only setup if extension context is valid
-      if (isExtensionContextValid()) {
-        editRules.setupMutationObserver();
-      }
-    } catch (error) {
-      // Silently handle context invalidated errors
-      const errorMsg = error.message || String(error);
-      if (!errorMsg.includes('Extension context invalidated') && !errorMsg.includes('context invalidated')) {
-        console.error("❌ Error applying rules:", error);
-      }
+  // 3. Check Auth
+  await checkAuthStatus();
+  updateAuthUI();
+
+  // 4. Start Auth Sync
+  startAuthSync();
+
+  // 5. Load & Apply Rules
+  if (window.EditRules) {
+    // Apply local rules
+    await window.EditRules.applyAllRulesForCurrentPage();
+
+    // Fetch from Supabase if logged in
+    if (currentUser) {
+      const remoteRules = await window.EditRules.fetchRules(currentUser, getPageKey());
+      // Merge/Apply remote rules... (logic to be refined)
+      // For now, just logging
+      console.log(`Loaded ${remoteRules.length} remote rules`);
     }
-  } else {
-    console.error("❌ EditRules not available during initialization - features will not work");
-    console.error("   Please check the console for errors in editRules.js");
-    console.error("   Try refreshing the page or reloading the extension");
-    
-    // Show a user-friendly notification
-    setTimeout(() => {
-      if (chatPanel && !chatPanel.classList.contains('hidden')) {
-        showNotification("Extension not fully loaded. Please refresh the page.", "error");
-      }
-    }, 1000);
   }
 
-  // Restore added features from storage
-  try {
-    const restoredCount = await restoreAddedFeatures();
-    if (restoredCount > 0) {
-      console.log(`✅ Restored ${restoredCount} added feature(s)`);
-    }
-  } catch (error) {
-    console.error("❌ Error restoring added features:", error);
-  }
+  // 6. Restore Added Features
+  await restoreAddedFeatures();
 
-  console.log("✅ WebEdit AI initialized");
-
-  // Start auth sync if on WebEdit AI website
-  if (window.location.hostname.includes(WEBEDIT_DOMAIN)) {
-    console.log("🔄 On WebEdit AI website, starting auth sync...");
-    startAuthSync();
-  }
+  console.log("✅ WebEdit AI: Initialization complete");
 }
 
-// Initialize when DOM is ready
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", initializeExtension);
+// Run initialization
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initialize);
 } else {
-  initializeExtension();
+  initialize();
 }
+
+
 
 // Also reapply rules on SPA navigation (for single-page apps)
 // Use proper URL change detection instead of MutationObserver to avoid infinite loops
@@ -2506,8 +2672,8 @@ function handleUrlChange() {
             setTimeout(() => {
               isApplyingRules = false;
             }, 100);
-  });
-} else {
+          });
+      } else {
         // Synchronous execution - reset flag after a delay
         setTimeout(() => {
           isApplyingRules = false;

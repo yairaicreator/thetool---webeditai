@@ -136,6 +136,7 @@
     opacity: 0;
     transform: translateY(-10px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -203,6 +204,7 @@
     opacity: 0;
     transform: translateY(-10px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -330,7 +332,8 @@
 
 /* References container - holds all reference messages at bottom */
 .webedit-references-container {
-  margin-top: auto; /* Push references to bottom */
+  margin-top: auto;
+  /* Push references to bottom */
   padding-top: 16px;
   display: flex;
   flex-direction: column;
@@ -715,7 +718,7 @@ body.webedit-panel-open {
   #webedit-chat-panel {
     width: 360px;
   }
-  
+
   body.webedit-panel-open {
     margin-right: 360px !important;
   }
@@ -725,7 +728,7 @@ body.webedit-panel-open {
   #webedit-chat-panel {
     width: 320px;
   }
-  
+
   body.webedit-panel-open {
     margin-right: 320px !important;
   }
@@ -737,11 +740,11 @@ body.webedit-panel-open {
     border-left: none;
     border-radius: 0;
   }
-  
+
   body.webedit-panel-open {
     margin-right: 0 !important;
   }
-  
+
   /* On very small screens, overlay instead of push to preserve usability */
   #webedit-chat-panel:not(.hidden) {
     z-index: 2147483647;
@@ -750,12 +753,110 @@ body.webedit-panel-open {
 
 /* Pulse animation for sign-in button when auth is required */
 @keyframes pulse {
-  0%, 100% {
+
+  0%,
+  100% {
     transform: scale(1);
     box-shadow: 0 0 0 0 rgba(236, 72, 153, 0.7);
   }
+
   50% {
     transform: scale(1.05);
     box-shadow: 0 0 0 10px rgba(236, 72, 153, 0);
   }
+}
+
+/* History Sidebar */
+.webedit-history-sidebar {
+  position: absolute;
+  top: 48px;
+  /* Below header */
+  left: 0;
+  width: 250px;
+  bottom: 0;
+  background: white;
+  z-index: 20;
+  transform: translateX(-100%);
+  transition: transform 0.3s ease-in-out;
+  box-shadow: 4px 0 12px rgba(0, 0, 0, 0.1);
+  display: flex;
+  flex-direction: column;
+}
+
+.webedit-history-sidebar.visible {
+  transform: translateX(0);
+}
+
+.webedit-history-header {
+  padding: 16px;
+  border-bottom: 1px solid #e5e7eb;
+  font-weight: 600;
+  color: #1f2937;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.webedit-new-chat-btn {
+  background: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.webedit-history-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.webedit-history-item {
+  padding: 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  margin-bottom: 4px;
+  transition: background 0.2s;
+}
+
+.webedit-history-item:hover {
+  background: #f3f4f6;
+}
+
+.webedit-history-item.active {
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.webedit-history-date {
+  font-size: 11px;
+  color: #6b7280;
+  margin-bottom: 2px;
+}
+
+.webedit-history-preview {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #374151;
+}
+
+/* Header Hamburger */
+.webedit-header-hamburger {
+  background: transparent;
+  border: none;
+  color: white;
+  padding: 0 12px;
+  cursor: pointer;
+  font-size: 20px;
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+
+.webedit-header-hamburger:hover {
+  background: rgba(255, 255, 255, 0.1);
 }
