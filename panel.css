@@ -747,3 +747,15 @@ body.webedit-panel-open {
     z-index: 2147483647;
   }
 }
+
+/* Pulse animation for sign-in button when auth is required */
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(236, 72, 153, 0.7);
+  }
+  50% {
+    transform: scale(1.05);
+    box-shadow: 0 0 0 10px rgba(236, 72, 153, 0);
+  }
+}

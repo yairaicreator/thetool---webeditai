@@ -5,6 +5,14 @@ let isPickMode = false;
 let isRemoveMode = false;
 let isAddFeatureMode = false; // Track if we're in Add feature flow
 
+const addFeaturePrompt = {
+  step: 'idle', // 'idle' | 'name' | 'description'
+  name: '',
+  description: '',
+  targetSelector: null,
+  targetDescription: ''
+};
+
 // UI state
 let currentTool = "remove";
 let hoverEl = null;
@@ -96,6 +104,164 @@ async function checkAuthStatus() {
       resolve(null);
     }
   });
+}
+
+/**
+ * Check if user is authorized to perform edits
+ * Returns true if authorized, false otherwise
+ * Shows notification if unauthorized
+ */
+function requireAuth(actionName = "perform this action") {
+  if (!currentUser) {
+    console.log(`🔒 Auth required for: ${actionName}`);
+    showNotification(`Please sign in to ${actionName}`, "error");
+    
+    // Highlight the sign-in button briefly
+    const signinBtn = document.getElementById("webedit-signin-btn");
+    if (signinBtn) {
+      signinBtn.style.animation = "pulse 0.5s ease-in-out 3";
+      setTimeout(() => {
+        signinBtn.style.animation = "";
+      }, 1500);
+    }
+    
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Sync authentication state between website and extension
+ * Checks if user is signed in on webeditai.com and syncs to extension
+ */
+async function syncAuthFromWebsite() {
+  // Only sync if we're on the WebEdit AI website
+  if (!window.location.hostname.includes(WEBEDIT_DOMAIN)) {
+    return;
+  }
+
+  try {
+    // Check if the website has a Supabase session in localStorage
+    const websiteSession = localStorage.getItem('sb-eqfjkvjwsswjxkmomxax-auth-token');
+    
+    if (websiteSession) {
+      const sessionData = JSON.parse(websiteSession);
+      
+      // Check if extension already has this session
+      const extensionSession = await new Promise((resolve) => {
+        chrome.storage.local.get(['webeditSupabaseSession'], (result) => {
+          resolve(result.webeditSupabaseSession);
+        });
+      });
+
+      // If sessions don't match, sync from website to extension
+      if (!extensionSession || 
+          extensionSession.access_token !== sessionData.access_token ||
+          extensionSession.user?.id !== sessionData.user?.id) {
+        
+        console.log("🔄 Syncing auth from website to extension...");
+        
+        // Store session in extension
+        await new Promise((resolve) => {
+          chrome.storage.local.set({
+            webeditSupabaseSession: sessionData,
+            webeditSessionTimestamp: Date.now()
+          }, resolve);
+        });
+
+        // Update current user
+        currentUser = sessionData.user || null;
+        updateAuthUI();
+        
+        console.log("✅ Auth synced from website:", currentUser?.email);
+        showNotification("Signed in successfully!", "success");
+      }
+    } else {
+      // Website has no session - check if extension should sign out
+      const extensionSession = await new Promise((resolve) => {
+        chrome.storage.local.get(['webeditSupabaseSession'], (result) => {
+          resolve(result.webeditSupabaseSession);
+        });
+      });
+
+      if (extensionSession && currentUser) {
+        console.log("🔄 Website signed out, syncing to extension...");
+        await handleSignOut();
+      }
+    }
+  } catch (error) {
+    console.error("❌ Error syncing auth from website:", error);
+  }
+}
+
+/**
+ * Sync authentication state from extension to website
+ * Updates website localStorage if extension is signed in
+ */
+async function syncAuthToWebsite() {
+  // Only sync if we're on the WebEdit AI website
+  if (!window.location.hostname.includes(WEBEDIT_DOMAIN)) {
+    return;
+  }
+
+  try {
+    const extensionSession = await new Promise((resolve) => {
+      chrome.storage.local.get(['webeditSupabaseSession'], (result) => {
+        resolve(result.webeditSupabaseSession);
+      });
+    });
+
+    if (extensionSession) {
+      const websiteSession = localStorage.getItem('sb-eqfjkvjwsswjxkmomxax-auth-token');
+      
+      // If website doesn't have session but extension does, sync to website
+      if (!websiteSession) {
+        console.log("🔄 Syncing auth from extension to website...");
+        localStorage.setItem('sb-eqfjkvjwsswjxkmomxax-auth-token', JSON.stringify(extensionSession));
+        console.log("✅ Auth synced to website");
+      }
+    }
+  } catch (error) {
+    console.error("❌ Error syncing auth to website:", error);
+  }
+}
+
+/**
+ * Start periodic auth sync between website and extension
+ */
+function startAuthSync() {
+  // Only run on WebEdit AI website
+  if (!window.location.hostname.includes(WEBEDIT_DOMAIN)) {
+    return;
+  }
+
+  // Stop any existing sync
+  if (authSyncInterval) {
+    clearInterval(authSyncInterval);
+  }
+
+  console.log("🔄 Starting auth sync between website and extension...");
+
+  // Initial sync
+  syncAuthFromWebsite();
+  syncAuthToWebsite();
+
+  // Periodic sync every 3 seconds
+  authSyncInterval = setInterval(() => {
+    syncAuthFromWebsite();
+    syncAuthToWebsite();
+  }, AUTH_SYNC_INTERVAL_MS);
+}
+
+/**
+ * Stop auth sync
+ */
+function stopAuthSync() {
+  if (authSyncInterval) {
+    clearInterval(authSyncInterval);
+    authSyncInterval = null;
+    console.log("⏹️ Stopped auth sync");
+  }
 }
 
 /**
@@ -747,20 +913,39 @@ function attachPanelEventListeners() {
     btn.addEventListener("click", (e) => {
       console.log("🔘 Tool button clicked:", btn.dataset.tool);
       
+      const tool = btn.dataset.tool;
+      
+      // Check authorization for all editing tools
+      if (tool === "remove" && !requireAuth("remove elements")) {
+        return;
+      }
+      if (tool === "customize" && !requireAuth("customize elements")) {
+        return;
+      }
+      if (tool === "add" && !requireAuth("add features")) {
+        return;
+      }
+      
       // Update active state
       toolButtons.forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
-      currentTool = btn.dataset.tool;
+      currentTool = tool;
       toolsMenu.classList.remove("visible"); // Close menu after selection
       
       // Handle different tools
       if (currentTool === "remove") {
         // Start Remove mode immediately (it will stop Pick mode if needed)
         console.log("🗑️ Starting Remove mode from menu");
+        isAddFeatureMode = false;
+        resetAddFeaturePromptState();
+        updateChatInputPrompt("What do you want to change?");
         startRemoveMode();
         customizePanel.classList.remove("visible");
       } else if (currentTool === "customize") {
         // Stop any active modes for customize tool
+        isAddFeatureMode = false;
+        resetAddFeaturePromptState();
+        updateChatInputPrompt("What do you want to change?");
         stopRemoveMode();
         stopPickMode();
         customizePanel.classList.add("visible");
@@ -768,6 +953,7 @@ function attachPanelEventListeners() {
       } else if (currentTool === "add") {
         // Start Add feature flow
         console.log("➕ Starting Add feature flow");
+        resetAddFeaturePromptState();
         stopRemoveMode();
         stopPickMode();
         isAddFeatureMode = true;
@@ -775,9 +961,13 @@ function attachPanelEventListeners() {
         
         // Show instruction and start Pick mode
         showNotification("Pick an element to add content near it", "info");
+        updateChatInputPrompt("Pick an element to name your edit...");
         startPickMode();
       } else {
         // For any other tool, stop active modes
+        isAddFeatureMode = false;
+        resetAddFeaturePromptState();
+        updateChatInputPrompt("What do you want to change?");
         stopRemoveMode();
         stopPickMode();
         customizePanel.classList.remove("visible");
@@ -788,8 +978,14 @@ function attachPanelEventListeners() {
   // Pick element button - starts Pick mode for element selection (not removal)
   const pickBtn = document.getElementById("webedit-pick-btn");
   if (pickBtn) {
-  pickBtn.addEventListener("click", () => {
+    pickBtn.addEventListener("click", () => {
       console.log("🔘 Pick Element button clicked");
+      
+      // Check authorization
+      if (!requireAuth("pick elements")) {
+        return;
+      }
+      
       // Stop all active modes before starting Pick mode
       stopRemoveMode();
       stopPickMode();
@@ -818,65 +1014,18 @@ function attachPanelEventListeners() {
       e.preventDefault();
       
       const userText = chatInput.value.trim();
-      
-      // Only process if there's text and we're in Add feature mode
-      if (userText && isAddFeatureMode && currentEditTarget.selector) {
-        console.log("➕ Processing Add feature request:", userText);
-        
-        // Clear input
+      if (!userText) {
         chatInput.value = "";
-        
-        // Add user message to chat
-        addChatMessage("user", userText);
-        
-        try {
-          // Generate feature spec using the stub function
-          const featureSpec = await generateFeatureSpecFromChat({
-            userText: userText,
-            selector: currentEditTarget.selector
-          });
-          
-          console.log("➕ Generated feature spec:", featureSpec);
-          
-          // Send message to content script (ourselves) to inject the feature
-          // We do this via chrome.runtime to simulate the messaging pattern
-          // but we can also just call injectFeature directly
-          await injectFeature(featureSpec);
-          
-          // Save to storage
-          const saved = await saveAddedFeature(featureSpec);
-          
-          // Save to Supabase (non-blocking)
-          if (window.SaveEdit && window.SaveEdit.saveAddFeature) {
-            window.SaveEdit.saveAddFeature(featureSpec).catch(err => {
-              console.error('[Add Feature] Failed to save to Supabase:', err);
-            });
-          }
-          
-          if (saved) {
-            addChatMessage("system", "✅ Feature added successfully! It will reappear when you reload the page.");
-            showNotification("Feature added successfully!", "success");
-          } else {
-            addChatMessage("system", "⚠️ Feature added, but couldn't save it. It will disappear on reload.");
-            showNotification("Feature added, but not saved to storage", "error");
-          }
-        } catch (error) {
-          console.error("➕ Error adding feature:", error);
-          addChatMessage("system", "❌ Error: Could not add feature. Please try again.");
-          showNotification("Error adding feature", "error");
-        }
-        
-        // Reset Add feature mode
-        isAddFeatureMode = false;
-        currentEditTarget = {
-          element: null,
-          selector: null,
-          description: null,
-          pageKey: null
-        };
-        
-        // Reset placeholder
-        chatInput.placeholder = "What do you want to change?";
+        return;
+      }
+      
+      // Clear input immediately
+      chatInput.value = "";
+
+      if (isAddFeatureMode) {
+        console.log("➕ Processing Add feature prompt input:", userText);
+        await handleAddFeatureChatEntry(userText);
+        return;
       }
     }
   });
@@ -916,6 +1065,11 @@ function attachPanelEventListeners() {
   });
 
   applyBtn.addEventListener("click", async () => {
+    // Check authorization first
+    if (!requireAuth("apply customizations")) {
+      return;
+    }
+    
     // Use current edit target if available, otherwise use selectedEl
     const targetEl = currentEditTarget.element || selectedEl;
     
@@ -1196,12 +1350,9 @@ function stopPickMode() {
   document.removeEventListener("click", handlePickClick, true);
   hideModeIndicator("pick");
   
-  // Reset chat input placeholder if we were in Add feature mode
-  if (isAddFeatureMode) {
-    const chatInput = document.getElementById("webedit-chat-input");
-    if (chatInput) {
-      chatInput.placeholder = "What do you want to change?";
-    }
+  // Reset chat input placeholder only when not in Add feature flow
+  if (!isAddFeatureMode) {
+    updateChatInputPrompt("What do you want to change?");
   }
 }
 
@@ -1264,16 +1415,7 @@ async function handlePickClick(event) {
 
     // Check if we're in Add feature mode
     if (isAddFeatureMode) {
-      // Show prompt in chat for user to describe the feature
-      addChatMessage("system", "Now describe what you want to add near this element, then press Enter.");
-      showNotification("Element selected! Type your description in the chat below.", "success");
-      
-      // Focus the chat input
-      const chatInput = document.getElementById("webedit-chat-input");
-      if (chatInput) {
-        chatInput.placeholder = "Describe the feature you want to add...";
-        chatInput.focus();
-      }
+      startAddFeatureNamingPrompt();
     } else {
       showNotification("Element selected for editing", "success");
     }
@@ -1288,10 +1430,10 @@ async function handlePickClick(event) {
   // state consistent by ensuring the chat input stays focused and guidance
   // remains visible after pick mode exits.
   if (wasInAddFeatureMode) {
-    const chatInput = document.getElementById("webedit-chat-input");
-    if (chatInput) {
-      chatInput.placeholder = "Describe the feature you want to add...";
-      chatInput.focus();
+    if (addFeaturePrompt.step === 'name') {
+      updateChatInputPrompt("Name of edit...", true);
+    } else if (addFeaturePrompt.step === 'description') {
+      updateChatInputPrompt("Describe the edit...", true);
     }
     console.log("✨ Add feature mode remains active after element selection");
   }
@@ -1506,6 +1648,144 @@ function addNewElement(referenceEl) {
 // ============================================
 // Add Feature - Inject Custom Elements
 // ============================================
+
+function resetAddFeaturePromptState() {
+  addFeaturePrompt.step = 'idle';
+  addFeaturePrompt.name = '';
+  addFeaturePrompt.description = '';
+  addFeaturePrompt.targetSelector = null;
+  addFeaturePrompt.targetDescription = '';
+}
+
+function updateChatInputPrompt(text, shouldFocus = false) {
+  const chatInput = document.getElementById("webedit-chat-input");
+  if (!chatInput) {
+    return;
+  }
+  chatInput.placeholder = text;
+  if (shouldFocus) {
+    chatInput.focus();
+  }
+}
+
+function startAddFeatureNamingPrompt() {
+  resetAddFeaturePromptState();
+  addFeaturePrompt.step = 'name';
+  addFeaturePrompt.targetSelector = currentEditTarget.selector;
+  addFeaturePrompt.targetDescription = currentEditTarget.description;
+
+  addChatMessage("system", "Name of edit:");
+  showNotification("Element selected! Name your edit in the chat below.", "success");
+  updateChatInputPrompt("Name of edit...", true);
+}
+
+async function handleAddFeatureChatEntry(userText) {
+  if (!currentEditTarget.selector) {
+    addChatMessage("system", "Please pick an element before naming your edit.");
+    showNotification("Pick an element to start Add feature.", "error");
+    return;
+  }
+
+  addChatMessage("user", userText);
+
+  if (addFeaturePrompt.step === 'name') {
+    addFeaturePrompt.name = userText;
+    addFeaturePrompt.step = 'description';
+    addChatMessage("system", "Describe the edit:");
+    updateChatInputPrompt("Describe the edit...", true);
+    return;
+  }
+
+  if (addFeaturePrompt.step === 'description') {
+    addFeaturePrompt.description = userText;
+    await completeAddFeatureCreation();
+    return;
+  }
+
+  // If step is idle or unknown, remind user to pick an element to start over
+  addChatMessage("system", "Pick an element and provide the edit name first.");
+  showNotification("Pick an element to start Add feature.", "error");
+}
+
+async function completeAddFeatureCreation() {
+  const name = (addFeaturePrompt.name || "").trim();
+  const description = (addFeaturePrompt.description || "").trim();
+  const selector = addFeaturePrompt.targetSelector || currentEditTarget.selector;
+
+  if (!name) {
+    addChatMessage("system", "Name of edit:");
+    addFeaturePrompt.step = 'name';
+    updateChatInputPrompt("Name of edit...", true);
+    return;
+  }
+
+  if (!description) {
+    addChatMessage("system", "Describe the edit:");
+    addFeaturePrompt.step = 'description';
+    updateChatInputPrompt("Describe the edit...", true);
+    return;
+  }
+
+  if (!selector) {
+    addChatMessage("system", "Please pick an element again to continue.");
+    resetAddFeaturePromptState();
+    showNotification("Pick an element to continue.", "error");
+    return;
+  }
+
+  const featureSpec = {
+    id: generateFeatureId(),
+    selector,
+    position: "after",
+    content: description,
+    pageKey: getPageKey(),
+    createdAt: Date.now(),
+    name,
+    purpose: description,
+    type: 'note'
+  };
+
+  try {
+    console.log("➕ Creating feature with prompts:", featureSpec);
+    await injectFeature(featureSpec);
+
+    const saved = await saveAddedFeature(featureSpec);
+
+    // Save to Supabase (non-blocking)
+    if (window.SaveEdit && window.SaveEdit.saveAddFeature) {
+      window.SaveEdit.saveAddFeature(featureSpec).catch(err => {
+        console.error('[Add Feature] Failed to save to Supabase:', err);
+      });
+    }
+
+    if (saved) {
+      addChatMessage("system", `✅ "${name}" added successfully! It will reappear when you reload the page.`);
+      showNotification("Feature added successfully!", "success");
+    } else {
+      addChatMessage("system", "⚠️ Feature added, but couldn't save it. It will disappear on reload.");
+      showNotification("Feature added, but not saved to storage", "error");
+    }
+
+    finalizeAddFeatureFlow();
+  } catch (error) {
+    console.error("➕ Error adding feature:", error);
+    addChatMessage("system", "❌ Error: Could not add feature. Please try again.");
+    showNotification("Error adding feature", "error");
+  }
+}
+
+function finalizeAddFeatureFlow() {
+  isAddFeatureMode = false;
+  resetAddFeaturePromptState();
+  clearSelected();
+  currentEditTarget = {
+    element: null,
+    selector: null,
+    description: null,
+    pageKey: null
+  };
+  updateChatInputPrompt("What do you want to change?");
+}
 
 // Storage key for added features
 const ADDED_FEATURES_STORAGE_KEY = 'webedit-added-features';
@@ -1912,6 +2192,12 @@ async function initializeExtension() {
   }
 
   console.log("✅ WebEdit AI initialized");
+
+  // Start auth sync if on WebEdit AI website
+  if (window.location.hostname.includes(WEBEDIT_DOMAIN)) {
+    console.log("🔄 On WebEdit AI website, starting auth sync...");
+    startAuthSync();
+  }
 }
 
 // Initialize when DOM is ready
