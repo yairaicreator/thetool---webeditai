@@ -921,8 +921,16 @@ function attachPanelEventListeners() {
           return;
         }
         
-        // Save to storage
+        // Save to local storage
         await saveAddedFeature(spec);
+        
+        // Save to Supabase (non-blocking - don't wait for it)
+        if (window.SaveEdit && window.SaveEdit.saveAddFeature) {
+          window.SaveEdit.saveAddFeature(spec).catch(err => {
+            console.error('[Add Feature] Failed to save to Supabase:', err);
+            // Don't show error to user - local save succeeded
+          });
+        }
         
         // Show success
         showNotification("Feature created successfully!", "success");
@@ -1035,7 +1043,16 @@ function attachPanelEventListeners() {
 
     if (editRules) {
       try {
-        await editRules.createRule(targetEl, "style", { styles }, currentUser);
+        const rule = await editRules.createRule(targetEl, "style", { styles }, currentUser);
+        
+        // Save to Supabase (non-blocking)
+        if (window.SaveEdit && window.SaveEdit.saveCustomizeEdit) {
+          window.SaveEdit.saveCustomizeEdit(targetEl, rule).catch(err => {
+            console.error('[Customize] Failed to save to Supabase:', err);
+            // Don't show error to user - local save succeeded
+          });
+        }
+        
         showNotification("Styles applied successfully!", "success");
       } catch (error) {
         console.error("❌ Error saving style rule:", error);
@@ -1410,6 +1427,14 @@ async function handleRemoveClick(event) {
     try {
       const rule = await editRules.createRule(el, "remove", {}, currentUser);
       console.log("✅ Rule created and saved:", rule);
+
+      // Save to Supabase (non-blocking)
+      if (window.SaveEdit && window.SaveEdit.saveRemoveEdit) {
+        window.SaveEdit.saveRemoveEdit(el, rule).catch(err => {
+          console.error('[Remove] Failed to save to Supabase:', err);
+          // Don't show error to user - local save succeeded
+        });
+      }
 
       showNotification("You successfully removed this element.", "success");
     } catch (error) {
