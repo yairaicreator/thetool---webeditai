@@ -1137,9 +1137,18 @@ function showAddFeatureStep(step) {
  */
 async function waitForEditRules(maxWaitMs = 5000) {
   // Check immediately first
-  if (window.EditRules) {
+  if (window.EditRules && !window.EditRules._error) {
     console.log('✅ EditRules available immediately');
     return window.EditRules;
+  }
+  
+  // Check if EditRules was exported with an error
+  if (window.EditRules && window.EditRules._error) {
+    console.error('❌ EditRules failed to load with error:', window.EditRules._errorMessage);
+    if (window.EditRules._errorStack) {
+      console.error('   Stack trace:', window.EditRules._errorStack);
+    }
+    return null;
   }
 
   console.log('⏳ Waiting for EditRules to load...');
@@ -1150,15 +1159,48 @@ async function waitForEditRules(maxWaitMs = 5000) {
 
   for (let i = 0; i < maxChecks; i++) {
     await new Promise(resolve => setTimeout(resolve, checkInterval));
+    
+    // Check if EditRules is now available
     if (window.EditRules) {
+      // Check if it's an error object
+      if (window.EditRules._error) {
+        console.error('❌ EditRules failed to load with error:', window.EditRules._errorMessage);
+        if (window.EditRules._errorStack) {
+          console.error('   Stack trace:', window.EditRules._errorStack);
+        }
+        return null;
+      }
+      
+      // Valid EditRules object
       console.log(`✅ EditRules available after ${(i + 1) * checkInterval}ms`);
       return window.EditRules;
     }
+    
+    // Also check the flag
+    if (window.__webeditEditRulesLoaded) {
+      // Flag is set but EditRules might not be on window yet, wait a bit more
+      await new Promise(resolve => setTimeout(resolve, 50));
+      if (window.EditRules && !window.EditRules._error) {
+        console.log(`✅ EditRules available after ${(i + 1) * checkInterval}ms (via flag)`);
+        return window.EditRules;
+      }
+    }
+  }
+
+  // Final check
+  if (window.EditRules && window.EditRules._error) {
+    console.error('❌ EditRules failed to load with error:', window.EditRules._errorMessage);
+    if (window.EditRules._errorStack) {
+      console.error('   Stack trace:', window.EditRules._errorStack);
+    }
+    return null;
   }
 
   console.error('❌ EditRules not available after waiting', maxWaitMs, 'ms');
   console.error('   This might indicate an error in editRules.js');
   console.error('   Check the console for errors in editRules.js');
+  console.error('   Looking for initial log: "📦 editRules.js: Starting to load..."');
+  console.error('   Looking for export log: "✅ EditRules initialized and exported to window.EditRules"');
   return null;
 }
 

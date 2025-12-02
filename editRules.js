@@ -907,14 +907,41 @@ const EditRules = {
 
 // Export for use in content script - set immediately after EditRules is defined
 // This ensures window.EditRules is available as soon as possible
-if (typeof window !== 'undefined') {
+(function() {
+  'use strict';
+  
   try {
+    // Verify EditRules object is defined
+    if (typeof EditRules === 'undefined') {
+      console.error('❌ EditRules object is undefined - cannot export');
+      return;
+    }
+    
+    // Check if window is available
+    if (typeof window === 'undefined') {
+      console.warn('⚠️ window is not available - EditRules cannot be exported');
+      return;
+    }
+    
+    // Export to window
     window.EditRules = EditRules;
     console.log('✅ EditRules initialized and exported to window.EditRules');
+    
+    // Also set a flag to indicate successful export
+    window.__webeditEditRulesLoaded = true;
+    
   } catch (error) {
     console.error('❌ Failed to export EditRules to window:', error);
+    console.error('   Error stack:', error.stack);
+    
+    // Try to export a minimal error handler
+    if (typeof window !== 'undefined') {
+      window.EditRules = {
+        _error: true,
+        _errorMessage: error.message,
+        _errorStack: error.stack
+      };
+    }
   }
-} else {
-  console.warn('⚠️ window is not available - EditRules cannot be exported');
-}
+})();
 
