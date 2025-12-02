@@ -13,6 +13,8 @@ let floatingLabel = null;
 let chatPanel = null;
 let isPanelOpen = false;
 let currentUser = null; // Store current authenticated user
+let activeInteractionMode = null; // Track which manual mode is currently active (pick/remove)
+const WEBEDIT_HISTORY_URL = "https://www.webeditai.com/#/history";
 
 // Selected element for editing (used by Pick mode)
 let currentEditTarget = {
@@ -334,6 +336,15 @@ function handleSignInClick() {
 function handleViewHistory() {
   console.log("📚 Opening history page");
 
+  const historyUrl = `${WEBEDIT_HISTORY_URL}?from=extension-panel`;
+
+  // Try immediate open to avoid waiting on the background service worker to spin up.
+  if (tryOpenHistoryDirect(historyUrl)) {
+    console.log("✅ History page opened directly via window.open");
+    showNotification("Opening EditHistory...", "info");
+    return;
+  }
+
   // Check if extension context is valid
   if (!isExtensionContextValid()) {
     showNotification("Extension context invalidated. Please reload the page.", "error");
@@ -358,6 +369,25 @@ function handleViewHistory() {
   } catch (error) {
     showNotification("Failed to open history page. Please reload the page.", "error");
   }
+}
+
+/**
+ * Attempt to open the history page directly via window.open for faster load
+ * @param {string} url
+ * @returns {boolean} whether the window was opened
+ */
+function tryOpenHistoryDirect(url) {
+  try {
+    const newTab = window.open(url, "_blank", "noopener");
+    if (newTab) {
+      // Ensure no reference to the opener for safety
+      newTab.opener = null;
+      return true;
+    }
+  } catch (error) {
+    console.warn("⚠️ Direct history open blocked, falling back to background script:", error);
+  }
+  return false;
 }
 
 /**
@@ -433,6 +463,45 @@ function showNotification(message, type = "info") {
   setTimeout(() => {
     notification.remove();
   }, 3000);
+}
+
+function showModeIndicator(mode) {
+  const indicator = document.getElementById("webedit-mode-indicator");
+  const textEl = document.getElementById("webedit-mode-text");
+  const closeBtn = document.getElementById("webedit-mode-close-btn");
+
+  if (!indicator || !textEl || !closeBtn) {
+    return;
+  }
+
+  activeInteractionMode = mode;
+
+  const messages = {
+    remove: "Remove mode active - Click an element to hide it",
+    pick: "Pick mode active - Click an element to select it"
+  };
+
+  textEl.textContent = messages[mode] || "Mode active";
+  indicator.classList.remove("hidden");
+  indicator.setAttribute("aria-hidden", "false");
+  indicator.dataset.mode = mode;
+  closeBtn.setAttribute("aria-label", `Exit ${mode === "remove" ? "Remove" : "Pick"} mode`);
+}
+
+function hideModeIndicator(mode) {
+  const indicator = document.getElementById("webedit-mode-indicator");
+  if (!indicator) {
+    return;
+  }
+
+  if (mode && activeInteractionMode !== mode) {
+    return;
+  }
+
+  activeInteractionMode = null;
+  indicator.classList.add("hidden");
+  indicator.setAttribute("aria-hidden", "true");
+  indicator.removeAttribute("data-mode");
 }
 
 // ============================================
@@ -515,6 +584,11 @@ function createPanel() {
         </div>
       </div>
       <button class="webedit-pick-btn-bottom" id="webedit-pick-btn">Pick element</button>
+    </div>
+
+    <div class="webedit-mode-indicator hidden" id="webedit-mode-indicator" aria-live="polite" aria-hidden="true">
+      <span class="webedit-mode-text" id="webedit-mode-text">Mode active</span>
+      <button class="webedit-mode-close-btn" id="webedit-mode-close-btn" type="button" aria-label="Exit mode">×</button>
     </div>
 
     <!-- Chat Input Bar (at bottom) -->
@@ -669,6 +743,17 @@ function attachPanelEventListeners() {
     });
   } else {
     console.error("❌ Pick element button not found!");
+  }
+
+  const modeCloseBtn = document.getElementById("webedit-mode-close-btn");
+  if (modeCloseBtn) {
+    modeCloseBtn.addEventListener("click", () => {
+      if (activeInteractionMode === "pick") {
+        stopPickMode();
+      } else if (activeInteractionMode === "remove") {
+        stopRemoveMode();
+      }
+    });
   }
 
   // Chat input
@@ -932,6 +1017,7 @@ function startRemoveMode() {
       document.addEventListener("click", handleRemoveClick, true);
 
       showNotification("Remove mode active - Click an element to remove it", "info");
+      showModeIndicator("remove");
     }
 
 function stopRemoveMode() {
@@ -940,6 +1026,7 @@ function stopRemoveMode() {
   clearHover();
   document.removeEventListener("mousemove", handleRemoveMouseMove, true);
   document.removeEventListener("click", handleRemoveClick, true);
+  hideModeIndicator("remove");
 }
 
 function handleRemoveMouseMove(event) {
@@ -1022,6 +1109,7 @@ function startPickMode() {
   document.addEventListener("click", handlePickClick, true);
 
   showNotification("Pick mode active - Click an element to select it", "info");
+  showModeIndicator("pick");
 }
 
 function stopPickMode() {
@@ -1030,6 +1118,7 @@ function stopPickMode() {
   clearHover();
   document.removeEventListener("mousemove", handlePickMouseMove, true);
   document.removeEventListener("click", handlePickClick, true);
+  hideModeIndicator("pick");
   
   // Reset chat input placeholder if we were in Add feature mode
   if (isAddFeatureMode) {
@@ -1077,6 +1166,8 @@ async function handlePickClick(event) {
   // Generate selector and description
   const editRules = await waitForEditRules();
   
+  const wasInAddFeatureMode = isAddFeatureMode;
+
   if (editRules) {
     const selector = generateSelectorForElement(el);
     const description = generateDescriptionForElement(el);
@@ -1116,6 +1207,18 @@ async function handlePickClick(event) {
   }
 
   stopPickMode();
+
+  // If pick mode was triggered as part of the Add Feature flow, keep the UX
+  // state consistent by ensuring the chat input stays focused and guidance
+  // remains visible after pick mode exits.
+  if (wasInAddFeatureMode) {
+    const chatInput = document.getElementById("webedit-chat-input");
+    if (chatInput) {
+      chatInput.placeholder = "Describe the feature you want to add...";
+      chatInput.focus();
+    }
+    console.log("✨ Add feature mode remains active after element selection");
+  }
 }
 
 // Helper functions for Pick mode

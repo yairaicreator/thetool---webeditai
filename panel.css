@@ -512,6 +512,50 @@
   flex-shrink: 0;
 }
 
+.webedit-mode-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 24px 12px;
+  padding: 10px 16px;
+  border-radius: 12px;
+  background: #0f172a;
+  color: #f8fafc;
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.15);
+}
+
+.webedit-mode-indicator.hidden {
+  display: none;
+}
+
+.webedit-mode-text {
+  flex: 1;
+}
+
+.webedit-mode-close-btn {
+  border: none;
+  background: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, transform 0.2s;
+}
+
+.webedit-mode-close-btn:hover {
+  background: rgba(255, 255, 255, 0.35);
+  transform: scale(1.05);
+}
+
 .webedit-visual-edit {
   display: flex;
   flex-direction: column;
