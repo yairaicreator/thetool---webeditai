@@ -123,6 +123,26 @@ async function supabaseRestCall(endpoint, options = {}) {
     } catch (e) {
       errorData = { message: errorText };
     }
+    
+    // Handle 404 (table doesn't exist) or PGRST205 (schema cache issue) gracefully
+    // For table endpoints (/rest/v1/websites, /rest/v1/edits), any 404 likely means table doesn't exist
+    const isTableEndpoint = endpoint.includes('/rest/v1/websites') || endpoint.includes('/rest/v1/edits');
+    
+    if (response.status === 404 || (errorData && errorData.code === 'PGRST205')) {
+      const errorMsg = errorData.message || errorText;
+      
+      // If it's a table endpoint and we get a 404, treat it as table not found
+      // OR if the error message explicitly mentions table-related issues (regardless of endpoint)
+      if (isTableEndpoint || 
+          errorMsg.includes('Could not find the table') || 
+          errorMsg.includes('relation') && errorMsg.includes('does not exist') ||
+          errorMsg.includes('schema cache')) {
+        // Table doesn't exist or schema cache is stale - this is expected if tables haven't been created yet
+        console.log('ℹ️ Supabase table not found or schema cache stale - operation skipped');
+        throw new Error('TABLE_NOT_FOUND'); // Special error code for graceful handling
+      }
+    }
+    
     throw new Error(`Supabase API error: ${response.status} - ${errorData.message || errorText}`);
   }
   
@@ -204,7 +224,20 @@ async function getOrCreateWebsiteForCurrentPage() {
     return null;
     
   } catch (error) {
-    console.error('[SaveEdit] Error getting/creating Website:', error);
+    const errorMsg = error.message || String(error);
+    
+    // Handle missing table gracefully (table not created yet)
+    if (errorMsg === 'TABLE_NOT_FOUND' || 
+        errorMsg.includes('Could not find the table') ||
+        errorMsg.includes('schema cache')) {
+      console.log('[SaveEdit] Websites table not found - skipping Supabase save (table may not be created yet)');
+      return null;
+    }
+    
+    // Log other errors but don't spam console
+    if (!errorMsg.includes('Failed to fetch') && !errorMsg.includes('NetworkError')) {
+      console.error('[SaveEdit] Error getting/creating Website:', errorMsg);
+    }
     return null;
   }
 }
@@ -314,8 +347,21 @@ async function saveEditToSupabase(params) {
     return { success: false, error: 'No data returned from insert' };
     
   } catch (error) {
-    console.error('[SaveEdit] Error saving edit to Supabase:', error);
-    return { success: false, error: error.message };
+    const errorMsg = error.message || String(error);
+    
+    // Handle missing table gracefully (table not created yet)
+    if (errorMsg === 'TABLE_NOT_FOUND' || 
+        errorMsg.includes('Could not find the table') ||
+        errorMsg.includes('schema cache')) {
+      console.log('[SaveEdit] Supabase tables not found - skipping save (tables may not be created yet)');
+      return { success: false, error: 'Tables not found' };
+    }
+    
+    // Log other errors but don't spam console
+    if (!errorMsg.includes('Failed to fetch') && !errorMsg.includes('NetworkError')) {
+      console.error('[SaveEdit] Error saving edit to Supabase:', errorMsg);
+    }
+    return { success: false, error: errorMsg };
   }
 }
 
