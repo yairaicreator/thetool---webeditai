@@ -1,24 +1,26 @@
-// WebEdit AI - Shared Supabase Client for Extension
-// This client is used across background, content scripts, and panel
+// WebEdit AI - Supabase Client
+// This client handles authentication and raw REST requests to Supabase.
 
-// Constants - DO NOT CHANGE
+// TODO: PASTE YOUR SUPABASE URL AND ANON KEY HERE
+// In a real build setup (Vite/Webpack), these would be:
+// const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+// const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
 const SUPABASE_URL = "https://eqfjkvjwsswjxkmomxax.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVxZmprdmp3c3N3anhrbW9teGF4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYxMTU1MDYsImV4cCI6MjA3MTY5MTUwNn0.sh5d5Hj5hshIOndyAodK_rlP0K1pERYyWyNqNxp-E7k";
 
-// Check for missing config
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  console.warn("⚠️ WebEdit AI: Supabase URL or Anon Key is missing in supabaseClient.js");
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY || SUPABASE_URL.includes("YOUR_SUPABASE_URL")) {
+  console.warn("⚠️ WebEdit AI: Supabase URL or Anon Key is missing. Edits will not be saved.");
 }
 
-// Production URLs - ALWAYS USE THESE
+// Production URLs
 const WEBEDIT_PROD_BASE_URL = "https://www.webeditai.com";
 const LOGIN_URL = "https://www.webeditai.com/#/signup";
 const HISTORY_URL = "https://www.webeditai.com/#/history";
 
 /**
  * Simple Supabase client implementation
- * Since we can't easily bundle @supabase/supabase-js in a Chrome extension without a build system,
- * we use chrome.storage.local for session persistence and REST API calls for auth operations
+ * Uses chrome.storage.local for session persistence and REST API calls.
  */
 const SupabaseClient = {
   url: SUPABASE_URL,
@@ -85,53 +87,7 @@ const SupabaseClient = {
   }
 };
 
-/**
- * Get the current authenticated user
- * Returns null if not authenticated or session expired
- */
-async function getCurrentUser() {
-  const { data: { session } } = await SupabaseClient.getSession();
-  if (!session) return null;
-  
-  if (SupabaseClient.isSessionExpired(session)) {
-    await SupabaseClient.signOut();
-    return null;
-  }
-  
-  return session.user || null;
-}
-
-/**
- * Apply a session received from the website
- */
-async function setSessionFromWebsite(session) {
-  if (!session) {
-    await SupabaseClient.signOut();
-    return { success: false, error: "No session provided" };
-  }
-  
-  await SupabaseClient.setSession(session);
-  return { success: true, user: session.user };
-}
-
-/**
- * Clear the current session (sign out)
- */
-async function clearSession() {
-  await SupabaseClient.signOut();
-  return { success: true };
-}
-
 // Export for use in other extension files
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {
-    SupabaseClient,
-    getCurrentUser,
-    setSessionFromWebsite,
-    clearSession,
-    WEBEDIT_PROD_BASE_URL,
-    LOGIN_URL,
-    HISTORY_URL
-  };
+if (typeof window !== 'undefined') {
+  window.SupabaseClient = SupabaseClient;
 }
-
