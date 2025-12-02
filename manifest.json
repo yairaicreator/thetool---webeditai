@@ -27,13 +27,14 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["supabaseClient.js", "messages.js", "editRules.js", "injector.js", "saveEdit.js", "contentScript.js"],
+      "js": ["messages.js", "editRules.js", "contentScript.js"],
       "css": ["contentStyles.css", "panel.css"],
       "run_at": "document_idle"
     },
     {
       "matches": [
-        "https://www.webeditai.com/*"
+        "https://www.webeditai.com/*",
+        "https://webeditai.com/*"
       ],
       "js": ["bridge-listener.js"],
       "run_at": "document_idle"

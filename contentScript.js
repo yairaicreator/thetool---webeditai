@@ -10,8 +10,6 @@ let currentTool = "remove";
 let hoverEl = null;
 let selectedEl = null;
 let floatingLabel = null;
-let exitModeButton = null;
-let exitModeLabel = null;
 let chatPanel = null;
 let isPanelOpen = false;
 let currentUser = null; // Store current authenticated user
@@ -298,63 +296,6 @@ function renderSignInButton(container) {
 }
 
 /**
- * Check if user is authenticated and show sign-in prompt if not
- * @returns {boolean} True if authenticated, false otherwise
- */
-function requireAuthentication() {
-  if (!currentUser) {
-    console.log("🔒 Authentication required - user not signed in");
-    showAuthenticationPrompt();
-    return false;
-  }
-  return true;
-}
-
-/**
- * Show authentication prompt notification with sign-in button
- */
-function showAuthenticationPrompt() {
-  const mainContent = document.querySelector(".webedit-main-content");
-  if (!mainContent) return;
-
-  // Remove any existing notification first
-  const existingNotification = mainContent.querySelector(".webedit-notification");
-  if (existingNotification) {
-    existingNotification.remove();
-  }
-
-  const notification = document.createElement("div");
-  notification.className = "webedit-notification webedit-notification-auth";
-  notification.innerHTML = `
-    <div class="webedit-notification-content">
-      <span class="webedit-notification-icon">🔒</span>
-      <div class="webedit-notification-text">
-        <div class="webedit-notification-message">Please sign in to use this feature</div>
-        <button class="webedit-notification-btn" id="webedit-auth-prompt-btn">Sign In</button>
-      </div>
-    </div>
-  `;
-
-  // Append to mainContent (positioned absolutely, so it overlays)
-  mainContent.appendChild(notification);
-
-  // Add click handler to sign-in button
-  const signInBtn = notification.querySelector("#webedit-auth-prompt-btn");
-  if (signInBtn) {
-    signInBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      handleSignInClick();
-      notification.remove();
-    });
-  }
-
-  // Auto-remove after 5 seconds
-  setTimeout(() => {
-    notification.remove();
-  }, 5000);
-}
-
-/**
  * Handle sign in button click - opens production login page
  */
 function handleSignInClick() {
@@ -528,88 +469,6 @@ function createPanel() {
       <div class="webedit-references-container" id="webedit-references-container"></div>
     </div>
 
-    <!-- Add Feature Panel (collapsible) -->
-    <div class="webedit-add-panel" id="webedit-add-panel">
-      <div class="webedit-panel-section-header">
-        <h3>Add Feature</h3>
-        <button class="webedit-panel-close-btn" id="webedit-add-close-btn">×</button>
-      </div>
-      
-      <!-- Step indicator -->
-      <div class="webedit-steps">
-        <div class="webedit-step" id="webedit-step-1">
-          <span class="webedit-step-number">1</span>
-          <span class="webedit-step-label">Pick location</span>
-        </div>
-        <div class="webedit-step" id="webedit-step-2">
-          <span class="webedit-step-number">2</span>
-          <span class="webedit-step-label">Create feature</span>
-        </div>
-      </div>
-      
-      <!-- Step 1: Pick location -->
-      <div class="webedit-add-step" id="webedit-add-step-1">
-        <p class="webedit-section-info">Choose where to add your feature</p>
-        <button class="webedit-btn webedit-btn-secondary" id="webedit-pick-location-btn">
-          📍 Pick section on page
-        </button>
-        <div class="webedit-selected-target" id="webedit-selected-target" style="display: none;">
-          <div class="webedit-target-label">Target:</div>
-          <div class="webedit-target-preview" id="webedit-target-preview"></div>
-        </div>
-      </div>
-      
-      <!-- Step 2: Feature form -->
-      <div class="webedit-add-step" id="webedit-add-step-2" style="display: none;">
-        <div class="webedit-field-row">
-          <label>Feature name:</label>
-          <input type="text" id="webedit-feature-name" placeholder="e.g., Important Note" />
-        </div>
-        
-        <div class="webedit-field-row">
-          <label>Feature type:</label>
-          <select id="webedit-feature-type">
-            <option value="note">Note / Text Box</option>
-            <option value="button">Button</option>
-            <option value="badge">Badge / Label</option>
-          </select>
-        </div>
-        
-        <div class="webedit-field-row">
-          <label>Position:</label>
-          <select id="webedit-feature-position">
-            <option value="before">Before target</option>
-            <option value="after">After target</option>
-            <option value="inside">Inside target</option>
-          </select>
-        </div>
-        
-        <div class="webedit-field-row">
-          <label>Purpose / Content:</label>
-          <textarea id="webedit-feature-purpose" placeholder="Describe what this feature does or contains..." rows="3"></textarea>
-        </div>
-        
-        <div class="webedit-add-actions">
-          <button class="webedit-btn webedit-btn-primary" id="webedit-create-feature-btn">✨ Create Feature</button>
-          <button class="webedit-btn webedit-btn-secondary" id="webedit-add-back-btn">← Back</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Manage Features Panel -->
-    <div class="webedit-manage-panel" id="webedit-manage-panel">
-      <div class="webedit-panel-section-header">
-        <h3>Features on this site</h3>
-        <div style="display: flex; gap: 8px;">
-          <button class="webedit-btn-icon" id="webedit-refresh-features-btn" title="Refresh">↻</button>
-          <button class="webedit-panel-close-btn" id="webedit-manage-close-btn">×</button>
-        </div>
-      </div>
-      <div class="webedit-features-list" id="webedit-features-list">
-        <p class="webedit-empty-message">No features added yet</p>
-      </div>
-    </div>
-
     <!-- Customize Panel (collapsible) -->
     <div class="webedit-customize-panel" id="webedit-customize-panel">
       <div class="webedit-customize-header">
@@ -704,9 +563,6 @@ async function togglePanel(show) {
     const user = await checkAuthStatus();
     console.log("🔍 Auth check result:", user ? user.email : "Not signed in");
     updateAuthUI();
-    
-    // Render features management list
-    await renderFeaturesManagementList();
   } else {
     chatPanel.classList.add("hidden");
     document.documentElement.classList.remove("webedit-panel-open");
@@ -760,15 +616,8 @@ function attachPanelEventListeners() {
   const customizePanel = document.getElementById("webedit-customize-panel");
   
   toolButtons.forEach((btn) => {
-    btn.addEventListener("click", async (e) => {
+    btn.addEventListener("click", (e) => {
       console.log("🔘 Tool button clicked:", btn.dataset.tool);
-      
-      // Check authentication before allowing tool use
-      if (!requireAuthentication()) {
-        // Close menu without changing state
-        toolsMenu.classList.remove("visible");
-        return;
-      }
       
       // Update active state
       toolButtons.forEach((b) => b.classList.remove("active"));
@@ -789,27 +638,16 @@ function attachPanelEventListeners() {
         customizePanel.classList.add("visible");
         showNotification("Pick an element to customize, or use 'Pick element' button", "info");
       } else if (currentTool === "add") {
-        // Show Add Feature panel
-        console.log("➕ Opening Add feature panel");
+        // Start Add feature flow
+        console.log("➕ Starting Add feature flow");
         stopRemoveMode();
         stopPickMode();
+        isAddFeatureMode = true;
         customizePanel.classList.remove("visible");
         
-        // Show Add panel
-        const addPanel = document.getElementById("webedit-add-panel");
-        if (addPanel) {
-          addPanel.classList.add("visible");
-          
-          // Reset to step 1
-          showAddFeatureStep(1);
-          
-          // Show and render features management list
-          const managePanel = document.getElementById("webedit-manage-panel");
-          if (managePanel) {
-            managePanel.classList.add("visible");
-          }
-          await renderFeaturesManagementList();
-        }
+        // Show instruction and start Pick mode
+        showNotification("Pick an element to add content near it", "info");
+        startPickMode();
       } else {
         // For any other tool, stop active modes
         stopRemoveMode();
@@ -824,12 +662,6 @@ function attachPanelEventListeners() {
   if (pickBtn) {
     pickBtn.addEventListener("click", () => {
       console.log("🔘 Pick Element button clicked");
-      
-      // Check authentication before allowing pick mode
-      if (!requireAuthentication()) {
-        return;
-      }
-      
       // Stop all active modes before starting Pick mode
       stopRemoveMode();
       stopPickMode();
@@ -845,8 +677,61 @@ function attachPanelEventListeners() {
   chatInput.addEventListener("keypress", async (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      // Chat input functionality reserved for future AI integration
-      // Add Feature now uses the dedicated form panel
+      
+      const userText = chatInput.value.trim();
+      
+      // Only process if there's text and we're in Add feature mode
+      if (userText && isAddFeatureMode && currentEditTarget.selector) {
+        console.log("➕ Processing Add feature request:", userText);
+        
+        // Clear input
+        chatInput.value = "";
+        
+        // Add user message to chat
+        addChatMessage("user", userText);
+        
+        try {
+          // Generate feature spec using the stub function
+          const featureSpec = await generateFeatureSpecFromChat({
+            userText: userText,
+            selector: currentEditTarget.selector
+          });
+          
+          console.log("➕ Generated feature spec:", featureSpec);
+          
+          // Send message to content script (ourselves) to inject the feature
+          // We do this via chrome.runtime to simulate the messaging pattern
+          // but we can also just call injectFeature directly
+          await injectFeature(featureSpec);
+          
+          // Save to storage
+          const saved = await saveAddedFeature(featureSpec);
+          
+          if (saved) {
+            addChatMessage("system", "✅ Feature added successfully! It will reappear when you reload the page.");
+            showNotification("Feature added successfully!", "success");
+          } else {
+            addChatMessage("system", "⚠️ Feature added, but couldn't save it. It will disappear on reload.");
+            showNotification("Feature added, but not saved to storage", "error");
+          }
+        } catch (error) {
+          console.error("➕ Error adding feature:", error);
+          addChatMessage("system", "❌ Error: Could not add feature. Please try again.");
+          showNotification("Error adding feature", "error");
+        }
+        
+        // Reset Add feature mode
+        isAddFeatureMode = false;
+        currentEditTarget = {
+          element: null,
+          selector: null,
+          description: null,
+          pageKey: null
+        };
+        
+        // Reset placeholder
+        chatInput.placeholder = "What do you want to change?";
+      }
     }
   });
 
@@ -872,216 +757,6 @@ function attachPanelEventListeners() {
 
   // Sign in button handled by renderSignInButton() or renderAvatar()
 
-  // Add Feature panel buttons
-  const addCloseBtn = document.getElementById("webedit-add-close-btn");
-  const pickLocationBtn = document.getElementById("webedit-pick-location-btn");
-  const createFeatureBtn = document.getElementById("webedit-create-feature-btn");
-  const addBackBtn = document.getElementById("webedit-add-back-btn");
-  const refreshFeaturesBtn = document.getElementById("webedit-refresh-features-btn");
-
-  if (addCloseBtn) {
-    addCloseBtn.addEventListener("click", () => {
-      const addPanel = document.getElementById("webedit-add-panel");
-      const managePanel = document.getElementById("webedit-manage-panel");
-      
-      if (addPanel) {
-        addPanel.classList.remove("visible");
-      }
-      
-      // Also hide the Manage Features panel when closing Add panel
-      if (managePanel) {
-        managePanel.classList.remove("visible");
-      }
-      
-      // Reset Add feature mode and clean up listeners
-      isAddFeatureMode = false;
-      
-      // Reset current edit target
-      currentEditTarget = {
-        element: null,
-        selector: null,
-        description: null,
-        pageKey: null
-      };
-      
-      // Clear selected target display
-      const targetDisplay = document.getElementById("webedit-selected-target");
-      if (targetDisplay) {
-        targetDisplay.style.display = "none";
-      }
-      
-      // If Pick Mode is active (user clicked "Pick location" but didn't select yet), stop it
-      if (isPickMode) {
-        console.log("🔄 Stopping Pick Mode when closing Add Feature panel");
-        stopPickMode();
-      } else {
-        // Only remove ESC listener and hide exit button if Pick Mode wasn't active
-        // (stopPickMode() already handles this cleanup)
-        document.removeEventListener("keydown", handleModeEscapeKey, true);
-        hideExitModeButton();
-      }
-    });
-  }
-
-  if (pickLocationBtn) {
-    pickLocationBtn.addEventListener("click", () => {
-      console.log("📍 Pick location clicked");
-      
-      // Check authentication (redundant check as panel shouldn't be visible, but for safety)
-      if (!requireAuthentication()) {
-        return;
-      }
-      
-      isAddFeatureMode = true;
-      
-      // Hide the Manage Features panel when picking location
-      const managePanel = document.getElementById("webedit-manage-panel");
-      if (managePanel) {
-        managePanel.classList.remove("visible");
-      }
-      
-      startPickMode();
-    });
-  }
-
-  if (addBackBtn) {
-    addBackBtn.addEventListener("click", () => {
-      showAddFeatureStep(1);
-    });
-  }
-
-  if (createFeatureBtn) {
-    createFeatureBtn.addEventListener("click", async () => {
-      console.log("✨ Create feature clicked");
-      
-      // Check authentication (redundant check as panel shouldn't be visible, but for safety)
-      if (!requireAuthentication()) {
-        return;
-      }
-      
-      // Get form values
-      const name = document.getElementById("webedit-feature-name").value.trim();
-      const type = document.getElementById("webedit-feature-type").value;
-      const position = document.getElementById("webedit-feature-position").value;
-      const purpose = document.getElementById("webedit-feature-purpose").value.trim();
-      
-      // Validate
-      if (!name) {
-        showNotification("Please enter a feature name", "error");
-        return;
-      }
-      
-      if (!purpose) {
-        showNotification("Please describe the feature purpose", "error");
-        return;
-      }
-      
-      if (!currentEditTarget.selector) {
-        showNotification("Please pick a location first", "error");
-        showAddFeatureStep(1);
-        return;
-      }
-      
-      try {
-        // Generate feature spec
-        const spec = await generateFeatureSpec({
-          name: name,
-          type: type,
-          purpose: purpose,
-          selector: currentEditTarget.selector,
-          position: position
-        });
-        
-        console.log("➕ Generated feature spec:", spec);
-        
-        // Inject the feature
-        const success = await injectFeature(spec);
-        
-        if (!success) {
-          showNotification("Failed to inject feature", "error");
-          return;
-        }
-        
-        // Save to local storage
-        await saveAddedFeature(spec);
-        
-        // Save to Supabase (non-blocking - don't wait for it)
-        if (window.SaveEdit && window.SaveEdit.saveAddFeature) {
-          window.SaveEdit.saveAddFeature(spec).catch(err => {
-            console.error('[Add Feature] Failed to save to Supabase:', err);
-            // Don't show error to user - local save succeeded
-          });
-        }
-        
-        // Show success
-        showNotification("Feature created successfully!", "success");
-        
-        // Reset form
-        document.getElementById("webedit-feature-name").value = "";
-        document.getElementById("webedit-feature-purpose").value = "";
-        document.getElementById("webedit-feature-type").value = "note";
-        document.getElementById("webedit-feature-position").value = "after";
-        
-        // Reset target
-        currentEditTarget = {
-          element: null,
-          selector: null,
-          description: null,
-        pageKey: null
-        };
-        
-        // Reset to step 1
-        showAddFeatureStep(1);
-        
-        // Reset Add feature mode and clean up listeners
-        isAddFeatureMode = false;
-        document.removeEventListener("keydown", handleModeEscapeKey, true);
-        hideExitModeButton();
-        
-        // Hide Add panel but show updated Manage panel
-        const addPanel = document.getElementById("webedit-add-panel");
-        if (addPanel) {
-          addPanel.classList.remove("visible");
-        }
-        
-        // Update and show features list
-        const managePanel = document.getElementById("webedit-manage-panel");
-        if (managePanel) {
-          managePanel.classList.add("visible");
-        }
-        await renderFeaturesManagementList();
-        
-        // Clear selected target display
-        const targetDisplay = document.getElementById("webedit-selected-target");
-        if (targetDisplay) {
-          targetDisplay.style.display = "none";
-        }
-        
-      } catch (error) {
-        console.error("➕ Error creating feature:", error);
-        showNotification("Error creating feature: " + error.message, "error");
-      }
-    });
-  }
-
-  if (refreshFeaturesBtn) {
-    refreshFeaturesBtn.addEventListener("click", async () => {
-      await renderFeaturesManagementList();
-      showNotification("Features list refreshed", "info");
-    });
-  }
-
-  // Manage panel close button
-  const manageCloseBtn = document.getElementById("webedit-manage-close-btn");
-  if (manageCloseBtn) {
-    manageCloseBtn.addEventListener("click", () => {
-      const managePanel = document.getElementById("webedit-manage-panel");
-      if (managePanel) {
-        managePanel.classList.remove("visible");
-      }
-    });
-  }
-
   // Customize panel buttons
   const customizeCloseBtn = document.getElementById("webedit-customize-close-btn");
   const applyBtn = document.getElementById("webedit-apply-btn");
@@ -1095,11 +770,6 @@ function attachPanelEventListeners() {
   });
 
   applyBtn.addEventListener("click", async () => {
-    // Check authentication
-    if (!requireAuthentication()) {
-      return;
-    }
-    
     // Use current edit target if available, otherwise use selectedEl
     const targetEl = currentEditTarget.element || selectedEl;
     
@@ -1129,16 +799,7 @@ function attachPanelEventListeners() {
 
     if (editRules) {
       try {
-        const rule = await editRules.createRule(targetEl, "style", { styles }, currentUser);
-        
-        // Save to Supabase (non-blocking)
-        if (window.SaveEdit && window.SaveEdit.saveCustomizeEdit) {
-          window.SaveEdit.saveCustomizeEdit(targetEl, rule).catch(err => {
-            console.error('[Customize] Failed to save to Supabase:', err);
-            // Don't show error to user - local save succeeded
-          });
-        }
-        
+        await editRules.createRule(targetEl, "style", { styles }, currentUser);
         showNotification("Styles applied successfully!", "success");
       } catch (error) {
         console.error("❌ Error saving style rule:", error);
@@ -1173,46 +834,6 @@ function attachPanelEventListeners() {
 
 
 // ============================================
-// Add Feature Panel Helpers
-// ============================================
-
-/**
- * Show specific step in Add Feature panel
- * @param {number} step - Step number (1 or 2)
- */
-function showAddFeatureStep(step) {
-  const step1 = document.getElementById("webedit-add-step-1");
-  const step2 = document.getElementById("webedit-add-step-2");
-  const stepIndicator1 = document.getElementById("webedit-step-1");
-  const stepIndicator2 = document.getElementById("webedit-step-2");
-  
-  if (!step1 || !step2) return;
-  
-  // Check if step indicators exist before accessing their classList
-  if (step === 1) {
-    step1.style.display = "flex";
-    step2.style.display = "none";
-    if (stepIndicator1) {
-      stepIndicator1.classList.add("active");
-      stepIndicator1.classList.remove("completed");
-    }
-    if (stepIndicator2) {
-      stepIndicator2.classList.remove("active");
-    }
-  } else if (step === 2) {
-    step1.style.display = "none";
-    step2.style.display = "flex";
-    if (stepIndicator1) {
-      stepIndicator1.classList.remove("active");
-      stepIndicator1.classList.add("completed");
-    }
-    if (stepIndicator2) {
-      stepIndicator2.classList.add("active");
-    }
-  }
-}
-
-// ============================================
 // Element Picking - Separate Remove and Pick Modes
 // ============================================
 
@@ -1223,18 +844,9 @@ function showAddFeatureStep(step) {
  */
 async function waitForEditRules(maxWaitMs = 5000) {
   // Check immediately first
-  if (window.EditRules && !window.EditRules._error) {
+  if (window.EditRules) {
     console.log('✅ EditRules available immediately');
     return window.EditRules;
-  }
-  
-  // Check if EditRules was exported with an error
-  if (window.EditRules && window.EditRules._error) {
-    console.error('❌ EditRules failed to load with error:', window.EditRules._errorMessage);
-    if (window.EditRules._errorStack) {
-      console.error('   Stack trace:', window.EditRules._errorStack);
-    }
-    return null;
   }
 
   console.log('⏳ Waiting for EditRules to load...');
@@ -1245,48 +857,15 @@ async function waitForEditRules(maxWaitMs = 5000) {
 
   for (let i = 0; i < maxChecks; i++) {
     await new Promise(resolve => setTimeout(resolve, checkInterval));
-    
-    // Check if EditRules is now available
     if (window.EditRules) {
-      // Check if it's an error object
-      if (window.EditRules._error) {
-        console.error('❌ EditRules failed to load with error:', window.EditRules._errorMessage);
-        if (window.EditRules._errorStack) {
-          console.error('   Stack trace:', window.EditRules._errorStack);
-        }
-        return null;
-      }
-      
-      // Valid EditRules object
       console.log(`✅ EditRules available after ${(i + 1) * checkInterval}ms`);
       return window.EditRules;
     }
-    
-    // Also check the flag
-    if (window.__webeditEditRulesLoaded) {
-      // Flag is set but EditRules might not be on window yet, wait a bit more
-      await new Promise(resolve => setTimeout(resolve, 50));
-      if (window.EditRules && !window.EditRules._error) {
-        console.log(`✅ EditRules available after ${(i + 1) * checkInterval}ms (via flag)`);
-        return window.EditRules;
-      }
-    }
-  }
-
-  // Final check
-  if (window.EditRules && window.EditRules._error) {
-    console.error('❌ EditRules failed to load with error:', window.EditRules._errorMessage);
-    if (window.EditRules._errorStack) {
-      console.error('   Stack trace:', window.EditRules._errorStack);
-    }
-    return null;
   }
 
   console.error('❌ EditRules not available after waiting', maxWaitMs, 'ms');
   console.error('   This might indicate an error in editRules.js');
   console.error('   Check the console for errors in editRules.js');
-  console.error('   Looking for initial log: "📦 editRules.js: Starting to load..."');
-  console.error('   Looking for export log: "✅ EditRules initialized and exported to window.EditRules"');
   return null;
 }
 
@@ -1297,149 +876,6 @@ function ensureFloatingLabel() {
   floatingLabel.textContent = "WebEdit AI";
   document.body.appendChild(floatingLabel);
   return floatingLabel;
-}
-
-/**
- * Handle ESC key to exit active modes
- * @param {KeyboardEvent} event 
- */
-function handleModeEscapeKey(event) {
-  if (event.key === "Escape" || event.keyCode === 27) {
-    event.preventDefault();
-    event.stopPropagation();
-    
-    console.log("⌨️ ESC key pressed - exiting active mode");
-    
-    // Exit all active modes
-    if (isPickMode) {
-      stopPickMode();
-      showNotification("Pick mode cancelled", "info");
-    }
-    if (isRemoveMode) {
-      stopRemoveMode();
-      showNotification("Remove mode cancelled", "info");
-    }
-    if (isAddFeatureMode) {
-      // Reset Add feature mode
-      isAddFeatureMode = false;
-      currentEditTarget = {
-        element: null,
-        selector: null,
-        description: null,
-        pageKey: null
-      };
-      
-      // Hide Add and Manage panels
-      const addPanel = document.getElementById("webedit-add-panel");
-      const managePanel = document.getElementById("webedit-manage-panel");
-      if (addPanel) {
-        addPanel.classList.remove("visible");
-      }
-      if (managePanel) {
-        managePanel.classList.remove("visible");
-      }
-      
-      // Clear selected target display
-      const targetDisplay = document.getElementById("webedit-selected-target");
-      if (targetDisplay) {
-        targetDisplay.style.display = "none";
-      }
-      
-      // Reset chat input placeholder
-      const chatInput = document.getElementById("webedit-chat-input");
-      if (chatInput) {
-        chatInput.placeholder = "What do you want to change?";
-      }
-      
-      // If Pick mode was active (for Add feature), stop it
-      if (isPickMode) {
-        stopPickMode();
-      }
-      
-      showNotification("Add feature mode cancelled", "info");
-    }
-  }
-}
-
-/**
- * Show the floating exit button with a label
- * @param {string} modeLabel - Label text to show (e.g., "Pick Mode", "Remove Mode")
- */
-function showExitModeButton(modeLabel) {
-  // Remove existing button if any
-  hideExitModeButton();
-  
-  // Create exit button
-  exitModeButton = document.createElement("div");
-  exitModeButton.className = "webedit-exit-mode-btn";
-  exitModeButton.innerHTML = "×";
-  exitModeButton.title = "Exit " + modeLabel;
-  
-  // Create label
-  exitModeLabel = document.createElement("div");
-  exitModeLabel.className = "webedit-exit-mode-label";
-  exitModeLabel.textContent = "ESC or click × to exit " + modeLabel;
-  
-  // Add click handler to exit button
-  exitModeButton.addEventListener("click", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    console.log("🔘 Exit button clicked");
-    
-    // Exit all active modes
-    if (isPickMode) {
-      stopPickMode();
-    }
-    if (isRemoveMode) {
-      stopRemoveMode();
-    }
-    if (isAddFeatureMode) {
-      // Reset Add feature mode
-      isAddFeatureMode = false;
-      currentEditTarget = {
-        element: null,
-        selector: null,
-        description: null,
-        pageKey: null
-      };
-      
-      // Reset chat input placeholder
-      const chatInput = document.getElementById("webedit-chat-input");
-      if (chatInput) {
-        chatInput.placeholder = "What do you want to change?";
-      }
-      
-      // If Pick mode was active (for Add feature), stop it
-      if (isPickMode) {
-        stopPickMode();
-      } else {
-        // If Pick mode is not active (element was already selected), hide exit button
-        // since stopPickMode() would have handled it otherwise
-        hideExitModeButton();
-      }
-    }
-    
-    showNotification("Mode cancelled", "info");
-  });
-  
-  document.body.appendChild(exitModeButton);
-  document.body.appendChild(exitModeLabel);
-  
-  console.log("✅ Exit button shown for:", modeLabel);
-}
-
-/**
- * Hide and remove the exit button
- */
-function hideExitModeButton() {
-  if (exitModeButton) {
-    exitModeButton.remove();
-    exitModeButton = null;
-  }
-  if (exitModeLabel) {
-    exitModeLabel.remove();
-    exitModeLabel = null;
-  }
 }
 
 function clearHover() {
@@ -1476,31 +912,27 @@ function clearSelected() {
 // ============================================
 
 function startRemoveMode() {
-  // If already in Remove mode, just return
-  if (isRemoveMode) {
-    console.log("⚠️ Already in Remove mode");
-    return;
-  }
+      // If already in Remove mode, just return
+      if (isRemoveMode) {
+        console.log("⚠️ Already in Remove mode");
+        return;
+      }
 
-  // Stop Pick mode if active
-  if (isPickMode) {
-    console.log("🔄 Stopping Pick mode before starting Remove mode");
-    stopPickMode();
-  }
+      // Stop Pick mode if active
+      if (isPickMode) {
+        console.log("🔄 Stopping Pick mode before starting Remove mode");
+        stopPickMode();
+      }
 
-  console.log("🗑️ Starting Remove mode");
-  isRemoveMode = true;
-  isPickMode = false;
+      console.log("🗑️ Starting Remove mode");
+      isRemoveMode = true;
+      isPickMode = false;
 
-  document.addEventListener("mousemove", handleRemoveMouseMove, true);
-  document.addEventListener("click", handleRemoveClick, true);
-  document.addEventListener("keydown", handleModeEscapeKey, true);
-  
-  // Show exit button
-  showExitModeButton("Remove Mode");
+      document.addEventListener("mousemove", handleRemoveMouseMove, true);
+      document.addEventListener("click", handleRemoveClick, true);
 
-  showNotification("Remove mode active - Click an element to remove it", "info");
-}
+      showNotification("Remove mode active - Click an element to remove it", "info");
+    }
 
 function stopRemoveMode() {
   console.log("🗑️ Stopping Remove mode");
@@ -1508,10 +940,6 @@ function stopRemoveMode() {
   clearHover();
   document.removeEventListener("mousemove", handleRemoveMouseMove, true);
   document.removeEventListener("click", handleRemoveClick, true);
-  document.removeEventListener("keydown", handleModeEscapeKey, true);
-  
-  // Hide exit button
-  hideExitModeButton();
 }
 
 function handleRemoveMouseMove(event) {
@@ -1556,14 +984,6 @@ async function handleRemoveClick(event) {
       const rule = await editRules.createRule(el, "remove", {}, currentUser);
       console.log("✅ Rule created and saved:", rule);
 
-      // Save to Supabase (non-blocking)
-      if (window.SaveEdit && window.SaveEdit.saveRemoveEdit) {
-        window.SaveEdit.saveRemoveEdit(el, rule).catch(err => {
-          console.error('[Remove] Failed to save to Supabase:', err);
-          // Don't show error to user - local save succeeded
-        });
-      }
-
       showNotification("You successfully removed this element.", "success");
     } catch (error) {
       console.error("❌ Error creating rule:", error);
@@ -1598,17 +1018,8 @@ function startPickMode() {
   isPickMode = true;
   isRemoveMode = false;
 
-  // Remove any existing listeners first to prevent duplicates
-  document.removeEventListener("mousemove", handlePickMouseMove, true);
-  document.removeEventListener("click", handlePickClick, true);
-  document.removeEventListener("keydown", handleModeEscapeKey, true);
-
   document.addEventListener("mousemove", handlePickMouseMove, true);
   document.addEventListener("click", handlePickClick, true);
-  document.addEventListener("keydown", handleModeEscapeKey, true);
-  
-  // Show exit button
-  showExitModeButton("Pick Mode");
 
   showNotification("Pick mode active - Click an element to select it", "info");
 }
@@ -1619,10 +1030,6 @@ function stopPickMode() {
   clearHover();
   document.removeEventListener("mousemove", handlePickMouseMove, true);
   document.removeEventListener("click", handlePickClick, true);
-  document.removeEventListener("keydown", handleModeEscapeKey, true);
-  
-  // Hide exit button
-  hideExitModeButton();
   
   // Reset chat input placeholder if we were in Add feature mode
   if (isAddFeatureMode) {
@@ -1689,25 +1096,17 @@ async function handlePickClick(event) {
     addChatMessage("reference", `Reference: ${description}`);
 
     // Check if we're in Add feature mode
-    const wasInAddFeatureMode = isAddFeatureMode;
-    
     if (isAddFeatureMode) {
-      // Update Add Feature panel with selected target
-      const targetDisplay = document.getElementById("webedit-selected-target");
-      const targetPreview = document.getElementById("webedit-target-preview");
+      // Show prompt in chat for user to describe the feature
+      addChatMessage("system", "Now describe what you want to add near this element, then press Enter.");
+      showNotification("Element selected! Type your description in the chat below.", "success");
       
-      if (targetDisplay && targetPreview) {
-        targetDisplay.style.display = "block";
-        targetPreview.textContent = `${selector} (${description})`;
+      // Focus the chat input
+      const chatInput = document.getElementById("webedit-chat-input");
+      if (chatInput) {
+        chatInput.placeholder = "Describe the feature you want to add...";
+        chatInput.focus();
       }
-      
-      // Move to step 2
-      showAddFeatureStep(2);
-      
-      showNotification("Location selected! Now create your feature", "success");
-      
-      // Keep isAddFeatureMode = true so ESC can still cancel the flow
-      // It will be reset when the feature is created or cancelled
     } else {
       showNotification("Element selected for editing", "success");
     }
@@ -1717,18 +1116,6 @@ async function handlePickClick(event) {
   }
 
   stopPickMode();
-  
-  // If we were in Add feature mode, re-add the ESC key listener
-  // so users can cancel the Add feature flow during the form input phase
-  if (wasInAddFeatureMode) {
-    console.log("➕ Re-adding ESC key listener for Add feature mode");
-    // Remove any existing listener first to prevent duplicates
-    document.removeEventListener("keydown", handleModeEscapeKey, true);
-    document.addEventListener("keydown", handleModeEscapeKey, true);
-    
-    // Also show the exit button again for Add feature mode
-    showExitModeButton("Add Feature Mode");
-  }
 }
 
 // Helper functions for Pick mode
@@ -1880,10 +1267,9 @@ function renderChatMessages() {
 
     // Render reference messages to their own container
     if (referenceMessages.length > 0) {
-      referenceMessages.forEach((msg, index) => {
+      referenceMessages.forEach(msg => {
         const msgEl = document.createElement("div");
         msgEl.className = `webedit-chat-message webedit-chat-message-${msg.type}`;
-        msgEl.style.position = "relative";
 
         // Split "Reference: description" into label and text
         const content = msg.content;
@@ -1904,24 +1290,8 @@ function renderChatMessages() {
         textEl.className = "webedit-reference-text";
         textEl.textContent = referenceText;
 
-        // Create close button for reference
-        const closeBtn = document.createElement("button");
-        closeBtn.className = "webedit-reference-close-btn";
-        closeBtn.innerHTML = "×";
-        closeBtn.title = "Remove reference";
-        closeBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          // Find the index in chatMessages array
-          const msgIndex = chatMessages.findIndex(m => m.timestamp === msg.timestamp && m.type === 'reference');
-          if (msgIndex !== -1) {
-            chatMessages.splice(msgIndex, 1);
-            renderChatMessages();
-          }
-        });
-
         msgEl.appendChild(labelEl);
         msgEl.appendChild(textEl);
-        msgEl.appendChild(closeBtn);
         referencesContainer.appendChild(msgEl);
       });
     }
@@ -1979,88 +1349,114 @@ function getFeatureStorageKey() {
 }
 
 /**
- * Wait for injector to be available
- * @param {number} maxWaitMs - Maximum time to wait in milliseconds
- * @returns {Promise<Object|null>} WebEditInjector instance or null if not available
- */
-async function waitForInjector(maxWaitMs = 5000) {
-  // Check immediately first
-  if (window.WebEditInjector) {
-    console.log('✅ WebEditInjector available immediately');
-    return window.WebEditInjector;
-  }
-
-  console.log('⏳ Waiting for WebEditInjector to load...');
-  
-  // Wait in 100ms increments
-  const checkInterval = 100;
-  const maxChecks = Math.floor(maxWaitMs / checkInterval);
-
-  for (let i = 0; i < maxChecks; i++) {
-    await new Promise(resolve => setTimeout(resolve, checkInterval));
-    if (window.WebEditInjector) {
-      console.log(`✅ WebEditInjector available after ${(i + 1) * checkInterval}ms`);
-      return window.WebEditInjector;
-    }
-  }
-
-  console.error('❌ WebEditInjector not available after waiting', maxWaitMs, 'ms');
-  return null;
-}
-
-/**
- * Inject a feature into the page using the Shadow DOM injector
- * @param {Object} spec - FeatureSpec specification
+ * Inject a feature into the page
+ * @param {Object} spec - AddFeatureRequest specification
  * @param {string} spec.id - Unique feature identifier
  * @param {string} spec.selector - CSS selector for target element
  * @param {string} spec.position - Position: "before" | "after" | "inside"
- * @param {string} spec.html - HTML content for the feature
- * @param {string} [spec.css] - Optional CSS styles
- * @returns {Promise<boolean>} True if successfully injected
+ * @param {string} spec.content - User content/description
+ * @returns {Promise<void>}
  */
 async function injectFeature(spec) {
   console.log("[WebEdit Add] Injecting feature", spec);
   
   try {
-    // Wait for injector to be available
-    const injector = await waitForInjector();
+    // Find the target element
+    const targetEl = document.querySelector(spec.selector);
     
-    if (!injector) {
-      console.error("[WebEdit Add] ❌ Injector not available");
-      showNotification("Failed to inject feature: Injector not loaded", "error");
-      return false;
+    if (!targetEl) {
+      console.warn(`[WebEdit Add] Target element not found for selector: ${spec.selector}`);
+      return;
     }
     
-    // Check if already mounted (deduplication)
-    if (injector.isFeatureMounted(spec.id)) {
-      console.log(`[WebEdit Add] Feature ${spec.id} already mounted, skipping`);
-      return true;
+    // Check if feature with this ID already exists (deduplication)
+    const existingFeature = document.querySelector(`[data-webedit-feature-id="${spec.id}"]`);
+    if (existingFeature) {
+      console.log(`[WebEdit Add] Feature ${spec.id} already exists, skipping`);
+      return;
     }
     
-    // Use mountFeatureWithRetry for automatic retry logic
-    const handle = injector.mountFeatureWithRetry(spec, { timeoutMs: 10000 });
+    // Create the feature container
+    const container = document.createElement("div");
+    container.className = "webedit-added-feature";
+    container.setAttribute("data-webedit-feature-id", spec.id);
+    container.setAttribute("data-webedit-selector", spec.selector);
     
-    // Note: mountFeatureWithRetry may return null and mount asynchronously
-    // We'll check if it mounted immediately or will mount later
-    if (handle) {
-      console.log(`[WebEdit Add] ✅ Feature injected successfully: ${spec.id}`);
-      return true;
-    } else {
-      // Feature will be mounted asynchronously when selector appears
-      console.log(`[WebEdit Add] Feature queued for async injection: ${spec.id}`);
-      return true; // Still return true as it's queued
+    // Style the container with inline styles
+    container.style.cssText = `
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 12px 16px;
+      border-radius: 8px;
+      margin: 8px 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+      border-left: 4px solid rgba(255, 255, 255, 0.3);
+    `;
+    
+    // Create content wrapper
+    const contentWrapper = document.createElement("div");
+    contentWrapper.style.cssText = `
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    `;
+    
+    // Add icon
+    const icon = document.createElement("span");
+    icon.textContent = "✨";
+    icon.style.cssText = `
+      font-size: 18px;
+      flex-shrink: 0;
+    `;
+    
+    // Add text content
+    const textContent = document.createElement("div");
+    textContent.textContent = spec.content;
+    textContent.style.cssText = `
+      flex: 1;
+      word-wrap: break-word;
+    `;
+    
+    contentWrapper.appendChild(icon);
+    contentWrapper.appendChild(textContent);
+    container.appendChild(contentWrapper);
+    
+    // Insert based on position
+    switch (spec.position) {
+      case "before":
+        targetEl.parentElement.insertBefore(container, targetEl);
+        console.log(`[WebEdit Add] Inserted feature BEFORE target element`);
+        break;
+        
+      case "inside":
+        targetEl.insertBefore(container, targetEl.firstChild);
+        console.log(`[WebEdit Add] Inserted feature INSIDE target element`);
+        break;
+        
+      case "after":
+      default:
+        if (targetEl.nextSibling) {
+          targetEl.parentElement.insertBefore(container, targetEl.nextSibling);
+        } else {
+          targetEl.parentElement.appendChild(container);
+        }
+        console.log(`[WebEdit Add] Inserted feature AFTER target element`);
+        break;
     }
+    
+    console.log(`[WebEdit Add] ✅ Feature injected successfully: ${spec.id}`);
     
   } catch (error) {
     console.error("[WebEdit Add] ❌ Error injecting feature:", error);
-    showNotification(`Failed to inject feature: ${error.message}`, "error");
-    return false;
   }
 }
 
 /**
  * Save a feature to chrome.storage
- * @param {Object} feature - FeatureSpec object
+ * @param {Object} feature - AddFeatureRequest object
  * @returns {Promise<boolean>} Success status
  */
 async function saveAddedFeature(feature) {
@@ -2116,194 +1512,7 @@ async function saveAddedFeature(feature) {
 }
 
 /**
- * Get all features for current page
- * @returns {Promise<Array>} Array of FeatureSpec objects
- */
-async function getAddedFeatures() {
-  return new Promise((resolve) => {
-    if (!isExtensionContextValid()) {
-      resolve([]);
-      return;
-    }
-    
-    try {
-      const storageKey = getFeatureStorageKey();
-      chrome.storage.local.get([storageKey], (result) => {
-        if (chrome.runtime.lastError) {
-          console.error("[WebEdit Add] Error loading features:", chrome.runtime.lastError);
-          resolve([]);
-          return;
-        }
-        
-        resolve(result[storageKey] || []);
-      });
-    } catch (error) {
-      console.error("[WebEdit Add] Error getting features:", error);
-      resolve([]);
-    }
-  });
-}
-
-/**
- * Delete a feature from storage
- * @param {string} featureId - Feature ID to delete
- * @returns {Promise<boolean>} Success status
- */
-async function deleteAddedFeature(featureId) {
-  return new Promise((resolve) => {
-    if (!isExtensionContextValid()) {
-      resolve(false);
-      return;
-    }
-    
-    try {
-      const storageKey = getFeatureStorageKey();
-      chrome.storage.local.get([storageKey], (result) => {
-        if (chrome.runtime.lastError) {
-          console.error("[WebEdit Add] Error loading features:", chrome.runtime.lastError);
-          resolve(false);
-          return;
-        }
-        
-        const features = result[storageKey] || [];
-        const updatedFeatures = features.filter(f => f.id !== featureId);
-        
-        chrome.storage.local.set({ [storageKey]: updatedFeatures }, () => {
-          if (chrome.runtime.lastError) {
-            console.error("[WebEdit Add] Error deleting feature:", chrome.runtime.lastError);
-            resolve(false);
-            return;
-          }
-          
-          console.log(`[WebEdit Add] ✅ Feature deleted: ${featureId}`);
-          resolve(true);
-        });
-      });
-    } catch (error) {
-      console.error("[WebEdit Add] Error deleting feature:", error);
-      resolve(false);
-    }
-  });
-}
-
-/**
- * Toggle feature enabled/disabled state
- * @param {string} featureId - Feature ID
- * @param {boolean} enabled - New enabled state
- * @returns {Promise<boolean>} Success status
- */
-async function toggleFeatureEnabled(featureId, enabled) {
-  return new Promise((resolve) => {
-    if (!isExtensionContextValid()) {
-      resolve(false);
-      return;
-    }
-    
-    try {
-      const storageKey = getFeatureStorageKey();
-      chrome.storage.local.get([storageKey], (result) => {
-        if (chrome.runtime.lastError) {
-          console.error("[WebEdit Add] Error loading features:", chrome.runtime.lastError);
-          resolve(false);
-          return;
-        }
-        
-        const features = result[storageKey] || [];
-        const feature = features.find(f => f.id === featureId);
-        
-        if (!feature) {
-          console.warn("[WebEdit Add] Feature not found:", featureId);
-          resolve(false);
-          return;
-        }
-        
-        feature.enabled = enabled;
-        
-        chrome.storage.local.set({ [storageKey]: features }, () => {
-          if (chrome.runtime.lastError) {
-            console.error("[WebEdit Add] Error toggling feature:", chrome.runtime.lastError);
-            resolve(false);
-            return;
-          }
-          
-          console.log(`[WebEdit Add] ✅ Feature ${enabled ? 'enabled' : 'disabled'}: ${featureId}`);
-          resolve(true);
-        });
-      });
-    } catch (error) {
-      console.error("[WebEdit Add] Error toggling feature:", error);
-      resolve(false);
-    }
-  });
-}
-
-/**
- * Convert old feature format to new FeatureSpec format
- * @param {Object} feature - Old or new format feature
- * @returns {Object} FeatureSpec format
- */
-function migrateFeatureSpec(feature) {
-  // If already has html property, it's new format
-  if (feature.html) {
-    return feature;
-  }
-  
-  // Old format has 'content' property - migrate to new format
-  if (feature.content) {
-    console.log(`[WebEdit Add] Migrating old feature format: ${feature.id}`);
-    
-    const html = `
-      <div class="feature-content">
-        <div class="feature-icon">✨</div>
-        <div class="feature-text">${escapeHtml(feature.content)}</div>
-      </div>
-    `;
-    
-    const css = `
-      .feature-content {
-        display: flex;
-        align-items: flex-start;
-        gap: 8px;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        padding: 12px 16px;
-        border-radius: 8px;
-        margin: 8px 0;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        font-size: 14px;
-        line-height: 1.5;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-        border-left: 4px solid rgba(255, 255, 255, 0.3);
-      }
-      .feature-icon {
-        font-size: 18px;
-        flex-shrink: 0;
-      }
-      .feature-text {
-        flex: 1;
-        word-wrap: break-word;
-      }
-    `;
-    
-    return {
-      ...feature,
-      html: html,
-      css: css,
-      // Set default fields for migrated features
-      type: feature.type || 'note',
-      name: feature.name || 'Imported Feature',
-      purpose: feature.purpose || feature.content || 'Migrated from old format'
-    };
-  }
-  
-  // Unknown format
-  console.warn(`[WebEdit Add] Unknown feature format: ${feature.id}`);
-  return feature;
-}
-
-/**
  * Restore all saved features for the current page on page load
- * Only restores enabled features
  * @returns {Promise<number>} Number of features restored
  */
 async function restoreAddedFeatures() {
@@ -2326,36 +1535,18 @@ async function restoreAddedFeatures() {
         
         const features = result[storageKey] || [];
         
-        // Filter only enabled features
-        const enabledFeatures = features.filter(f => f.enabled !== false);
-        
-        if (enabledFeatures.length === 0) {
+        if (features.length === 0) {
           resolve(0);
           return;
         }
         
-        console.log(`[WebEdit Add] Restoring ${enabledFeatures.length} enabled feature(s) from storage`);
+        console.log(`[WebEdit Add] Restoring ${features.length} feature(s) from storage`);
         
-        // Wait for injector to be available
-        const injector = await waitForInjector();
-        
-        if (!injector) {
-          console.error("[WebEdit Add] ❌ Injector not available, cannot restore features");
-          resolve(0);
-          return;
-        }
-        
-        // Inject each enabled feature with migration
+        // Inject each feature
         let successCount = 0;
-        for (const feature of enabledFeatures) {
-          // Migrate old format to new format if needed
-          const migratedFeature = migrateFeatureSpec(feature);
-          
-          // Use injector with retry - this handles cases where target doesn't exist yet
-          const success = await injectFeature(migratedFeature);
-          if (success) {
-            successCount++;
-          }
+        for (const feature of features) {
+          await injectFeature(feature);
+          successCount++;
         }
         
         console.log(`[WebEdit Add] ✅ Restored ${successCount} feature(s)`);
@@ -2369,305 +1560,24 @@ async function restoreAddedFeatures() {
 }
 
 /**
- * Render the features management list UI
- */
-async function renderFeaturesManagementList() {
-  const featuresList = document.getElementById('webedit-features-list');
-  if (!featuresList) return;
-  
-  // Get all features for current page
-  const features = await getAddedFeatures();
-  
-  if (features.length === 0) {
-    featuresList.innerHTML = '<p class="webedit-empty-message">No features added yet</p>';
-    return;
-  }
-  
-  // Clear list
-  featuresList.innerHTML = '';
-  
-  // Render each feature
-  features.forEach(feature => {
-    const item = document.createElement('div');
-    item.className = `webedit-feature-item ${feature.enabled === false ? 'disabled' : ''}`;
-    item.innerHTML = `
-      <div class="webedit-feature-header">
-        <div class="webedit-feature-info">
-          <div class="webedit-feature-name">${escapeHtml(feature.name || 'Unnamed Feature')}</div>
-          <span class="webedit-feature-type ${feature.type}">${feature.type || 'note'}</span>
-        </div>
-        <div class="webedit-feature-actions">
-          <div class="webedit-toggle ${feature.enabled !== false ? 'enabled' : ''}" data-feature-id="${feature.id}">
-            <div class="webedit-toggle-slider"></div>
-          </div>
-          <button class="webedit-feature-delete-btn" data-feature-id="${feature.id}">Delete</button>
-        </div>
-      </div>
-    `;
-    
-    featuresList.appendChild(item);
-  });
-  
-  // Attach event listeners to toggles and delete buttons
-  featuresList.querySelectorAll('.webedit-toggle').forEach(toggle => {
-    toggle.addEventListener('click', async (e) => {
-      // Check authentication
-      if (!requireAuthentication()) {
-        return;
-      }
-      
-      const featureId = toggle.dataset.featureId;
-      const currentlyEnabled = toggle.classList.contains('enabled');
-      const newEnabled = !currentlyEnabled;
-      
-      // Update UI immediately
-      toggle.classList.toggle('enabled');
-      toggle.closest('.webedit-feature-item').classList.toggle('disabled');
-      
-      // Get the feature
-      const features = await getAddedFeatures();
-      const feature = features.find(f => f.id === featureId);
-      
-      if (!feature) return;
-      
-      // Toggle in storage
-      await toggleFeatureEnabled(featureId, newEnabled);
-      
-      // Get injector
-      const injector = await waitForInjector();
-      if (!injector) return;
-      
-      if (newEnabled) {
-        // Migrate old format to new format if needed (consistent with restoreAddedFeatures)
-        const migratedFeature = migrateFeatureSpec(feature);
-        
-        // Mount the feature
-        await injectFeature(migratedFeature);
-        showNotification('Feature enabled', 'success');
-      } else {
-        // Unmount the feature
-        injector.unmountFeature(featureId);
-        showNotification('Feature disabled', 'info');
-      }
-    });
-  });
-  
-  featuresList.querySelectorAll('.webedit-feature-delete-btn').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
-      // Check authentication
-      if (!requireAuthentication()) {
-        return;
-      }
-      
-      const featureId = btn.dataset.featureId;
-      
-      if (!confirm('Delete this feature?')) return;
-      
-      // Get injector and unmount
-      const injector = await waitForInjector();
-      if (injector) {
-        injector.unmountFeature(featureId);
-      }
-      
-      // Delete from storage
-      await deleteAddedFeature(featureId);
-      
-      // Re-render list
-      await renderFeaturesManagementList();
-      
-      showNotification('Feature deleted', 'success');
-    });
-  });
-}
-
-/**
- * Hard-coded feature templates (no AI)
- * @param {string} type - Feature type: 'note', 'button', 'badge'
- * @param {string} content - User content/purpose
- * @param {string} name - Feature name
- * @returns {Object} HTML and CSS for the feature
- */
-function getFeatureTemplate(type, content, name) {
-  const templates = {
-    note: {
-      html: `
-        <div class="webedit-feature-note">
-          <div class="note-header">
-            <span class="note-icon">📝</span>
-            <strong class="note-title">${escapeHtml(name)}</strong>
-          </div>
-          <div class="note-content">${escapeHtml(content)}</div>
-        </div>
-      `,
-      css: `
-        .webedit-feature-note {
-          background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
-          border-left: 4px solid #f59e0b;
-          padding: 12px 16px;
-          border-radius: 8px;
-          margin: 12px 0;
-          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-          box-shadow: 0 2px 8px rgba(245, 158, 11, 0.2);
-        }
-        .note-header {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          margin-bottom: 8px;
-        }
-        .note-icon {
-          font-size: 18px;
-        }
-        .note-title {
-          color: #92400e;
-          font-size: 14px;
-          font-weight: 600;
-        }
-        .note-content {
-          color: #78350f;
-          font-size: 13px;
-          line-height: 1.6;
-        }
-      `
-    },
-    button: {
-      html: `
-        <button class="webedit-feature-button" data-feature-name="${escapeHtml(name)}" data-feature-content="${escapeHtml(content)}">
-          <span class="button-icon">🔘</span>
-          <span class="button-text">${escapeHtml(name)}</span>
-        </button>
-      `,
-      css: `
-        .webedit-feature-button {
-          background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%);
-          color: white;
-          border: none;
-          padding: 12px 24px;
-          border-radius: 8px;
-          font-size: 14px;
-          font-weight: 600;
-          cursor: pointer;
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-          box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
-          transition: all 0.2s;
-          margin: 8px 0;
-        }
-        .webedit-feature-button:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 6px 16px rgba(139, 92, 246, 0.4);
-        }
-        .webedit-feature-button:active {
-          transform: translateY(0);
-        }
-        .button-icon {
-          font-size: 16px;
-        }
-        .button-text {
-          font-size: 14px;
-        }
-      `
-    },
-    badge: {
-      html: `
-        <span class="webedit-feature-badge" title="${escapeHtml(content)}">
-          <span class="badge-icon">🏷️</span>
-          <span class="badge-text">${escapeHtml(name)}</span>
-        </span>
-      `,
-      css: `
-        .webedit-feature-badge {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          background: linear-gradient(135deg, #ec4899 0%, #ef4444 100%);
-          color: white;
-          padding: 6px 14px;
-          border-radius: 999px;
-          font-size: 12px;
-          font-weight: 600;
-          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-          box-shadow: 0 2px 6px rgba(236, 72, 153, 0.3);
-          margin: 4px;
-          cursor: default;
-        }
-        .badge-icon {
-          font-size: 14px;
-        }
-        .badge-text {
-          font-size: 12px;
-          letter-spacing: 0.02em;
-        }
-      `
-    }
-  };
-  
-  return templates[type] || templates.note;
-}
-
-/**
- * Generate feature spec from form inputs (Add Feature MVP - no AI)
+ * Generate feature spec from chat (stub for future AI integration)
  * @param {Object} input - Input data
- * @param {string} input.name - Feature name
- * @param {string} input.type - Feature type: 'note', 'button', 'badge'
- * @param {string} input.purpose - Feature purpose/content
+ * @param {string} input.userText - User's text description
  * @param {string} input.selector - CSS selector for target element
- * @param {string} input.position - Position: 'before', 'after', 'inside'
- * @returns {Promise<Object>} FeatureSpec object
+ * @returns {Promise<Object>} AddFeatureRequest object
  */
-async function generateFeatureSpec(input) {
-  console.log("[WebEdit Add] Generating feature spec (no AI yet)");
+async function generateFeatureSpecFromChat(input) {
+  console.log("[WebEdit Add] Generating feature spec from chat (no AI yet)");
   
-  // Get template based on type
-  const template = getFeatureTemplate(input.type, input.purpose, input.name);
-  
+  // TEMP: no AI yet - just wrap user text into a feature spec
   return {
     id: generateFeatureId(),
-    domain: window.location.hostname,
     selector: input.selector,
-    position: input.position || "after",
-    name: input.name,
-    purpose: input.purpose,
-    type: input.type,
-    html: template.html,
-    css: template.css,
+    position: "after", // Default position
+    content: input.userText,
     pageKey: getPageKey(),
-    createdAt: Date.now(),
-    enabled: true // New features are enabled by default
+    createdAt: Date.now()
   };
-}
-
-/**
- * Escape HTML to prevent XSS
- * @param {string} text - Text to escape
- * @returns {string} Escaped HTML
- */
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
-
-/**
- * Escape JavaScript string to prevent injection in onclick attributes
- * @param {string} text - Text to escape
- * @returns {string} Escaped JavaScript string
- */
-function escapeJs(text) {
-  if (typeof text !== 'string') {
-    text = String(text);
-  }
-  return text
-    .replace(/\\/g, '\\\\')  // Escape backslashes first
-    .replace(/'/g, "\\'")     // Escape single quotes
-    .replace(/"/g, '\\"')     // Escape double quotes
-    .replace(/\n/g, '\\n')    // Escape newlines
-    .replace(/\r/g, '\\r')    // Escape carriage returns
-    .replace(/\t/g, '\\t')    // Escape tabs
-    .replace(/\u2028/g, '\\u2028')  // Escape line separator
-    .replace(/\u2029/g, '\\u2029'); // Escape paragraph separator
 }
 
 // ============================================

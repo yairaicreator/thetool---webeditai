@@ -108,6 +108,18 @@ window.addEventListener("message", (event) => {
 // Initial check when script loads
 checkLocalStorageForSession();
 
+// Poll for session in case it's set asynchronously (e.g. during hydration)
+let pollCount = 0;
+const pollInterval = setInterval(() => {
+  pollCount++;
+  const found = checkLocalStorageForSession();
+  
+  // Stop polling if found or after 5 seconds (10 attempts)
+  if (found || pollCount >= 10) {
+    clearInterval(pollInterval);
+  }
+}, 500);
+
 // Listen for storage changes (in case login happens in another tab/window)
 window.addEventListener('storage', (event) => {
   if ((event.key && event.key.startsWith('sb-') && event.key.endsWith('-auth-token')) || 
@@ -115,6 +127,12 @@ window.addEventListener('storage', (event) => {
     console.log("📦 Storage changed, re-checking session");
     checkLocalStorageForSession();
   }
+});
+
+// Also re-check when window gets focus (user switches back to this tab)
+window.addEventListener('focus', () => {
+  console.log("👁️ Window focused, re-checking session");
+  checkLocalStorageForSession();
 });
 
 console.log("🔐 WebEdit AI: Bridge listener initialized on", window.location.href);
