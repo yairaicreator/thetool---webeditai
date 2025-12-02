@@ -13,6 +13,9 @@ const addFeaturePrompt = {
   targetDescription: '',
   type: 'note'
 };
+const MAX_SAVED_CHAT_MESSAGES = 50;
+
+const PANEL_STATE_KEY = 'webedit-panel-state';
 
 // UI state
 let currentTool = "remove";
@@ -27,6 +30,8 @@ const WEBEDIT_HISTORY_URL = "https://www.webeditai.com/#/history";
 let authUiUpdatePending = false;
 let authUiRetryTimeout = null;
 let panelCreationScheduled = false;
+let panelStateSaveTimeout = null;
+let isRestoringPanelState = false;
 
 // Auth sync state
 let authSyncInterval = null;
@@ -754,6 +759,19 @@ function ensureChatPanelExists() {
   return false;
 }
 
+function setActiveToolButton(tool) {
+  currentTool = tool;
+  const toolButtons = document.querySelectorAll(".webedit-tool-btn");
+  toolButtons.forEach((btn) => {
+    if (btn.dataset.tool === tool) {
+      btn.classList.add("active");
+    } else {
+      btn.classList.remove("active");
+    }
+  });
+  schedulePanelStateSave();
+}
+
 /**
  * Creates and injects the AI chat panel into the page
  * The panel is a centered, mobile-like interface that floats over the page
@@ -868,7 +886,8 @@ function createPanel() {
  * If panel doesn't exist yet, creates it first
  * @param {boolean} show - Optional: true to show, false to hide, undefined to toggle
  */
-async function togglePanel(show) {
+async function togglePanel(show, options = {}) {
+  const skipSave = options.skipSave || false;
   if (!chatPanel) {
     createPanel();
   }
@@ -893,6 +912,9 @@ async function togglePanel(show) {
     chatPanel.classList.add("hidden");
     document.documentElement.classList.remove("webedit-panel-open");
     document.body.classList.remove("webedit-panel-open");
+  }
+  if (!skipSave) {
+    schedulePanelStateSave();
   }
 }
 
@@ -959,9 +981,7 @@ function attachPanelEventListeners() {
       }
       
       // Update active state
-      toolButtons.forEach((b) => b.classList.remove("active"));
-      btn.classList.add("active");
-      currentTool = tool;
+      setActiveToolButton(tool);
       toolsMenu.classList.remove("visible"); // Close menu after selection
       
       // Handle different tools
@@ -1582,6 +1602,7 @@ function addChatMessage(type, content) {
 
   chatMessages.push(message);
   renderChatMessages();
+  schedulePanelStateSave();
 }
 
 function renderChatMessages() {
@@ -1688,6 +1709,7 @@ function resetAddFeaturePromptState() {
   addFeaturePrompt.targetSelector = null;
   addFeaturePrompt.targetDescription = '';
   addFeaturePrompt.type = 'note';
+  schedulePanelStateSave();
 }
 
 function escapeHtml(str = '') {
@@ -1813,6 +1835,97 @@ function ensureFeatureTemplate(spec) {
   return buildFeatureTemplate({ name, description, type: spec.type || 'note' });
 }
 
+function schedulePanelStateSave() {
+  if (panelStateSaveTimeout) {
+    clearTimeout(panelStateSaveTimeout);
+  }
+  panelStateSaveTimeout = setTimeout(() => savePanelState(), 200);
+}
+
+function savePanelState(force = false) {
+  if (isRestoringPanelState && !force) {
+    return;
+  }
+  try {
+    const chatInput = document.getElementById("webedit-chat-input");
+    const state = {
+      isPanelOpen,
+      currentTool,
+      chatMessages: chatMessages.slice(-MAX_SAVED_CHAT_MESSAGES),
+      isAddFeatureMode,
+      addFeaturePrompt: { ...addFeaturePrompt },
+      chatPlaceholder: chatInput ? chatInput.placeholder : ""
+    };
+    localStorage.setItem(PANEL_STATE_KEY, JSON.stringify(state));
+  } catch (error) {
+    console.warn('[WebEdit Panel] Failed to save panel state:', error);
+  }
+}
+
+async function restorePanelState() {
+  let rawState = null;
+  try {
+    rawState = localStorage.getItem(PANEL_STATE_KEY);
+  } catch (error) {
+    console.warn('[WebEdit Panel] Failed to read panel state:', error);
+    return;
+  }
+  
+  if (!rawState) {
+    return;
+  }
+  
+  let state;
+  try {
+    state = JSON.parse(rawState);
+  } catch (error) {
+    console.warn('[WebEdit Panel] Invalid panel state JSON:', error);
+    return;
+  }
+  
+  isRestoringPanelState = true;
+  
+  if (Array.isArray(state.chatMessages)) {
+    chatMessages = state.chatMessages.slice(-MAX_SAVED_CHAT_MESSAGES);
+    renderChatMessages();
+  }
+  
+  if (typeof state.currentTool === 'string') {
+    setActiveToolButton(state.currentTool);
+  }
+  
+  if (typeof state.isAddFeatureMode === 'boolean') {
+    isAddFeatureMode = state.isAddFeatureMode;
+  }
+  
+  if (state.addFeaturePrompt && typeof state.addFeaturePrompt === 'object') {
+    addFeaturePrompt.step = state.addFeaturePrompt.step || 'idle';
+    addFeaturePrompt.name = state.addFeaturePrompt.name || '';
+    addFeaturePrompt.description = state.addFeaturePrompt.description || '';
+    addFeaturePrompt.targetDescription = state.addFeaturePrompt.targetDescription || '';
+    addFeaturePrompt.type = state.addFeaturePrompt.type || 'note';
+    addFeaturePrompt.targetSelector = null; // DOM references cannot survive reload
+  }
+  
+  const chatInput = document.getElementById("webedit-chat-input");
+  if (chatInput && state.chatPlaceholder) {
+    chatInput.placeholder = state.chatPlaceholder;
+  }
+  
+  if (state.isPanelOpen) {
+    await togglePanel(true, { skipSave: true });
+  }
+  
+  if (isAddFeatureMode) {
+    addChatMessage("system", "Reminder: pick an element again to continue Add feature.");
+    isAddFeatureMode = false;
+    resetAddFeaturePromptState();
+  }
+  
+  isRestoringPanelState = false;
+  schedulePanelStateSave();
+}
+
 function updateChatInputPrompt(text, shouldFocus = false) {
   const chatInput = document.getElementById("webedit-chat-input");
   if (!chatInput) {
@@ -1822,6 +1935,7 @@ function updateChatInputPrompt(text, shouldFocus = false) {
   if (shouldFocus) {
     chatInput.focus();
   }
+  schedulePanelStateSave();
 }
 
 function startAddFeatureNamingPrompt() {
@@ -1833,6 +1947,7 @@ function startAddFeatureNamingPrompt() {
   addChatMessage("system", "Name of edit:");
   showNotification("Element selected! Name your edit in the chat below.", "success");
   updateChatInputPrompt("Name of edit...", true);
+  schedulePanelStateSave();
 }
 
 async function handleAddFeatureChatEntry(userText) {
@@ -1849,11 +1964,13 @@ async function handleAddFeatureChatEntry(userText) {
     addFeaturePrompt.step = 'description';
     addChatMessage("system", "Describe the edit:");
     updateChatInputPrompt("Describe the edit...", true);
+    schedulePanelStateSave();
     return;
   }
 
   if (addFeaturePrompt.step === 'description') {
     addFeaturePrompt.description = userText;
+    schedulePanelStateSave();
     await completeAddFeatureCreation();
     return;
   }
@@ -1928,10 +2045,12 @@ async function completeAddFeatureCreation() {
     }
 
     finalizeAddFeatureFlow();
+    schedulePanelStateSave();
   } catch (error) {
     console.error("➕ Error adding feature:", error);
     addChatMessage("system", "❌ Error: Could not add feature. Please try again.");
     showNotification("Error adding feature", "error");
+    schedulePanelStateSave();
   }
 }
 
@@ -1988,9 +2107,17 @@ async function injectFeature(spec) {
       css
     };
 
-    if (window.WebEditInjector && window.WebEditInjector.mountFeatureWithRetry) {
-      window.WebEditInjector.mountFeatureWithRetry(injectorSpec);
-      return;
+    if (window.WebEditInjector) {
+      if (window.WebEditInjector.mountFeature) {
+        const handle = window.WebEditInjector.mountFeature(injectorSpec);
+        if (handle) {
+          return;
+        }
+      }
+      if (window.WebEditInjector.mountFeatureWithRetry) {
+        window.WebEditInjector.mountFeatureWithRetry(injectorSpec);
+        return;
+      }
     }
 
     // Legacy fallback if injector is unavailable
@@ -2282,7 +2409,8 @@ async function initializeExtension() {
   console.log("🚀 WebEdit AI initializing...");
 
   // Create panel
-    createPanel();
+  createPanel();
+  await restorePanelState();
 
   // Wait for EditRules to be available, then apply saved rules for this page
   const editRules = await waitForEditRules();
@@ -2405,3 +2533,5 @@ history.replaceState = function (...args) {
   originalReplaceState.apply(history, args);
   handleUrlChange();
 };
+
+window.addEventListener('beforeunload', () => savePanelState(true));
