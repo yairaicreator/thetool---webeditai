@@ -10,7 +10,8 @@ const addFeaturePrompt = {
   name: '',
   description: '',
   targetSelector: null,
-  targetDescription: ''
+  targetDescription: '',
+  type: 'note'
 };
 
 // UI state
@@ -1686,6 +1687,130 @@ function resetAddFeaturePromptState() {
   addFeaturePrompt.description = '';
   addFeaturePrompt.targetSelector = null;
   addFeaturePrompt.targetDescription = '';
+  addFeaturePrompt.type = 'note';
+}
+
+function escapeHtml(str = '') {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function buildFeatureTemplate({ name, description, type = 'note' }) {
+  const safeName = escapeHtml(name || 'WebEdit note');
+  const safeDescription = escapeHtml(description || '');
+  
+  switch (type) {
+    case 'badge':
+      return {
+        html: `
+          <div class="webedit-feature-badge">
+            <span class="webedit-feature-badge-label">${safeName}</span>
+            <span class="webedit-feature-badge-text">${safeDescription}</span>
+          </div>
+        `,
+        css: `
+          .webedit-feature-badge {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: #1d4ed8;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 999px;
+            font-size: 13px;
+            font-weight: 500;
+          }
+          .webedit-feature-badge-label {
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            font-size: 11px;
+            opacity: 0.85;
+          }
+          .webedit-feature-badge-text {
+            font-weight: 600;
+          }
+        `
+      };
+    case 'button':
+      return {
+        html: `
+          <button class="webedit-feature-button" data-feature-name="${safeName}" data-feature-content="${safeDescription}">
+            <span class="webedit-feature-button-title">${safeName}</span>
+            <span class="webedit-feature-button-caption">${safeDescription}</span>
+          </button>
+        `,
+        css: `
+          .webedit-feature-button {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            border: none;
+            border-radius: 999px;
+            padding: 12px 20px;
+            background: linear-gradient(135deg, #f97316 0%, #fb923c 100%);
+            color: white;
+            cursor: pointer;
+            display: inline-flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 4px;
+            box-shadow: 0 4px 12px rgba(249, 115, 22, 0.35);
+          }
+          .webedit-feature-button-title {
+            font-weight: 600;
+            font-size: 14px;
+          }
+          .webedit-feature-button-caption {
+            font-size: 12px;
+            opacity: 0.9;
+          }
+        `
+      };
+    case 'note':
+    default:
+      return {
+        html: `
+          <div class="webedit-feature-note">
+            <div class="webedit-feature-note-title">${safeName}</div>
+            <div class="webedit-feature-note-body">${safeDescription}</div>
+          </div>
+        `,
+        css: `
+          .webedit-feature-note {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+            color: white;
+            padding: 14px 16px;
+            border-radius: 14px;
+            box-shadow: 0 12px 30px rgba(99, 102, 241, 0.35);
+            border-left: 4px solid rgba(255, 255, 255, 0.35);
+            max-width: 360px;
+          }
+          .webedit-feature-note-title {
+            font-size: 15px;
+            font-weight: 600;
+            margin-bottom: 6px;
+          }
+          .webedit-feature-note-body {
+            font-size: 13px;
+            line-height: 1.5;
+            opacity: 0.95;
+          }
+        `
+      };
+  }
+}
+
+function ensureFeatureTemplate(spec) {
+  if (spec.html && typeof spec.html === 'string') {
+    return { html: spec.html, css: spec.css || '' };
+  }
+  const name = spec.name || spec.title || 'WebEdit note';
+  const description = spec.purpose || spec.description || spec.content || '';
+  return buildFeatureTemplate({ name, description, type: spec.type || 'note' });
 }
 
 function updateChatInputPrompt(text, shouldFocus = false) {
@@ -1742,6 +1867,7 @@ async function completeAddFeatureCreation() {
   const name = (addFeaturePrompt.name || "").trim();
   const description = (addFeaturePrompt.description || "").trim();
   const selector = addFeaturePrompt.targetSelector || currentEditTarget.selector;
+  const type = addFeaturePrompt.type || 'note';
 
   if (!name) {
     addChatMessage("system", "Name of edit:");
@@ -1764,6 +1890,8 @@ async function completeAddFeatureCreation() {
     return;
   }
 
+  const { html, css } = buildFeatureTemplate({ name, description, type });
+
   const featureSpec = {
     id: generateFeatureId(),
     selector,
@@ -1773,7 +1901,9 @@ async function completeAddFeatureCreation() {
     createdAt: Date.now(),
     name,
     purpose: description,
-    type: 'note'
+    type,
+    html,
+    css
   };
 
   try {
@@ -1851,79 +1981,58 @@ async function injectFeature(spec) {
   console.log("[WebEdit Add] Injecting feature", spec);
   
   try {
-    // Find the target element
+    const { html, css } = ensureFeatureTemplate(spec);
+    const injectorSpec = {
+      ...spec,
+      html,
+      css
+    };
+
+    if (window.WebEditInjector && window.WebEditInjector.mountFeatureWithRetry) {
+      window.WebEditInjector.mountFeatureWithRetry(injectorSpec);
+      return;
+    }
+
+    // Legacy fallback if injector is unavailable
     const targetEl = document.querySelector(spec.selector);
-    
     if (!targetEl) {
       console.warn(`[WebEdit Add] Target element not found for selector: ${spec.selector}`);
       return;
     }
-    
-    // Check if feature with this ID already exists (deduplication)
+
     const existingFeature = document.querySelector(`[data-webedit-feature-id="${spec.id}"]`);
     if (existingFeature) {
       console.log(`[WebEdit Add] Feature ${spec.id} already exists, skipping`);
       return;
     }
-    
-    // Create the feature container
+
     const container = document.createElement("div");
     container.className = "webedit-added-feature";
     container.setAttribute("data-webedit-feature-id", spec.id);
     container.setAttribute("data-webedit-selector", spec.selector);
-    
-    // Style the container with inline styles
     container.style.cssText = `
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
-      padding: 12px 16px;
-      border-radius: 8px;
       margin: 8px 0;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      font-size: 14px;
-      line-height: 1.5;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-      border-left: 4px solid rgba(255, 255, 255, 0.3);
     `;
-    
-    // Create content wrapper
-    const contentWrapper = document.createElement("div");
-    contentWrapper.style.cssText = `
-      display: flex;
-      align-items: flex-start;
-      gap: 8px;
-    `;
-    
-    // Add icon
-    const icon = document.createElement("span");
-    icon.textContent = "✨";
-    icon.style.cssText = `
-      font-size: 18px;
-      flex-shrink: 0;
-    `;
-    
-    // Add text content
-    const textContent = document.createElement("div");
-    textContent.textContent = spec.content;
-    textContent.style.cssText = `
-      flex: 1;
-      word-wrap: break-word;
-    `;
-    
-    contentWrapper.appendChild(icon);
-    contentWrapper.appendChild(textContent);
-    container.appendChild(contentWrapper);
-    
-    // Insert based on position
+
+    if (css) {
+      const styleEl = document.createElement("style");
+      styleEl.textContent = css;
+      container.appendChild(styleEl);
+    }
+
+    const contentHolder = document.createElement("div");
+    contentHolder.innerHTML = html;
+    container.appendChild(contentHolder);
+
     switch (spec.position) {
       case "before":
         targetEl.parentElement.insertBefore(container, targetEl);
-        console.log(`[WebEdit Add] Inserted feature BEFORE target element`);
+        console.log(`[WebEdit Add] Inserted feature BEFORE target element (fallback)`);
         break;
         
       case "inside":
         targetEl.insertBefore(container, targetEl.firstChild);
-        console.log(`[WebEdit Add] Inserted feature INSIDE target element`);
+        console.log(`[WebEdit Add] Inserted feature INSIDE target element (fallback)`);
         break;
         
       case "after":
@@ -1933,11 +2042,11 @@ async function injectFeature(spec) {
         } else {
           targetEl.parentElement.appendChild(container);
         }
-        console.log(`[WebEdit Add] Inserted feature AFTER target element`);
+        console.log(`[WebEdit Add] Inserted feature AFTER target element (fallback)`);
         break;
     }
     
-    console.log(`[WebEdit Add] ✅ Feature injected successfully: ${spec.id}`);
+    console.log(`[WebEdit Add] ✅ Feature injected successfully via fallback: ${spec.id}`);
     
   } catch (error) {
     console.error("[WebEdit Add] ❌ Error injecting feature:", error);
