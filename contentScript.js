@@ -27,6 +27,11 @@ let authUiUpdatePending = false;
 let authUiRetryTimeout = null;
 let panelCreationScheduled = false;
 
+// Auth sync state
+let authSyncInterval = null;
+const AUTH_SYNC_INTERVAL_MS = 3000; // Check every 3 seconds
+const WEBEDIT_DOMAIN = "webeditai.com";
+
 // Selected element for editing (used by Pick mode)
 let currentEditTarget = {
   element: null,
@@ -141,11 +146,24 @@ async function syncAuthFromWebsite() {
   }
 
   try {
-    // Check if the website has a Supabase session in localStorage
-    const websiteSession = localStorage.getItem('sb-eqfjkvjwsswjxkmomxax-auth-token');
+    // 1. Try exact known key
+    const exactKey = 'sb-eqfjkvjwsswjxkmomxax-auth-token';
+    let websiteSessionStr = localStorage.getItem(exactKey);
+
+    // 2. If not found, try to find ANY Supabase auth token
+    if (!websiteSessionStr) {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
+          console.log(`ℹ️ [Auth Sync] Found potential auth key: ${key}`);
+          websiteSessionStr = localStorage.getItem(key);
+          break; 
+        }
+      }
+    }
     
-    if (websiteSession) {
-      const sessionData = JSON.parse(websiteSession);
+    if (websiteSessionStr) {
+      const sessionData = JSON.parse(websiteSessionStr);
       
       // Check if extension already has this session
       const extensionSession = await new Promise((resolve) => {
@@ -212,12 +230,25 @@ async function syncAuthToWebsite() {
     });
 
     if (extensionSession) {
-      const websiteSession = localStorage.getItem('sb-eqfjkvjwsswjxkmomxax-auth-token');
+      const exactKey = 'sb-eqfjkvjwsswjxkmomxax-auth-token';
+      let websiteSession = localStorage.getItem(exactKey);
+      
+      // Check for other keys if exact not found
+      if (!websiteSession) {
+         for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
+              websiteSession = localStorage.getItem(key);
+              break;
+            }
+         }
+      }
       
       // If website doesn't have session but extension does, sync to website
+      // Default to exact key for writing
       if (!websiteSession) {
         console.log("🔄 Syncing auth from extension to website...");
-        localStorage.setItem('sb-eqfjkvjwsswjxkmomxax-auth-token', JSON.stringify(extensionSession));
+        localStorage.setItem(exactKey, JSON.stringify(extensionSession));
         console.log("✅ Auth synced to website");
       }
     }
