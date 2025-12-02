@@ -125,9 +125,9 @@ async function getOrCreateWebsite() {
     // 2. INSERT if not found
     console.log('[SaveEdit] Creating new website row...');
     const newSite = await dbRequest('/rest/v1/websites', 'POST', {
-      web_url: fullUrl,
+      web_url: full_url,
       web_name: title,
-      user_id: auth.userId
+      user_id: auth.user_id
     });
 
     console.log('[SaveEdit] ✅ Created website:', newSite.id);
@@ -165,10 +165,10 @@ async function saveEditToSupabase(params) {
 
     // 3. INSERT into edits table
     const editRow = {
-      website_id: website.id,
-      description: desc,
+      website_id: website_id,
+      description: description,
       payload: payload,
-      user_id: auth.userId,
+      user_id: auth.user_id,
       // created_at is default now()
     };
 
