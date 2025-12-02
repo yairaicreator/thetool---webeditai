@@ -80,6 +80,9 @@ chrome.runtime.onInstalled.addListener((details) => {
 const WEBEDIT_PROD_BASE_URL = "https://www.webeditai.com";
 const LOGIN_URL = "https://www.webeditai.com/#/signup";
 const HISTORY_URL = "https://www.webeditai.com/#/history";
+const SIGN_OUT_SUPPRESSION_MS = 8000;
+let signOutCooldownUntil = 0;
+let lastClearedSessionToken = null;
 
 /**
  * Get the current user from stored session
@@ -131,6 +134,36 @@ function broadcastSessionUpdate(session) {
   });
 }
 
+function sessionsAreEqual(a, b) {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  const accessTokenMatch = a.access_token === b.access_token;
+  const userIdMatch = (a.user?.id || a.user?.email || null) === (b.user?.id || b.user?.email || null);
+  return accessTokenMatch && userIdMatch;
+}
+
+function isSignOutSuppressed() {
+  return Date.now() < signOutCooldownUntil;
+}
+
+function shouldSuppressSessionDuringCooldown(session) {
+  if (!isSignOutSuppressed()) {
+    return false;
+  }
+
+  // Suppress null/undefined sessions (sign-out echoes)
+  if (!session) {
+    return true;
+  }
+
+  // Suppress only if the session matches the one we just cleared
+  if (!lastClearedSessionToken) {
+    return false;
+  }
+
+  return session.access_token === lastClearedSessionToken;
+}
+
 /**
  * Listen for authentication-related messages
  * All URLs use PRODUCTION constants - no dev URLs
@@ -141,23 +174,41 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.log("💾 Storing Supabase session from website");
     
     const session = message.session;
-    
-    chrome.storage.local.set({ 
-      webeditSupabaseSession: session,
-      webeditSessionTimestamp: Date.now()
-    }, () => {
-      if (chrome.runtime.lastError) {
-        console.error("❌ Error storing session:", chrome.runtime.lastError);
-        sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+
+    if (shouldSuppressSessionDuringCooldown(session)) {
+      console.log("⚠️ Sign-out in progress; ignoring session update");
+      sendResponse({ ok: false, ignored: true, reason: "SIGN_OUT_IN_PROGRESS" });
+      return;
+    }
+
+    chrome.storage.local.get(['webeditSupabaseSession'], (result) => {
+      const existingSession = result.webeditSupabaseSession || null;
+
+      if (sessionsAreEqual(existingSession, session)) {
+        console.log("ℹ️ Session unchanged – skipping storage/broadcast");
+        sendResponse({ ok: true, unchanged: true });
         return;
       }
-      
-      console.log("✅ Session stored successfully for user:", session?.user?.email);
-      
-      // Broadcast to all tabs
-      broadcastSessionUpdate(session);
-      
-      sendResponse({ ok: true, user: session?.user });
+
+      chrome.storage.local.set({ 
+        webeditSupabaseSession: session,
+        webeditSessionTimestamp: Date.now()
+      }, () => {
+        if (chrome.runtime.lastError) {
+          console.error("❌ Error storing session:", chrome.runtime.lastError);
+          sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+          return;
+        }
+        
+        console.log("✅ Session stored successfully for user:", session?.user?.email || "(signed out)");
+        
+        // Broadcast to all tabs
+        broadcastSessionUpdate(session);
+        signOutCooldownUntil = 0;
+        lastClearedSessionToken = null;
+        
+        sendResponse({ ok: true, user: session?.user });
+      });
     });
     
     return true; // Keep message channel open for async response
@@ -237,29 +288,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "WEBEDIT_SIGN_OUT") {
     console.log("👋 Signing out - clearing stored session");
     
-    // Clear both new and old storage keys for complete cleanup
-    chrome.storage.local.remove([
-      'webeditSupabaseSession', 
-      'webeditSessionTimestamp',
-      'webedit_supabase_session',
-      'webedit_session_timestamp'
-    ], () => {
-      if (chrome.runtime.lastError) {
-        console.error("❌ Error clearing session:", chrome.runtime.lastError);
-        sendResponse({ ok: false, error: chrome.runtime.lastError.message });
-        return;
-      }
-      
-      console.log("✅ Session cleared");
-      
-      // Broadcast sign out to all tabs
-      broadcastSessionUpdate(null);
-      
-      // Open website to sign out there too
-      const logoutUrl = HISTORY_URL + "?from=extension-logout";
-      chrome.tabs.create({ url: logoutUrl });
-      
-      sendResponse({ ok: true });
+    chrome.storage.local.get(['webeditSupabaseSession'], (result) => {
+      const existingSession = result.webeditSupabaseSession || null;
+      lastClearedSessionToken = existingSession?.access_token || null;
+      signOutCooldownUntil = Date.now() + SIGN_OUT_SUPPRESSION_MS;
+
+      // Clear both new and old storage keys for complete cleanup
+      chrome.storage.local.remove([
+        'webeditSupabaseSession', 
+        'webeditSessionTimestamp',
+        'webedit_supabase_session',
+        'webedit_session_timestamp'
+      ], () => {
+        if (chrome.runtime.lastError) {
+          console.error("❌ Error clearing session:", chrome.runtime.lastError);
+          sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+          return;
+        }
+        
+        console.log("✅ Session cleared");
+        
+        // Broadcast sign out to all tabs
+        broadcastSessionUpdate(null);
+        
+        // Open website to sign out there too
+        const logoutUrl = HISTORY_URL + "?from=extension-logout";
+        chrome.tabs.create({ url: logoutUrl });
+        
+        sendResponse({ ok: true });
+      });
     });
     
     return true; // Keep message channel open for async response

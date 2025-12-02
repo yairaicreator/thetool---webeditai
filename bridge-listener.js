@@ -19,6 +19,14 @@ function forwardSessionToBackground(session, source) {
         console.error("❌ Error forwarding session to background:", chrome.runtime.lastError);
         return;
       }
+      if (response?.ignored) {
+        console.log("⚠️ Session ignored by background:", response.reason || "unknown reason");
+        return;
+      }
+      if (response?.unchanged) {
+        console.log("ℹ️ Session already up to date, no broadcast needed");
+        return;
+      }
       console.log("✅ Session forwarded to background:", response);
     }
   );
@@ -98,7 +106,17 @@ window.addEventListener("message", (event) => {
     // If session is null (sign out), we pass it along to clear storage
     if (!session) {
       console.log("👋 Bridge listener: Received sign out signal");
-      chrome.runtime.sendMessage({ type: "WEBEDIT_SIGN_OUT" });
+      try {
+        chrome.runtime.sendMessage({ type: "WEBEDIT_SIGN_OUT" }, () => {
+          if (chrome.runtime.lastError) {
+            console.error("❌ Error forwarding sign-out to background:", chrome.runtime.lastError);
+          } else {
+            console.log("✅ Sign-out forwarded to background");
+          }
+        });
+      } catch (error) {
+        console.error("❌ Exception while forwarding sign-out:", error);
+      }
     } else {
       forwardSessionToBackground(session, "postMessage");
     }

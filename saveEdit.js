@@ -192,6 +192,7 @@ async function getOrCreateWebsiteForCurrentPage() {
     );
     
     if (existingWebsites && existingWebsites.length > 0) {
+      console.log('[saveEdit] Websites select result', { data: existingWebsites[0], error: null });
       console.log('[SaveEdit] ✅ Found existing Website:', existingWebsites[0].id);
       return { id: existingWebsites[0].id };
     }
@@ -216,15 +217,18 @@ async function getOrCreateWebsiteForCurrentPage() {
     );
     
     if (newWebsite && newWebsite.length > 0) {
+      console.log('[saveEdit] Websites insert result', { data: newWebsite[0], error: null });
       console.log('[SaveEdit] ✅ Created new Website:', newWebsite[0].id);
       return { id: newWebsite[0].id };
     }
     
     console.error('[SaveEdit] Failed to create Website - no data returned');
+    console.log('[saveEdit] Websites insert result', { data: null, error: 'No data returned' });
     return null;
     
   } catch (error) {
     const errorMsg = error.message || String(error);
+    console.log('[saveEdit] Websites error', { data: null, error: errorMsg });
     
     // Handle missing table gracefully (table not created yet)
     if (errorMsg === 'TABLE_NOT_FOUND' || 
@@ -338,6 +342,8 @@ async function saveEditToSupabase(params) {
       }
     );
     
+    console.log('[saveEdit] Edits insert result', { data: insertedEdit ? insertedEdit[0] : null, error: null });
+    
     if (insertedEdit && insertedEdit.length > 0) {
       console.log('[SaveEdit] ✅ Edit saved successfully:', insertedEdit[0].id);
       return { success: true, editId: insertedEdit[0].id };
@@ -348,6 +354,7 @@ async function saveEditToSupabase(params) {
     
   } catch (error) {
     const errorMsg = error.message || String(error);
+    console.log('[saveEdit] Edits insert result', { data: null, error: errorMsg });
     
     // Handle missing table gracefully (table not created yet)
     if (errorMsg === 'TABLE_NOT_FOUND' || 
