@@ -186,6 +186,7 @@ async function saveEditToSupabase(params) {
 
     // 3. INSERT into edits table
     const editRow = {
+      id: crypto.randomUUID(),
       website_id: website.id,
       user_id: auth.userId,
       edit_type: params.type || 'add',
