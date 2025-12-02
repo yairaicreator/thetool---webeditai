@@ -16,6 +16,8 @@ let currentUser = null; // Store current authenticated user
 let activeInteractionMode = null; // Track which manual mode is currently active (pick/remove)
 const WEBEDIT_HISTORY_URL = "https://www.webeditai.com/#/history";
 let authUiUpdatePending = false;
+let authUiRetryTimeout = null;
+let panelCreationScheduled = false;
 
 // Selected element for editing (used by Pick mode)
 let currentEditTarget = {
@@ -104,16 +106,32 @@ function updateAuthUI() {
   console.log("🔄 updateAuthUI called, currentUser:", currentUser ? currentUser.email : "null");
 
   if (!chatPanel) {
-    console.log("⏳ Chat panel not ready yet, deferring auth UI update");
+    console.log("⏳ Chat panel not ready yet, creating hidden panel for auth UI sync");
     authUiUpdatePending = true;
+    const panelReady = ensureChatPanelExists();
+    if (!panelReady) {
+      return;
+    }
+    // ensureChatPanelExists -> createPanel -> updateAuthUI will rerun via pending flag.
     return;
   }
 
   const signinBtn = document.getElementById("webedit-signin-btn");
   if (!signinBtn) {
-    console.warn("⚠️ Sign-in button element not available yet, deferring auth UI update");
+    console.warn("⚠️ Sign-in button element not available yet, scheduling retry");
     authUiUpdatePending = true;
+    if (!authUiRetryTimeout) {
+      authUiRetryTimeout = setTimeout(() => {
+        authUiRetryTimeout = null;
+        updateAuthUI();
+      }, 100);
+    }
     return;
+  }
+
+  if (authUiRetryTimeout) {
+    clearTimeout(authUiRetryTimeout);
+    authUiRetryTimeout = null;
   }
 
   authUiUpdatePending = false;
@@ -516,6 +534,27 @@ function hideModeIndicator(mode) {
 // ============================================
 // Panel Creation & Management
 // ============================================
+
+function ensureChatPanelExists() {
+  if (chatPanel) {
+    return true;
+  }
+
+  if (document.readyState === "complete" || document.readyState === "interactive") {
+    createPanel();
+    return true;
+  }
+
+  if (!panelCreationScheduled) {
+    panelCreationScheduled = true;
+    document.addEventListener("DOMContentLoaded", () => {
+      panelCreationScheduled = false;
+      createPanel();
+    }, { once: true });
+  }
+
+  return false;
+}
 
 /**
  * Creates and injects the AI chat panel into the page
