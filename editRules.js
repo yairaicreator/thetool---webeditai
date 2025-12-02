@@ -824,6 +824,25 @@ const EditRules = {
   },
 
   /**
+   * Apply all rules for the current page (alias for applyRules)
+   * @param {boolean} suppressNoRulesLog - If true, suppress "No rules to apply" log
+   * @returns {Promise<number>} Number of elements affected
+   */
+  async applyAllRulesForCurrentPage(suppressNoRulesLog = false) {
+    return RuleApplier.applyAllRulesForCurrentPage(suppressNoRulesLog);
+  },
+
+  /**
+   * Fetch rules from Supabase for authenticated user
+   * @param {Object} user - The authenticated user
+   * @param {string} pageKey - Optional page key to filter by
+   * @returns {Promise<EditRule[]>} Array of rules
+   */
+  async fetchRules(user, pageKey = null) {
+    return SupabaseSyncManager.fetchRules(user, pageKey);
+  },
+
+  /**
    * Delete a rule
    * @param {string} ruleId - The rule ID
    * @returns {Promise<boolean>} Success status
@@ -907,6 +926,26 @@ const EditRules = {
 
     this._mutationObserver = observer;
     console.log('👀 Mutation observer setup for rule reapplication');
+  },
+
+  /**
+   * Apply all rules for the current page (alias for applyRules)
+   * This method is called by contentScript.js during initialization
+   * @param {boolean} suppressNoRulesLog - If true, suppress "No rules to apply" log
+   * @returns {Promise<number>} Total number of elements affected
+   */
+  async applyAllRulesForCurrentPage(suppressNoRulesLog = false) {
+    return RuleApplier.applyAllRulesForCurrentPage(suppressNoRulesLog);
+  },
+
+  /**
+   * Fetch rules from Supabase for the current user
+   * @param {Object} user - The authenticated user
+   * @param {string} pageKey - Optional page key to filter by
+   * @returns {Promise<EditRule[]>} Array of rules
+   */
+  async fetchRules(user, pageKey = null) {
+    return SupabaseSyncManager.fetchRules(user, pageKey);
   }
 };
 
