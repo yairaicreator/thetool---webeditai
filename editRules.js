@@ -3,6 +3,22 @@
 
 console.log('📦 editRules.js: Starting to load...');
 
+// Track which authenticated user is allowed to read/write local rules
+let activeUserId = null;
+
+function setActiveUserContext(user) {
+  activeUserId = user?.id || null;
+  if (!activeUserId) {
+    console.log('ℹ️ EditRules: Cleared active user context');
+  } else {
+    console.log('ℹ️ EditRules: Active user set', activeUserId);
+  }
+}
+
+function getActiveUserId() {
+  return activeUserId;
+}
+
 /**
  * EditRule Type Definition
  * @typedef {Object} EditRule
@@ -164,6 +180,14 @@ function isExtensionContextValid() {
 const StorageManager = {
   STORAGE_KEY: 'webeditRules',
 
+  getStorageKey() {
+    const userId = getActiveUserId();
+    if (!userId) {
+      return null;
+    }
+    return `${this.STORAGE_KEY}::${userId}`;
+  },
+
   /**
    * Get all rules from storage
    * @returns {Promise<Object>} Object with pageKey as keys, arrays of rules as values
@@ -178,8 +202,14 @@ const StorageManager = {
         return;
       }
 
+      const storageKey = this.getStorageKey();
+      if (!storageKey) {
+        resolve({});
+        return;
+      }
+
       try {
-        chrome.storage.local.get([this.STORAGE_KEY], (result) => {
+        chrome.storage.local.get([storageKey, this.STORAGE_KEY], (result) => {
           // Check for errors AFTER the callback
           if (chrome.runtime.lastError) {
             const errorMsg = chrome.runtime.lastError.message || String(chrome.runtime.lastError);
@@ -201,8 +231,18 @@ const StorageManager = {
             }
           }
 
+          let rulesByPage = result[storageKey];
+
+          // Migrate legacy storage (without user scoping) to the new user-scoped key
+          if (!rulesByPage && result[this.STORAGE_KEY]) {
+            rulesByPage = result[this.STORAGE_KEY];
+            chrome.storage.local.set({ [storageKey]: rulesByPage });
+            chrome.storage.local.remove(this.STORAGE_KEY);
+            console.log('🔄 Migrated legacy rules store to user-scoped key');
+          }
+
           // Success - return the rules
-          resolve(result[this.STORAGE_KEY] || {});
+          resolve(rulesByPage || {});
         });
       } catch (error) {
         // Synchronous errors (shouldn't happen in content scripts, but handle gracefully)
@@ -237,6 +277,11 @@ const StorageManager = {
    */
   async saveRule(rule) {
     try {
+      const storageKey = this.getStorageKey();
+      if (!storageKey) {
+        console.warn('⚠️ No active user - skipping rule save');
+        return false;
+      }
       const allRules = await this.getAllRules();
       const pageKey = rule.pageKey;
 
@@ -266,7 +311,7 @@ const StorageManager = {
         }
 
         try {
-          chrome.storage.local.set({ [this.STORAGE_KEY]: allRules }, () => {
+          chrome.storage.local.set({ [storageKey]: allRules }, () => {
             if (chrome.runtime.lastError) {
               const errorMsg = chrome.runtime.lastError.message || String(chrome.runtime.lastError);
               // Only log "Extension context invalidated" as a warning (real error)
@@ -308,6 +353,11 @@ const StorageManager = {
    */
   async deleteRule(pageKey, ruleId) {
     try {
+      const storageKey = this.getStorageKey();
+      if (!storageKey) {
+        console.warn('⚠️ No active user - skipping rule delete');
+        return false;
+      }
       const allRules = await this.getAllRules();
 
       if (!allRules[pageKey]) {
@@ -329,7 +379,7 @@ const StorageManager = {
         }
 
         try {
-          chrome.storage.local.set({ [this.STORAGE_KEY]: allRules }, () => {
+          chrome.storage.local.set({ [storageKey]: allRules }, () => {
             if (chrome.runtime.lastError) {
               const errorMsg = chrome.runtime.lastError.message || String(chrome.runtime.lastError);
               if (errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated')) {
@@ -366,6 +416,11 @@ const StorageManager = {
    */
   async clearPageRules(pageKey) {
     try {
+      const storageKey = this.getStorageKey();
+      if (!storageKey) {
+        console.warn('⚠️ No active user - skipping clearPageRules');
+        return false;
+      }
       const allRules = await this.getAllRules();
       delete allRules[pageKey];
 
@@ -377,7 +432,7 @@ const StorageManager = {
         }
 
         try {
-          chrome.storage.local.set({ [this.STORAGE_KEY]: allRules }, () => {
+          chrome.storage.local.set({ [storageKey]: allRules }, () => {
             if (chrome.runtime.lastError) {
               const errorMsg = chrome.runtime.lastError.message || String(chrome.runtime.lastError);
               if (errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated')) {
@@ -481,6 +536,13 @@ const RuleApplier = {
       return 0;
     }
 
+    if (!getActiveUserId()) {
+      if (!suppressNoRulesLog) {
+        console.log('ℹ️ No authenticated user - skipping rule application');
+      }
+      return 0;
+    }
+
     try {
       const pageKey = getPageKey();
       const rules = await StorageManager.getRulesForPage(pageKey);
@@ -526,6 +588,10 @@ const RuleApplier = {
     if (!isExtensionContextValid()) {
       // Not in extension context - can't reapply
       // This is normal if running in page world, not an error
+      return;
+    }
+
+    if (!getActiveUserId()) {
       return;
     }
 
@@ -781,6 +847,13 @@ const EditRules = {
    * @returns {Promise<EditRule>} The created rule
    */
   async createRule(element, action, metadata = {}, user = null, selector = null) {
+    if (!user || !user.id) {
+      throw new Error('Authenticated user is required to create rules');
+    }
+
+    if (!getActiveUserId() || getActiveUserId() !== user.id) {
+      setActiveUserContext(user);
+    }
     // Use provided selector if available, otherwise generate one
     const finalSelector = selector || generateSelector(element);
 
@@ -795,7 +868,7 @@ const EditRules = {
       },
       createdAt: Date.now(),
       active: true,
-      userId: user?.id || null
+      userId: user.id
     };
 
     const saved = await StorageManager.saveRule(rule);
@@ -868,6 +941,42 @@ const EditRules = {
   async clearAllRulesForCurrentPage() {
     const pageKey = getPageKey();
     return StorageManager.clearPageRules(pageKey);
+  },
+
+  /**
+   * Set or clear the active authenticated user context
+   * @param {Object|null} user
+   */
+  setActiveUser(user) {
+    setActiveUserContext(user);
+  },
+
+  /**
+   * Clear all locally stored rules for the current authenticated user
+   * @returns {Promise<boolean>}
+   */
+  async clearLocalRulesForCurrentUser() {
+    const storageKey = StorageManager.getStorageKey();
+    if (!storageKey) {
+      return false;
+    }
+
+    return new Promise((resolve) => {
+      if (!isExtensionContextValid()) {
+        resolve(false);
+        return;
+      }
+
+      chrome.storage.local.remove(storageKey, () => {
+        if (chrome.runtime.lastError) {
+          console.error('❌ Error clearing user rules:', chrome.runtime.lastError);
+          resolve(false);
+          return;
+        }
+        console.log('🧹 Cleared local rules for active user');
+        resolve(true);
+      });
+    });
   },
 
   /**

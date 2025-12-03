@@ -39,5 +39,11 @@
       "js": ["bridge-listener.js"],
       "run_at": "document_idle"
     }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["panel.css", "contentStyles.css", "Logo/*.png"],
+      "matches": ["<all_urls>"]
+    }
   ]
 }

@@ -22,7 +22,12 @@ let currentTool = "remove";
 let hoverEl = null;
 let selectedEl = null;
 let floatingLabel = null;
-let chatPanel = null;
+
+// Shadow DOM Host and Root
+let panelHost = null;
+let panelShadow = null;
+let chatPanel = null; // Still keeps ref to the inner panel div
+
 let isPanelOpen = false;
 let currentUser = null; // Store current authenticated user
 let activeInteractionMode = null; // Track which manual mode is currently active (pick/remove)
@@ -32,6 +37,10 @@ let authUiRetryTimeout = null;
 let panelCreationScheduled = false;
 let panelStateSaveTimeout = null;
 let isRestoringPanelState = false;
+let currentUserAudit = null;
+let lastAuthorizedUserId = null;
+let hasRestoredStateForUser = false;
+let authGuardElement = null;
 
 // Auth sync state
 let authSyncInterval = null;
@@ -48,8 +57,24 @@ let currentEditTarget = {
 
 // Chat messages
 let chatMessages = [];
+let referenceDismissTimeout = null;
 
 const WEBEDIT_ATTR = "data-webedit-id";
+const AUTH_ACTIVITY_KEY = "webeditAuthAudit";
+
+// ============================================
+// DOM Helpers for Shadow DOM
+// ============================================
+
+function getPanelElement(id) {
+  if (!panelShadow) return null;
+  return panelShadow.getElementById(id);
+}
+
+function queryPanel(selector) {
+  if (!panelShadow) return [];
+  return panelShadow.querySelectorAll(selector);
+}
 
 // ============================================
 // Supabase Authentication Integration
@@ -79,11 +104,68 @@ function isExtensionContextValid() {
   }
 }
 
+async function readAuthAuditForUser(userId) {
+  if (!userId || !isExtensionContextValid()) {
+    return null;
+  }
+
+  return new Promise((resolve) => {
+    chrome.storage.local.get([AUTH_ACTIVITY_KEY], (result) => {
+      if (chrome.runtime.lastError) {
+        console.error("❌ Error reading auth activity:", chrome.runtime.lastError);
+        resolve(null);
+        return;
+      }
+      const all = result[AUTH_ACTIVITY_KEY] || {};
+      resolve(all[userId] || null);
+    });
+  });
+}
+
+async function updateAuthAudit(userId, updates = {}) {
+  if (!userId || !isExtensionContextValid()) {
+    return null;
+  }
+
+  return new Promise((resolve) => {
+    chrome.storage.local.get([AUTH_ACTIVITY_KEY], (result) => {
+      if (chrome.runtime.lastError) {
+        console.error("❌ Error reading auth activity for update:", chrome.runtime.lastError);
+        resolve(null);
+        return;
+      }
+
+      const all = result[AUTH_ACTIVITY_KEY] || {};
+      const existing = all[userId] || {};
+      const next = { ...existing, ...updates };
+
+      chrome.storage.local.set({ [AUTH_ACTIVITY_KEY]: { ...all, [userId]: next } }, () => {
+        if (chrome.runtime.lastError) {
+          console.error("❌ Error saving auth activity:", chrome.runtime.lastError);
+          resolve(null);
+          return;
+        }
+        resolve(next);
+      });
+    });
+  });
+}
+
+function formatAuditTimestamp(timestamp) {
+  if (!timestamp) return "Not available";
+  try {
+    return new Date(timestamp).toLocaleString();
+  } catch (error) {
+    return "Not available";
+  }
+}
+
 /**
  * Check the current authentication status
  * Retrieves the stored Supabase session from extension storage
  */
-async function checkAuthStatus() {
+async function checkAuthStatus(options = {}) {
+  const suppressStateUpdate = options.suppressStateUpdate || false;
   // Early bailout if extension context is invalid
   if (!isExtensionContextValid()) {
     return null;
@@ -105,9 +187,16 @@ async function checkAuthStatus() {
         }
 
         const session = response?.session || null;
-        currentUser = session?.user || null;
+        const nextUser = session?.user || null;
 
-        console.log("🔐 Auth status:", currentUser ? `Signed in as ${currentUser.email}` : "Not signed in");
+        if (!suppressStateUpdate) {
+          handleAuthStateChange(nextUser, { reason: "explicit-check" }).then(() => {
+            resolve(currentUser);
+          });
+          return;
+        }
+
+        currentUser = nextUser;
         resolve(currentUser);
       });
     } catch (error) {
@@ -128,7 +217,7 @@ function requireAuth(actionName = "perform this action") {
     showNotification(`Please sign in to ${actionName}`, "error");
 
     // Highlight the sign-in button briefly
-    const signinBtn = document.getElementById("webedit-signin-btn");
+    const signinBtn = getPanelElement("webedit-signin-btn");
     if (signinBtn) {
       signinBtn.style.animation = "pulse 0.5s ease-in-out 3";
       setTimeout(() => {
@@ -141,81 +230,169 @@ function requireAuth(actionName = "perform this action") {
   return true;
 }
 
-/**
- * Sync authentication state between website and extension
- * Checks if user is signed in on webeditai.com and syncs to extension
- */
-async function syncAuthFromWebsite() {
-  // Only sync if we're on the WebEdit AI website
-  if (!window.location.hostname.includes(WEBEDIT_DOMAIN)) {
+function ensureAuthGuardElements() {
+  if (authGuardElement) {
+    return authGuardElement;
+  }
+  authGuardElement = getPanelElement("webedit-auth-guard");
+  if (authGuardElement) {
+    const guardBtn = authGuardElement.querySelector("#webedit-auth-guard-signin");
+    if (guardBtn) {
+      guardBtn.addEventListener("click", () => handleSignInClick());
+    }
+  }
+  return authGuardElement;
+}
+
+function setFeatureControlsEnabled(isEnabled) {
+  const toolButtons = queryPanel(".webedit-tool-btn");
+  const pickBtn = getPanelElement("webedit-pick-btn");
+  const chatInput = getPanelElement("webedit-chat-input");
+  const customizePanel = getPanelElement("webedit-customize-panel");
+  const customizeInputs = customizePanel ? customizePanel.querySelectorAll("input,button") : [];
+  const historyBtn = getPanelElement("webedit-history-btn");
+  const newChatBtn = getPanelElement("webedit-new-chat-btn");
+
+  toolButtons.forEach((btn) => {
+    btn.disabled = !isEnabled;
+    btn.setAttribute("aria-disabled", String(!isEnabled));
+  });
+
+  if (pickBtn) {
+    pickBtn.disabled = !isEnabled;
+    pickBtn.setAttribute("aria-disabled", String(!isEnabled));
+  }
+
+  if (chatInput) {
+    if (!chatInput.dataset.defaultPlaceholder) {
+      chatInput.dataset.defaultPlaceholder = chatInput.getAttribute("placeholder") || "What do you want to change?";
+    }
+    chatInput.disabled = !isEnabled;
+    chatInput.placeholder = isEnabled ? chatInput.dataset.defaultPlaceholder : "Sign in to start editing";
+  }
+
+  customizeInputs.forEach((input) => {
+    input.disabled = !isEnabled;
+    input.setAttribute("aria-disabled", String(!isEnabled));
+  });
+
+  if (historyBtn) {
+    historyBtn.disabled = !isEnabled;
+    historyBtn.setAttribute("aria-disabled", String(!isEnabled));
+  }
+
+  if (newChatBtn) {
+    newChatBtn.disabled = !isEnabled;
+    newChatBtn.setAttribute("aria-disabled", String(!isEnabled));
+  }
+}
+
+function updateAuthGuardUI() {
+  setFeatureControlsEnabled(!!currentUser);
+  const guard = ensureAuthGuardElements();
+  if (!guard) return;
+
+  if (currentUser) {
+    guard.classList.add("hidden");
+  } else {
+    guard.classList.remove("hidden");
+  }
+}
+
+async function handleAuthStateChange(nextUser, options = {}) {
+  const nextUserId = nextUser?.id || null;
+  const previousUserId = lastAuthorizedUserId;
+  const userChanged = nextUserId !== previousUserId;
+
+  currentUser = nextUser || null;
+
+  if (window.EditRules && window.EditRules.setActiveUser) {
+    try {
+      window.EditRules.setActiveUser(currentUser);
+    } catch (error) {
+      console.warn("⚠️ Failed to set active user in EditRules:", error);
+    }
+  }
+
+  if (currentUser && userChanged) {
+    const timestamp = Date.now();
+    const existingAudit = await readAuthAuditForUser(currentUser.id);
+    currentUserAudit = await updateAuthAudit(currentUser.id, {
+      firstSignedInAt: existingAudit?.firstSignedInAt || timestamp,
+      lastSignedInAt: timestamp
+    });
+    lastAuthorizedUserId = currentUser.id;
+    hasRestoredStateForUser = false;
+  } else if (!currentUser && previousUserId && userChanged) {
+    await updateAuthAudit(previousUserId, {
+      lastSignedOutAt: Date.now()
+    });
+    currentUserAudit = null;
+    lastAuthorizedUserId = null;
+    hasRestoredStateForUser = false;
+  }
+
+  if (currentUser && !currentUserAudit) {
+    currentUserAudit = await readAuthAuditForUser(currentUser.id);
+  }
+
+  updateAuthUI();
+  updateAuthGuardUI();
+
+  if (!userChanged && !options.forceRefresh) {
     return;
   }
 
-  try {
-    // 1. Try exact known key
-    const exactKey = 'sb-eqfjkvjwsswjxkmomxax-auth-token';
-    let websiteSessionStr = localStorage.getItem(exactKey);
-
-    // 2. If not found, try to find ANY Supabase auth token
-    if (!websiteSessionStr) {
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
-          console.log(`ℹ️ [Auth Sync] Found potential auth key: ${key}`);
-          websiteSessionStr = localStorage.getItem(key);
-          break;
-        }
-      }
+  if (currentUser) {
+    try {
+      await loadAuthorizedExperience();
+    } catch (error) {
+      console.error("❌ Failed to load authorized experience:", error);
     }
-
-    if (websiteSessionStr) {
-      const sessionData = JSON.parse(websiteSessionStr);
-
-      // Check if extension already has this session
-      const extensionSession = await new Promise((resolve) => {
-        chrome.storage.local.get(['webeditSupabaseSession'], (result) => {
-          resolve(result.webeditSupabaseSession);
-        });
-      });
-
-      // If sessions don't match, sync from website to extension
-      if (!extensionSession ||
-        extensionSession.access_token !== sessionData.access_token ||
-        extensionSession.user?.id !== sessionData.user?.id) {
-
-        console.log("🔄 Syncing auth from website to extension...");
-
-        // Store session in extension
-        await new Promise((resolve) => {
-          chrome.storage.local.set({
-            webeditSupabaseSession: sessionData,
-            webeditSessionTimestamp: Date.now()
-          }, resolve);
-        });
-
-        // Update current user
-        currentUser = sessionData.user || null;
-        updateAuthUI();
-
-        console.log("✅ Auth synced from website:", currentUser?.email);
-        showNotification("Signed in successfully!", "success");
-      }
-    } else {
-      // Website has no session - check if extension should sign out
-      const extensionSession = await new Promise((resolve) => {
-        chrome.storage.local.get(['webeditSupabaseSession'], (result) => {
-          resolve(result.webeditSupabaseSession);
-        });
-      });
-
-      if (extensionSession && currentUser) {
-        console.log("🔄 Website signed out, syncing to extension...");
-        await handleSignOut();
-      }
-    }
-  } catch (error) {
-    console.error("❌ Error syncing auth from website:", error);
+  } else {
+    await enforceUnauthorizedExperience();
   }
+}
+
+async function loadAuthorizedExperience() {
+  if (!currentUser?.id || hasRestoredStateForUser) {
+    return;
+  }
+
+  await restorePanelState();
+  await loadChatHistory();
+
+  if (window.EditRules) {
+    try {
+      await window.EditRules.applyAllRulesForCurrentPage(true);
+      const remoteRules = await window.EditRules.fetchRules(currentUser, getPageKey());
+      console.log(`🔐 Loaded ${remoteRules.length} remote rule(s) for ${currentUser.email}`);
+    } catch (error) {
+      console.error("❌ Failed to apply persisted rules:", error);
+    }
+  }
+
+  await restoreAddedFeatures();
+  hasRestoredStateForUser = true;
+}
+
+async function enforceUnauthorizedExperience() {
+  stopRemoveMode();
+  stopPickMode();
+  isAddFeatureMode = false;
+  resetAddFeaturePromptState();
+  chatMessages = [];
+  renderChatMessages();
+  currentSessionId = null;
+  currentEditTarget = {
+    element: null,
+    selector: null,
+    description: null,
+    pageKey: null
+  };
+  updateChatInputPrompt("Sign in to start editing");
+  setActiveToolButton("remove");
+  updateAuthGuardUI();
 }
 
 /**
@@ -238,6 +415,7 @@ async function syncAuthToWebsite() {
     if (extensionSession) {
       const exactKey = 'sb-eqfjkvjwsswjxkmomxax-auth-token';
       let websiteSession = localStorage.getItem(exactKey);
+      let websiteSessionKey = websiteSession ? exactKey : null;
 
       // Check for other keys if exact not found
       if (!websiteSession) {
@@ -245,6 +423,7 @@ async function syncAuthToWebsite() {
           const key = localStorage.key(i);
           if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
             websiteSession = localStorage.getItem(key);
+            websiteSessionKey = key;
             break;
           }
         }
@@ -255,8 +434,35 @@ async function syncAuthToWebsite() {
       if (!websiteSession) {
         console.log("🔄 Syncing auth from extension to website...");
         localStorage.setItem(exactKey, JSON.stringify(extensionSession));
+        websiteSessionKey = exactKey;
         console.log("✅ Auth synced to website");
       }
+
+      window.postMessage({
+        source: "webedit-extension",
+        type: "WEBEDIT_SUPABASE_SESSION",
+        payload: extensionSession
+      }, window.origin);
+    } else {
+      // Extension signed out - ensure website clears session and is notified
+      const keysToCheck = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
+          keysToCheck.push(key);
+        }
+      }
+
+      if (keysToCheck.length > 0) {
+        keysToCheck.forEach((key) => localStorage.removeItem(key));
+        console.log("🔄 Cleared website auth tokens due to extension sign-out");
+      }
+
+      window.postMessage({
+        source: "webedit-extension",
+        type: "WEBEDIT_SUPABASE_SESSION",
+        payload: null
+      }, window.origin);
     }
   } catch (error) {
     console.error("❌ Error syncing auth to website:", error);
@@ -280,12 +486,10 @@ function startAuthSync() {
   console.log("🔄 Starting auth sync between website and extension...");
 
   // Initial sync
-  syncAuthFromWebsite();
   syncAuthToWebsite();
 
   // Periodic sync every 3 seconds
   authSyncInterval = setInterval(() => {
-    syncAuthFromWebsite();
     syncAuthToWebsite();
   }, AUTH_SYNC_INTERVAL_MS);
 }
@@ -319,7 +523,7 @@ function updateAuthUI() {
     return;
   }
 
-  const signinBtn = document.getElementById("webedit-signin-btn");
+  const signinBtn = getPanelElement("webedit-signin-btn");
   if (!signinBtn) {
     console.warn("⚠️ Sign-in button element not available yet, scheduling retry");
     authUiUpdatePending = true;
@@ -343,7 +547,7 @@ function updateAuthUI() {
   if (currentUser) {
     // User is signed in - show avatar
     console.log("👤 User is signed in, rendering avatar");
-    renderAvatar(signinBtn, currentUser);
+    renderAvatar(signinBtn, currentUser, currentUserAudit);
   } else {
     // User is not signed in - show sign in button
     console.log("🔓 User not signed in, rendering sign-in button");
@@ -356,7 +560,7 @@ function updateAuthUI() {
  * CRITICAL: Do NOT replace the DOM element - just update its contents
  * Otherwise we break event listeners set up in attachPanelEventListeners()
  */
-function renderAvatar(container, user) {
+function renderAvatar(container, user, auditMeta = null) {
   console.log("🔧 Rendering avatar for", user.email);
 
   // CRITICAL: Clean up old event listeners AND pending timeouts
@@ -427,6 +631,10 @@ function renderAvatar(container, user) {
     <div class="webedit-avatar-menu-header">
       <div class="webedit-avatar-menu-email">${user.email || 'User'}</div>
     </div>
+    <div class="webedit-avatar-menu-meta">
+      <div><strong>Last signed in:</strong> ${formatAuditTimestamp(auditMeta?.lastSignedInAt)}</div>
+      <div><strong>Last signed out:</strong> ${formatAuditTimestamp(auditMeta?.lastSignedOutAt)}</div>
+    </div>
     <div class="webedit-avatar-menu-item" data-action="history">
       <span class="webedit-avatar-menu-icon">📚</span>
       <span>View History</span>
@@ -468,8 +676,11 @@ function renderAvatar(container, user) {
   });
 
   // Close menu when clicking outside
+  // For Shadow DOM, clicking outside means checking composedPath or event.target
   const closeMenuHandler = (e) => {
-    if (!container.contains(e.target)) {
+    // e.composedPath() is needed for shadow DOM events
+    const path = e.composedPath ? e.composedPath() : [];
+    if (!path.includes(container) && !container.contains(e.target)) {
       menu.classList.remove('visible');
     }
   };
@@ -480,6 +691,8 @@ function renderAvatar(container, user) {
   // Add the listener with a small delay to avoid immediate closure
   const timeoutId = setTimeout(() => {
     document.addEventListener('click', closeMenuHandler);
+    // Also listen on shadow root if possible
+    if (panelShadow) panelShadow.addEventListener('click', closeMenuHandler);
     delete container._closeMenuTimeoutId;
   }, 100);
 
@@ -499,6 +712,7 @@ function renderSignInButton(container) {
   // CRITICAL: Clean up document-level click listener AND pending timeout from avatar
   if (container._closeMenuHandler) {
     document.removeEventListener('click', container._closeMenuHandler);
+    if (panelShadow) panelShadow.removeEventListener('click', container._closeMenuHandler);
     delete container._closeMenuHandler;
   }
 
@@ -653,8 +867,7 @@ function handleSignOut() {
       console.log("🌐 Opening website to complete sign out...");
 
       // Update local state immediately
-      currentUser = null;
-      updateAuthUI();
+      handleAuthStateChange(null, { reason: "manual-signout", forceRefresh: true });
 
       // Note: Background script will open the website with logout param
       // The website will handle the actual Supabase sign out
@@ -668,7 +881,8 @@ function handleSignOut() {
  * Show a temporary notification in the panel
  */
 function showNotification(message, type = "info") {
-  const mainContent = document.querySelector(".webedit-main-content");
+  // Notification should be inside panel if possible
+  const mainContent = queryPanel(".webedit-main-content")[0];
   if (!mainContent) return;
 
   // Remove any existing notification first
@@ -696,9 +910,9 @@ function showNotification(message, type = "info") {
 }
 
 function showModeIndicator(mode) {
-  const indicator = document.getElementById("webedit-mode-indicator");
-  const textEl = document.getElementById("webedit-mode-text");
-  const closeBtn = document.getElementById("webedit-mode-close-btn");
+  const indicator = getPanelElement("webedit-mode-indicator");
+  const textEl = getPanelElement("webedit-mode-text");
+  const closeBtn = getPanelElement("webedit-mode-close-btn");
 
   if (!indicator || !textEl || !closeBtn) {
     return;
@@ -719,7 +933,7 @@ function showModeIndicator(mode) {
 }
 
 function hideModeIndicator(mode) {
-  const indicator = document.getElementById("webedit-mode-indicator");
+  const indicator = getPanelElement("webedit-mode-indicator");
   if (!indicator) {
     return;
   }
@@ -761,7 +975,7 @@ function ensureChatPanelExists() {
 
 function setActiveToolButton(tool) {
   currentTool = tool;
-  const toolButtons = document.querySelectorAll(".webedit-tool-btn");
+  const toolButtons = queryPanel(".webedit-tool-btn");
   toolButtons.forEach((btn) => {
     if (btn.dataset.tool === tool) {
       btn.classList.add("active");
@@ -780,6 +994,27 @@ function setActiveToolButton(tool) {
 function createPanel() {
   if (chatPanel) return chatPanel;
 
+  // Create Host Element for Shadow DOM
+  panelHost = document.createElement("div");
+  panelHost.id = "webedit-host";
+  // Reset styles and position fixed on top
+  panelHost.style.all = "initial";
+  panelHost.style.position = "fixed";
+  panelHost.style.top = "0";
+  panelHost.style.left = "0";
+  panelHost.style.width = "0";
+  panelHost.style.height = "0";
+  panelHost.style.zIndex = "2147483647";
+
+  // Create Shadow Root
+  panelShadow = panelHost.attachShadow({ mode: "open" });
+
+  // Inject Stylesheet into Shadow Root
+  const linkEl = document.createElement("link");
+  linkEl.rel = "stylesheet";
+  linkEl.href = chrome.runtime.getURL("panel.css");
+  panelShadow.appendChild(linkEl);
+
   const panel = document.createElement("div");
   panel.id = "webedit-chat-panel";
   panel.className = "hidden";
@@ -791,6 +1026,14 @@ function createPanel() {
       <button class="webedit-nav-btn history-btn" id="webedit-history-btn" style="display:none">History</button>
       <button class="webedit-nav-btn signin-btn" id="webedit-signin-btn">Sign in</button>
       <button class="webedit-close-btn" id="webedit-close-btn">×</button>
+    </div>
+
+    <div class="webedit-auth-guard hidden" id="webedit-auth-guard" aria-live="polite">
+      <div class="webedit-auth-guard-card">
+        <h3>Sign in required</h3>
+        <p>Sign in for getting access to the features.</p>
+        <button class="webedit-auth-guard-btn" id="webedit-auth-guard-signin">Sign in</button>
+      </div>
     </div>
 
     <!-- History Sidebar -->
@@ -878,7 +1121,8 @@ function createPanel() {
 
   `;
 
-  document.body.appendChild(panel);
+  panelShadow.appendChild(panel);
+  document.body.appendChild(panelHost);
   chatPanel = panel;
 
   attachPanelEventListeners();
@@ -887,6 +1131,8 @@ function createPanel() {
     console.log("🔁 Running deferred auth UI update now that panel is ready");
     updateAuthUI();
   }
+
+  updateAuthGuardUI();
 
   return panel;
 }
@@ -917,7 +1163,6 @@ async function togglePanel(show, options = {}) {
     console.log("🔍 Checking auth status...");
     const user = await checkAuthStatus();
     console.log("🔍 Auth check result:", user ? user.email : "Not signed in");
-    updateAuthUI();
   } else {
     chatPanel.classList.add("hidden");
     document.documentElement.classList.remove("webedit-panel-open");
@@ -934,12 +1179,12 @@ async function togglePanel(show, options = {}) {
 
 function attachPanelEventListeners() {
   // Close button
-  const closeBtn = document.getElementById("webedit-close-btn");
+  const closeBtn = getPanelElement("webedit-close-btn");
   closeBtn.addEventListener("click", () => togglePanel(false));
 
   // History Sidebar Toggle
-  const headerHamburger = document.getElementById("webedit-header-hamburger");
-  const historySidebar = document.getElementById("webedit-history-sidebar");
+  const headerHamburger = getPanelElement("webedit-header-hamburger");
+  const historySidebar = getPanelElement("webedit-history-sidebar");
 
   if (headerHamburger && historySidebar) {
     headerHamburger.addEventListener("click", (e) => {
@@ -958,17 +1203,20 @@ function attachPanelEventListeners() {
   }
 
   // New Chat Button
-  const newChatBtn = document.getElementById("webedit-new-chat-btn");
+  const newChatBtn = getPanelElement("webedit-new-chat-btn");
   if (newChatBtn) {
     newChatBtn.addEventListener("click", () => {
+      if (!requireAuth("create a chat history")) {
+        return;
+      }
       startNewChat();
       if (historySidebar) historySidebar.classList.remove("visible");
     });
   }
 
   // Burger menu toggle
-  const burgerBtn = document.getElementById("webedit-burger-btn");
-  const toolsMenu = document.getElementById("webedit-tools-menu");
+  const burgerBtn = getPanelElement("webedit-burger-btn");
+  const toolsMenu = getPanelElement("webedit-tools-menu");
 
   if (!burgerBtn) {
     console.error("❌ Burger button not found!");
@@ -992,15 +1240,16 @@ function attachPanelEventListeners() {
   });
 
   // Close tools menu when clicking outside
-  document.addEventListener("click", (e) => {
+  // Need to listen on shadow root/panel for clicks inside panel
+  panelShadow.addEventListener("click", (e) => {
     if (toolsMenu && !burgerBtn.contains(e.target) && !toolsMenu.contains(e.target)) {
       toolsMenu.classList.remove("visible");
     }
   });
 
   // Tool buttons
-  const toolButtons = document.querySelectorAll(".webedit-tool-btn");
-  const customizePanel = document.getElementById("webedit-customize-panel");
+  const toolButtons = queryPanel(".webedit-tool-btn");
+  const customizePanel = getPanelElement("webedit-customize-panel");
 
   toolButtons.forEach((btn) => {
     btn.addEventListener("click", (e) => {
@@ -1067,7 +1316,7 @@ function attachPanelEventListeners() {
   });
 
   // Pick element button - starts Pick mode for element selection (not removal)
-  const pickBtn = document.getElementById("webedit-pick-btn");
+  const pickBtn = getPanelElement("webedit-pick-btn");
   if (pickBtn) {
     pickBtn.addEventListener("click", () => {
       console.log("🔘 Pick Element button clicked");
@@ -1086,7 +1335,7 @@ function attachPanelEventListeners() {
     console.error("❌ Pick element button not found!");
   }
 
-  const modeCloseBtn = document.getElementById("webedit-mode-close-btn");
+  const modeCloseBtn = getPanelElement("webedit-mode-close-btn");
   if (modeCloseBtn) {
     modeCloseBtn.addEventListener("click", () => {
       if (activeInteractionMode === "pick") {
@@ -1098,7 +1347,7 @@ function attachPanelEventListeners() {
   }
 
   // Chat input
-  const chatInput = document.getElementById("webedit-chat-input");
+  const chatInput = getPanelElement("webedit-chat-input");
 
   chatInput.addEventListener("keypress", async (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -1130,8 +1379,8 @@ function attachPanelEventListeners() {
   });
 
   // Navigation buttons
-  const logoBtn = document.getElementById("webedit-logo-btn");
-  const historyBtn = document.getElementById("webedit-history-btn");
+  const logoBtn = getPanelElement("webedit-logo-btn");
+  const historyBtn = getPanelElement("webedit-history-btn");
 
   logoBtn.addEventListener("click", () => {
     window.open("https://www.webeditai.com", "_blank");
@@ -1144,12 +1393,12 @@ function attachPanelEventListeners() {
   // Sign in button handled by renderSignInButton() or renderAvatar()
 
   // Customize panel buttons
-  const customizeCloseBtn = document.getElementById("webedit-customize-close-btn");
-  const applyBtn = document.getElementById("webedit-apply-btn");
-  const resetBtn = document.getElementById("webedit-reset-btn");
-  const bgColorInput = document.getElementById("webedit-bg-color");
-  const textColorInput = document.getElementById("webedit-text-color");
-  const fontSizeInput = document.getElementById("webedit-font-size");
+  const customizeCloseBtn = getPanelElement("webedit-customize-close-btn");
+  const applyBtn = getPanelElement("webedit-apply-btn");
+  const resetBtn = getPanelElement("webedit-reset-btn");
+  const bgColorInput = getPanelElement("webedit-bg-color");
+  const textColorInput = getPanelElement("webedit-text-color");
+  const fontSizeInput = getPanelElement("webedit-font-size");
 
   customizeCloseBtn.addEventListener("click", () => {
     customizePanel.classList.remove("visible");
@@ -1348,8 +1597,9 @@ function handleRemoveMouseMove(event) {
   const el = event.target;
 
   // Don't pick the panel itself or its children
+  // Check if element is the panel host or inside it
   if (!el || el === document.documentElement || el === document.body ||
-    el.closest("#webedit-chat-panel")) {
+    el === panelHost || (panelHost && panelHost.contains(el))) {
     clearHover();
     return;
   }
@@ -1364,7 +1614,7 @@ async function handleRemoveClick(event) {
 
   // Don't pick the panel itself or its children
   if (!el || el === document.documentElement || el === document.body ||
-    el.closest("#webedit-chat-panel")) {
+    el === panelHost || (panelHost && panelHost.contains(el))) {
     return;
   }
 
@@ -1453,7 +1703,7 @@ function handlePickMouseMove(event) {
 
   // Don't pick the panel itself or its children
   if (!el || el === document.documentElement || el === document.body ||
-    el.closest("#webedit-chat-panel")) {
+    el === panelHost || (panelHost && panelHost.contains(el))) {
     clearHover();
     return;
   }
@@ -1468,7 +1718,7 @@ async function handlePickClick(event) {
 
   // Don't pick the panel itself or its children
   if (!el || el === document.documentElement || el === document.body ||
-    el.closest("#webedit-chat-panel")) {
+    el === panelHost || (panelHost && panelHost.contains(el))) {
     return;
   }
 
@@ -1605,19 +1855,76 @@ function generateSelectorForElement(el) {
 
 function generateDescriptionForElement(el) {
   const tagName = el.tagName.toLowerCase();
-  const id = el.id ? `#${el.id}` : '';
-  const classes = el.className && typeof el.className === 'string'
-    ? '.' + el.className.trim().split(/\s+/).filter(c => c && !c.startsWith('webedit-')).join('.').substring(0, 30)
-    : '';
+  let humanType = tagName;
+  
+  // Map common tags to human-readable names
+  const typeMap = {
+    'a': 'Link',
+    'button': 'Button',
+    'img': 'Image',
+    'input': 'Input field',
+    'textarea': 'Text area',
+    'select': 'Dropdown',
+    'h1': 'Heading 1',
+    'h2': 'Heading 2',
+    'h3': 'Heading 3',
+    'h4': 'Heading 4',
+    'h5': 'Heading 5',
+    'h6': 'Heading 6',
+    'p': 'Paragraph',
+    'span': 'Text',
+    'div': 'Container',
+    'ul': 'List',
+    'ol': 'List',
+    'li': 'List item',
+    'form': 'Form',
+    'table': 'Table',
+    'nav': 'Navigation'
+  };
+  
+  if (typeMap[tagName]) {
+    humanType = typeMap[tagName];
+  } else {
+    // Capitalize first letter for others
+    humanType = tagName.charAt(0).toUpperCase() + tagName.slice(1);
+  }
 
-  let description = tagName + id + classes;
-
-  // Add text content if short enough
-  const text = el.textContent?.trim() || '';
-  if (text && text.length < 40) {
+  let text = '';
+  
+  // Try to find meaningful text/label
+  if (tagName === 'img') {
+    text = el.alt || el.title || '';
+  } else if (tagName === 'input' || tagName === 'textarea') {
+    text = el.placeholder || el.value || el.name || '';
+    // If type is submit/button, checking value is good. If text input, value might be user data.
+    // Maybe prefer placeholder or associated label?
+    if (!text && el.id) {
+        const label = document.querySelector(`label[for="${el.id}"]`);
+        if (label) text = label.textContent;
+    }
+  } else {
+    // For other elements, use text content but clean it up
+    // Clone and remove children to get direct text if needed, or just use textContent
+    // Using textContent is usually fine but might be too much for containers
+    // Let's try to get the first non-empty text node or just trim
+    text = el.textContent?.trim() || '';
+  }
+  
+  // Truncate long text
+  if (text.length > 30) {
+    text = text.substring(0, 27) + "...";
+  }
+  
+  let description = humanType;
+  if (text) {
     description += ` "${text}"`;
-  } else if (text && text.length >= 40) {
-    description += ` "${text.substring(0, 37)}..."`;
+  } else if (el.id) {
+     // Fallback to ID if no text
+     description += ` (#${el.id})`;
+  } else if (el.className && typeof el.className === 'string') {
+      // Fallback to class if no ID and no text
+     const firstClass = el.className.trim().split(/\s+/).filter(c => c && !c.startsWith('webedit-'))[0];
+     if (firstClass) description += ` (.${firstClass})`;
   }
 
   return description;
@@ -1633,6 +1940,17 @@ function getPageKey() {
 // ============================================
 
 function addChatMessage(type, content) {
+  // If adding a reference, remove any existing ones first (one at a time)
+  if (type === 'reference') {
+    chatMessages = chatMessages.filter(msg => msg.type !== 'reference');
+    
+    // Clear any pending timeout
+    if (referenceDismissTimeout) {
+      clearTimeout(referenceDismissTimeout);
+      referenceDismissTimeout = null;
+    }
+  }
+
   const message = {
     type: type, // "user", "system", "reference"
     content: content,
@@ -1643,6 +1961,18 @@ function addChatMessage(type, content) {
   renderChatMessages();
   schedulePanelStateSave();
   saveChatHistory(); // Save to persistent storage
+  
+  // Auto-dismiss reference after 10 seconds
+  if (type === 'reference') {
+    referenceDismissTimeout = setTimeout(() => {
+      // Remove this reference message
+      chatMessages = chatMessages.filter(msg => msg !== message);
+      renderChatMessages();
+      schedulePanelStateSave();
+      saveChatHistory();
+      referenceDismissTimeout = null;
+    }, 10000);
+  }
 }
 
 // ============================================
@@ -1654,10 +1984,38 @@ const CURRENT_SESSION_KEY = 'webedit-current-session-id';
 
 let currentSessionId = null;
 
+function getScopedStorageKey(baseKey, userId = null) {
+  const resolvedId = userId || currentUser?.id || null;
+  if (!resolvedId) {
+    return null;
+  }
+  return `${baseKey}::${resolvedId}`;
+}
+
+function getPanelStateStorageKey(userId = null) {
+  return getScopedStorageKey(PANEL_STATE_KEY, userId);
+}
+
+function getChatHistoryStorageKey(userId = null) {
+  return getScopedStorageKey(CHAT_HISTORY_KEY, userId);
+}
+
+function getSessionStorageKey(userId = null) {
+  return getScopedStorageKey(CURRENT_SESSION_KEY, userId);
+}
+
 function saveChatHistory() {
+  if (!currentUser?.id) {
+    return;
+  }
+
+  const sessionKey = getSessionStorageKey();
+  const historyKey = getChatHistoryStorageKey();
+  if (!sessionKey || !historyKey) return;
+
   if (!currentSessionId) {
     currentSessionId = Date.now().toString();
-    localStorage.setItem(CURRENT_SESSION_KEY, currentSessionId);
+    localStorage.setItem(sessionKey, currentSessionId);
   }
 
   const session = {
@@ -1671,7 +2029,7 @@ function saveChatHistory() {
   try {
     // Get existing history
     let history = [];
-    const raw = localStorage.getItem(CHAT_HISTORY_KEY);
+    const raw = localStorage.getItem(historyKey);
     if (raw) {
       history = JSON.parse(raw);
     }
@@ -1689,7 +2047,7 @@ function saveChatHistory() {
       history = history.slice(0, 50);
     }
 
-    localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(history));
+    localStorage.setItem(historyKey, JSON.stringify(history));
     renderHistoryList();
   } catch (e) {
     console.warn('Failed to save chat history:', e);
@@ -1697,18 +2055,31 @@ function saveChatHistory() {
 }
 
 function loadChatHistory() {
-  try {
-    // Load current session ID
-    currentSessionId = localStorage.getItem(CURRENT_SESSION_KEY);
+  if (!currentUser?.id) {
+    return;
+  }
 
-    const raw = localStorage.getItem(CHAT_HISTORY_KEY);
+  const sessionKey = getSessionStorageKey();
+  const historyKey = getChatHistoryStorageKey();
+  if (!sessionKey || !historyKey) return;
+
+  try {
+    currentSessionId = localStorage.getItem(sessionKey);
+
+    let raw = localStorage.getItem(historyKey);
+    if (!raw) {
+      const legacy = localStorage.getItem(CHAT_HISTORY_KEY);
+      if (legacy) {
+        localStorage.setItem(historyKey, legacy);
+        localStorage.removeItem(CHAT_HISTORY_KEY);
+        raw = legacy;
+      }
+    }
+
     if (raw) {
       const history = JSON.parse(raw);
-
-      // Render the list
       renderHistoryList(history);
 
-      // Restore messages for current session
       if (currentSessionId) {
         const session = history.find(s => s.id === currentSessionId);
         if (session && Array.isArray(session.messages)) {
@@ -1718,8 +2089,6 @@ function loadChatHistory() {
           return;
         }
       }
-
-      // If no current session or not found, start new
       startNewChat(false);
     }
   } catch (e) {
@@ -1728,12 +2097,17 @@ function loadChatHistory() {
 }
 
 function renderHistoryList(historyData = null) {
-  const listContainer = document.getElementById("webedit-history-list");
+  const listContainer = getPanelElement("webedit-history-list");
   if (!listContainer) return;
+
+  if (!currentUser?.id) {
+    listContainer.innerHTML = '<div style="padding:10px; color:#9ca3af; font-size:12px; text-align:center">Sign in to view history</div>';
+    return;
+  }
 
   if (!historyData) {
     try {
-      const raw = localStorage.getItem(CHAT_HISTORY_KEY);
+      const raw = localStorage.getItem(getChatHistoryStorageKey());
       if (raw) historyData = JSON.parse(raw);
     } catch (e) { }
   }
@@ -1762,20 +2136,26 @@ function renderHistoryList(historyData = null) {
 }
 
 function loadSession(sessionId) {
+  if (!currentUser?.id) return;
+
+  const historyKey = getChatHistoryStorageKey();
+  const sessionKey = getSessionStorageKey();
+  if (!historyKey || !sessionKey) return;
+
   try {
-    const raw = localStorage.getItem(CHAT_HISTORY_KEY);
+    const raw = localStorage.getItem(historyKey);
     if (raw) {
       const history = JSON.parse(raw);
       const session = history.find(s => s.id === sessionId);
       if (session) {
         currentSessionId = sessionId;
-        localStorage.setItem(CURRENT_SESSION_KEY, currentSessionId);
+        localStorage.setItem(sessionKey, currentSessionId);
         chatMessages = session.messages || [];
         renderChatMessages();
         renderHistoryList(history); // Update active state
 
         // Close sidebar on mobile/small screens or just for UX
-        const sidebar = document.getElementById("webedit-history-sidebar");
+        const sidebar = getPanelElement("webedit-history-sidebar");
         if (sidebar && window.innerWidth < 768) {
           sidebar.classList.remove("visible");
         }
@@ -1787,12 +2167,22 @@ function loadSession(sessionId) {
 }
 
 function startNewChat(saveOld = true) {
+  if (!currentUser?.id) {
+    chatMessages = [];
+    renderChatMessages();
+    return;
+  }
+
+  const sessionKey = getSessionStorageKey();
+  const historyKey = getChatHistoryStorageKey();
+  if (!sessionKey || !historyKey) return;
+
   if (saveOld && chatMessages.length > 0) {
     saveChatHistory();
   }
 
   currentSessionId = Date.now().toString();
-  localStorage.setItem(CURRENT_SESSION_KEY, currentSessionId);
+  localStorage.setItem(sessionKey, currentSessionId);
   chatMessages = [];
   renderChatMessages();
   saveChatHistory(); // Create entry for new chat
@@ -1800,8 +2190,8 @@ function startNewChat(saveOld = true) {
 
 
 function renderChatMessages() {
-  const chatContainer = document.getElementById("webedit-chat-messages");
-  const referencesContainer = document.getElementById("webedit-references-container");
+  const chatContainer = getPanelElement("webedit-chat-messages");
+  const referencesContainer = getPanelElement("webedit-references-container");
 
   if (!chatContainer || !referencesContainer) return;
 
@@ -2030,6 +2420,9 @@ function ensureFeatureTemplate(spec) {
 }
 
 function schedulePanelStateSave() {
+  if (!currentUser?.id) {
+    return;
+  }
   if (panelStateSaveTimeout) {
     clearTimeout(panelStateSaveTimeout);
   }
@@ -2037,11 +2430,17 @@ function schedulePanelStateSave() {
 }
 
 function savePanelState(force = false) {
+  if (!currentUser?.id) {
+    return;
+  }
+
   if (isRestoringPanelState && !force) {
     return;
   }
+  const storageKey = getPanelStateStorageKey();
+  if (!storageKey) return;
   try {
-    const chatInput = document.getElementById("webedit-chat-input");
+    const chatInput = getPanelElement("webedit-chat-input");
     const state = {
       isPanelOpen,
       currentTool,
@@ -2050,16 +2449,34 @@ function savePanelState(force = false) {
       addFeaturePrompt: { ...addFeaturePrompt },
       chatPlaceholder: chatInput ? chatInput.placeholder : ""
     };
-    localStorage.setItem(PANEL_STATE_KEY, JSON.stringify(state));
+    localStorage.setItem(storageKey, JSON.stringify(state));
   } catch (error) {
     console.warn('[WebEdit Panel] Failed to save panel state:', error);
   }
 }
 
 async function restorePanelState() {
+  if (!currentUser?.id) {
+    return;
+  }
+
+  const storageKey = getPanelStateStorageKey();
+  if (!storageKey) {
+    return;
+  }
+
   let rawState = null;
   try {
-    rawState = localStorage.getItem(PANEL_STATE_KEY);
+    rawState = localStorage.getItem(storageKey);
+    // Migrate legacy key if needed
+    if (!rawState) {
+      const legacy = localStorage.getItem(PANEL_STATE_KEY);
+      if (legacy) {
+        localStorage.setItem(storageKey, legacy);
+        localStorage.removeItem(PANEL_STATE_KEY);
+        rawState = legacy;
+      }
+    }
   } catch (error) {
     console.warn('[WebEdit Panel] Failed to read panel state:', error);
     return;
@@ -2101,7 +2518,7 @@ async function restorePanelState() {
     addFeaturePrompt.targetSelector = null; // DOM references cannot survive reload
   }
 
-  const chatInput = document.getElementById("webedit-chat-input");
+  const chatInput = getPanelElement("webedit-chat-input");
   if (chatInput && state.chatPlaceholder) {
     chatInput.placeholder = state.chatPlaceholder;
   }
@@ -2121,7 +2538,7 @@ async function restorePanelState() {
 }
 
 function updateChatInputPrompt(text, shouldFocus = false) {
-  const chatInput = document.getElementById("webedit-chat-input");
+  const chatInput = getPanelElement("webedit-chat-input");
   if (!chatInput) {
     return;
   }
@@ -2262,8 +2679,6 @@ function finalizeAddFeatureFlow() {
 }
 
 // Storage key for added features
-const ADDED_FEATURES_STORAGE_KEY = 'webedit-added-features';
-
 /**
  * Generate a unique ID for a feature
  * @returns {string} Unique feature ID
@@ -2277,8 +2692,10 @@ function generateFeatureId() {
  * @returns {string} Storage key in format "webedit-features::hostname::pathname"
  */
 function getFeatureStorageKey() {
+  const userId = currentUser?.id;
+  if (!userId) return null;
   const { hostname, pathname } = window.location;
-  return `webedit-features::${hostname}::${pathname}`;
+  return `webedit-features::${userId}::${hostname}::${pathname}`;
 }
 
 /**
@@ -2388,8 +2805,18 @@ async function saveAddedFeature(feature) {
       return;
     }
 
+    if (!currentUser?.id) {
+      console.warn("[WebEdit Add] No authenticated user, skipping feature save");
+      resolve(false);
+      return;
+    }
+
     try {
       const storageKey = getFeatureStorageKey();
+      if (!storageKey) {
+        resolve(false);
+        return;
+      }
 
       // Get existing features for this page
       chrome.storage.local.get([storageKey], (result) => {
@@ -2443,17 +2870,35 @@ async function restoreAddedFeatures() {
       return;
     }
 
+    if (!currentUser?.id) {
+      resolve(0);
+      return;
+    }
+
     try {
       const storageKey = getFeatureStorageKey();
+      if (!storageKey) {
+        resolve(0);
+        return;
+      }
 
-      chrome.storage.local.get([storageKey], async (result) => {
+      const legacyKey = `webedit-features::${window.location.hostname}::${window.location.pathname}`;
+
+      chrome.storage.local.get([storageKey, legacyKey], async (result) => {
         if (chrome.runtime.lastError) {
           console.error("[WebEdit Add] Error loading features:", chrome.runtime.lastError);
           resolve(0);
           return;
         }
 
-        const features = result[storageKey] || [];
+        let features = result[storageKey] || [];
+
+        if (features.length === 0 && result[legacyKey]) {
+          features = result[legacyKey];
+          chrome.storage.local.set({ [storageKey]: features });
+          chrome.storage.local.remove(legacyKey);
+          console.log("🔄 Migrated legacy features to user-scoped storage");
+        }
 
         if (features.length === 0) {
           resolve(0);
@@ -2554,11 +2999,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       "| Was signed in:", wasSignedIn, "| Now signed in:", isNowSignedIn
     );
 
-    currentUser = message.session?.user || null;
-
-    // Force UI update
-    console.log("🔄 Updating auth UI...");
-    updateAuthUI();
+    handleAuthStateChange(message.session?.user || null, { reason: "background-broadcast" });
 
     // Show notification if panel is open
     if (isPanelOpen) {
@@ -2600,34 +3041,10 @@ async function initialize() {
 
   // 1. Create Panel (hidden)
   createPanel();
-  await restorePanelState();
-
-  // 2. Load Chat History
-  loadChatHistory();
-
-  // 3. Check Auth
   await checkAuthStatus();
-  updateAuthUI();
 
-  // 4. Start Auth Sync
+  // 2. Start Auth Sync
   startAuthSync();
-
-  // 5. Load & Apply Rules
-  if (window.EditRules) {
-    // Apply local rules
-    await window.EditRules.applyAllRulesForCurrentPage();
-
-    // Fetch from Supabase if logged in
-    if (currentUser) {
-      const remoteRules = await window.EditRules.fetchRules(currentUser, getPageKey());
-      // Merge/Apply remote rules... (logic to be refined)
-      // For now, just logging
-      console.log(`Loaded ${remoteRules.length} remote rules`);
-    }
-  }
-
-  // 6. Restore Added Features
-  await restoreAddedFeatures();
 
   console.log("✅ WebEdit AI: Initialization complete");
 }

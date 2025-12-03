@@ -158,6 +158,15 @@
   white-space: nowrap;
 }
 
+.webedit-avatar-menu-meta {
+  padding: 12px 16px;
+  font-size: 12px;
+  color: #475569;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+  line-height: 1.4;
+}
+
 .webedit-avatar-menu-item {
   display: flex;
   align-items: center;
@@ -277,6 +286,64 @@
   background: #d7fbff;
   overflow: hidden;
   position: relative;
+}
+
+.webedit-auth-guard {
+  position: absolute;
+  top: 48px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(215, 251, 255, 0.95);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  z-index: 25;
+  pointer-events: auto;
+}
+
+.webedit-auth-guard.hidden {
+  display: none;
+}
+
+.webedit-auth-guard-card {
+  background: white;
+  padding: 24px;
+  border-radius: 16px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.15);
+  max-width: 260px;
+}
+
+.webedit-auth-guard-card h3 {
+  margin: 0 0 8px;
+  font-size: 18px;
+  color: #0f172a;
+}
+
+.webedit-auth-guard-card p {
+  margin: 0 0 16px;
+  color: #475569;
+  font-size: 14px;
+}
+
+.webedit-auth-guard-btn {
+  border: none;
+  border-radius: 999px;
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  background: linear-gradient(90deg, #3b82f6, #ec4899);
+  color: white;
+  transition: transform 0.2s, box-shadow 0.2s;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.35);
+}
+
+.webedit-auth-guard-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(59, 130, 246, 0.4);
 }
 
 /* Chat messages container */
