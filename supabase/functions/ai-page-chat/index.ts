@@ -10,6 +10,19 @@ type DenoLikeGlobal = typeof globalThis & {
   };
 };
 
+type PageContext = {
+  title: string;
+  url: string;
+  text: string;
+};
+
+const COHERE_CHAT_URL = "https://api.cohere.com/v1/chat";
+const COHERE_MODEL = "command-r-plus";
+const DEFAULT_AUTO_PROMPT = "Summarize the important points from this page for the user.";
+const INSTRUCTION_PROMPT =
+  "You are an assistant helping the user understand and work with the content of a web page. " +
+  "Cite the provided page text when relevant, but use general knowledge if needed.";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -19,6 +32,101 @@ const corsHeaders = {
 const getDenoEnvVar = (key: string): string | undefined => {
   const { Deno: deno } = globalThis as DenoLikeGlobal;
   return deno?.env?.get?.(key);
+};
+
+const sanitizeMessage = (value: unknown): string => {
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number") return String(value).trim();
+  return "";
+};
+
+const sanitizePageContext = (value: unknown): PageContext => {
+  const obj = (value && typeof value === "object" ? value : {}) as Record<string, unknown>;
+  const asString = (candidate: unknown) => (typeof candidate === "string" ? candidate.trim() : "");
+  return {
+    title: asString(obj.title),
+    url: asString(obj.url),
+    text: asString(obj.text),
+  };
+};
+
+const buildPrompt = (question: string, ctx: PageContext): string => {
+  const sections = [
+    ctx.title ? `Page title: ${ctx.title}` : "",
+    ctx.url ? `Page URL: ${ctx.url}` : "",
+    ctx.text ? `Page text:\n${ctx.text}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  return sections.length ? `${sections}\n\nUser question: ${question}` : question;
+};
+
+const extractCohereReply = (data: unknown): string => {
+  if (!data || typeof data !== "object") return "";
+  const payload = data as Record<string, unknown>;
+
+  if (typeof payload.text === "string" && payload.text.trim()) {
+    return payload.text.trim();
+  }
+
+  const message = payload.message as Record<string, unknown> | undefined;
+  const content = message?.content;
+
+  if (Array.isArray(content)) {
+    return content
+      .map((chunk) => (typeof chunk?.text === "string" ? chunk.text : ""))
+      .join("")
+      .trim();
+  }
+
+  if (typeof content === "string" && content.trim()) {
+    return content.trim();
+  }
+
+  return "";
+};
+
+const jsonResponse = (data: unknown, status: number): Response =>
+  new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json", ...corsHeaders },
+  });
+
+const callCohere = async (apiKey: string, message: string): Promise<string> => {
+  const response = await fetch(COHERE_CHAT_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: COHERE_MODEL,
+      message,
+      preamble: INSTRUCTION_PROMPT,
+      temperature: 0.3,
+    }),
+  });
+
+  const payload = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    const detail =
+      (payload && (payload as Record<string, unknown>).message) ??
+      (payload && (payload as Record<string, unknown>).error) ??
+      response.statusText;
+    throw new Error(
+      `Cohere API error: ${response.status} ${
+        typeof detail === "string" ? detail : JSON.stringify(detail ?? {})
+      }`,
+    );
+  }
+
+  const reply = extractCohereReply(payload);
+  if (!reply.length) {
+    throw new Error("Cohere returned an empty reply");
+  }
+  return reply;
 };
 
 const denoServe = (globalThis as DenoLikeGlobal).Deno?.serve;
@@ -33,100 +141,31 @@ if (typeof denoServe !== "function") {
       return new Response("ok", { headers: corsHeaders });
     }
 
+    if (req.method !== "POST") {
+      return jsonResponse({ ok: false, error: "Method not allowed" }, 405);
+    }
+
     try {
       const apiKey = getDenoEnvVar("COHERE_API_KEY");
       if (!apiKey) {
-        return json({ ok: false, error: "COHERE_API_KEY not configured" }, 500);
+        return jsonResponse({ ok: false, error: "COHERE_API_KEY not configured" }, 500);
       }
 
-      const body = await req.json().catch(() => ({}));
-      const raw =
-        (body?.message ??
-          body?.prompt ??
-          body?.input ??
-          "").toString();
+      const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+      const userMessage = sanitizeMessage(body.message ?? body.prompt ?? body.input);
+      const context = sanitizePageContext(body.pageContext);
 
-      const userMessage = raw.trim();
-      const pageContext = body?.pageContext ?? {};
+      const question = userMessage || DEFAULT_AUTO_PROMPT;
+      const prompt = buildPrompt(question, context);
 
-      console.log("ai-page-chat incoming body:", body);
-      console.log("ai-page-chat userMessage:", userMessage, "len=", userMessage.length);
+      console.log("[ai-page-chat] prompt length:", prompt.length);
 
-      if (!userMessage.length) {
-        return json(
-          {
-            ok: false,
-            error:
-              'message must be a non-empty string; got "' +
-              raw +
-              '"',
-          },
-          400,
-        );
-      }
-
-      const pageTitle = (pageContext.title ?? "").toString();
-      const pageUrl = (pageContext.url ?? "").toString();
-      const pageText = (pageContext.text ?? "").toString();
-
-       const fullPrompt = [
-         "You are an assistant helping the user understand and work with the content of a web page.",
-         pageTitle ? `Page title: ${pageTitle}` : "",
-         pageUrl ? `Page URL: ${pageUrl}` : "",
-         pageText ? `Page text:\n${pageText}` : "",
-         `User question: ${userMessage}`,
-       ]
-         .filter(Boolean)
-         .join("\n\n");
-
-       const cohereRes = await fetch("https://api.cohere.ai/v1/chat", {
-         method: "POST",
-         headers: {
-           Authorization: `Bearer ${apiKey}`,
-           "Content-Type": "application/json",
-         },
-         body: JSON.stringify({
-           model: "command-r-plus",
-           message: fullPrompt,
-           temperature: 0.3,
-         }),
-       });
-
-       const cohereJson = await cohereRes.json().catch(() => null);
-
-       if (!cohereRes.ok) {
-         const apiError =
-           (cohereJson && (cohereJson.message || cohereJson.error)) ||
-           cohereRes.statusText ||
-           "Unknown Cohere error";
-         console.error("Cohere API error:", apiError);
-         return json(
-           { ok: false, error: "Cohere API error: " + apiError },
-           500,
-         );
-       }
-
-       const replyText = (cohereJson?.text ?? "").toString().trim();
-       if (!replyText.length) {
-         return json(
-           { ok: false, error: "Cohere returned an empty reply" },
-           500,
-         );
-       }
-
-       return json({ ok: true, reply: replyText }, 200);
+      const reply = await callCohere(apiKey, prompt);
+      return jsonResponse({ ok: true, reply }, 200);
     } catch (err) {
-      console.error("ai-page-chat unexpected error:", err);
-      const msg =
-        err instanceof Error ? err.message : String(err) || "Unknown error";
-      return json({ ok: false, error: msg }, 500);
+      const message = err instanceof Error ? err.message : String(err) || "Unknown error";
+      console.error("ai-page-chat unexpected error:", message);
+      return jsonResponse({ ok: false, error: message }, 500);
     }
-  });
-}
-
-function json(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "Content-Type": "application/json", ...corsHeaders },
   });
 }
