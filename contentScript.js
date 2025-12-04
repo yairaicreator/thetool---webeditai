@@ -71,6 +71,19 @@ let referenceDismissTimeout = null;
 const WEBEDIT_ATTR = "data-webedit-id";
 const AUTH_ACTIVITY_KEY = "webeditAuthAudit";
 
+function cssEscape(value) {
+  if (!value) {
+    return '';
+  }
+  if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
+    return CSS.escape(value);
+  }
+  return String(value).replace(/[^a-zA-Z0-9_-]/g, (char) => {
+    const hex = char.codePointAt(0).toString(16).padStart(2, '0');
+    return `\\${hex} `;
+  });
+}
+
 // ============================================
 // DOM Helpers for Shadow DOM
 // ============================================
@@ -90,7 +103,7 @@ function queryPanel(selector) {
 // ============================================
 
 const PANEL_WIDTH_FALLBACK = 400;
-const PANEL_GAP_PX = 24;
+const PANEL_GAP_PX = 0;
 let pageShiftResizeHandler = null;
 
 function getPanelWidthForShift() {
@@ -1904,14 +1917,15 @@ async function handlePickClick(event) {
 function generateSelectorForElement(el) {
   // Try ID first (most specific)
   if (el.id) {
-    return `#${el.id}`;
+    return `#${cssEscape(el.id)}`;
   }
 
   // Try unique class combination
   if (el.className && typeof el.className === 'string') {
     const classes = el.className.trim().split(/\s+/).filter(c => c && !c.startsWith('webedit-'));
     if (classes.length > 0) {
-      const classSelector = el.tagName.toLowerCase() + '.' + classes.join('.');
+      const safeClasses = classes.map(cssEscape);
+      const classSelector = el.tagName.toLowerCase() + '.' + safeClasses.join('.');
       if (document.querySelectorAll(classSelector).length === 1) {
         return classSelector;
       }
@@ -1929,7 +1943,7 @@ function generateSelectorForElement(el) {
 
     // Add ID if available
     if (current.id) {
-      selector += `#${current.id}`;
+      selector += `#${cssEscape(current.id)}`;
       path.unshift(selector);
       break; // ID is unique, we can stop here
     }
@@ -1938,7 +1952,8 @@ function generateSelectorForElement(el) {
     if (current.className && typeof current.className === 'string') {
       const classes = current.className.trim().split(/\s+/).filter(c => c && !c.startsWith('webedit-'));
       if (classes.length > 0) {
-        selector += '.' + classes.slice(0, 2).join('.'); // Limit to first 2 classes
+        const safeClasses = classes.slice(0, 2).map(cssEscape);
+        selector += '.' + safeClasses.join('.'); // Limit to first 2 classes
       }
     }
 
@@ -1970,7 +1985,7 @@ function generateSelectorForElement(el) {
   // This ensures we always have a unique selector
   const uniqueId = `webedit-rule-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   el.setAttribute('data-webedit-rule-id', uniqueId);
-  return `[data-webedit-rule-id="${uniqueId}"]`;
+  return `[data-webedit-rule-id="${cssEscape(uniqueId)}"]`;
 }
 
 function generateDescriptionForElement(el) {

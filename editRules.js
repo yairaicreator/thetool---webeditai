@@ -6,6 +6,19 @@ console.log('📦 editRules.js: Starting to load...');
 // Track which authenticated user is allowed to read/write local rules
 let activeUserId = null;
 
+function cssEscape(value) {
+  if (!value) {
+    return '';
+  }
+  if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
+    return CSS.escape(value);
+  }
+  return String(value).replace(/[^a-zA-Z0-9_-]/g, (char) => {
+    const hex = char.codePointAt(0).toString(16).padStart(2, '0');
+    return `\\${hex} `;
+  });
+}
+
 function setActiveUserContext(user) {
   activeUserId = user?.id || null;
   if (!activeUserId) {
@@ -58,14 +71,15 @@ function generateRuleId() {
 function generateSelector(element) {
   // Try ID first (most specific)
   if (element.id) {
-    return `#${element.id}`;
+    return `#${cssEscape(element.id)}`;
   }
 
   // Try unique class combination
   if (element.className && typeof element.className === 'string') {
     const classes = element.className.trim().split(/\s+/).filter(c => c && !c.startsWith('webedit-'));
     if (classes.length > 0) {
-      const classSelector = element.tagName.toLowerCase() + '.' + classes.join('.');
+      const safeClasses = classes.map(cssEscape);
+      const classSelector = element.tagName.toLowerCase() + '.' + safeClasses.join('.');
       // Check if this selector is unique
       if (document.querySelectorAll(classSelector).length === 1) {
         return classSelector;
@@ -81,9 +95,17 @@ function generateSelector(element) {
     let selector = current.tagName.toLowerCase();
 
     if (current.id) {
-      selector += `#${current.id}`;
+      selector += `#${cssEscape(current.id)}`;
       path.unshift(selector);
       break;
+    }
+
+    if (current.className && typeof current.className === 'string') {
+      const classes = current.className.trim().split(/\s+/).filter(c => c && !c.startsWith('webedit-'));
+      if (classes.length > 0) {
+        const safeClasses = classes.slice(0, 2).map(cssEscape);
+        selector += '.' + safeClasses.join('.');
+      }
     }
 
     // Add nth-child if needed for uniqueness
