@@ -69,51 +69,52 @@ if (typeof denoServe !== "function") {
       const pageUrl = (pageContext.url ?? "").toString();
       const pageText = (pageContext.text ?? "").toString();
 
-      const fullPrompt = [
-        "You are an assistant helping the user understand and work with the content of a web page.",
-        pageTitle ? `Page title: ${pageTitle}` : "",
-        pageUrl ? `Page URL: ${pageUrl}` : "",
-        pageText ? `Page text:\n${pageText}` : "",
-        `User question: ${userMessage}`,
-      ]
-        .filter(Boolean)
-        .join("\n\n");
+       const fullPrompt = [
+         "You are an assistant helping the user understand and work with the content of a web page.",
+         pageTitle ? `Page title: ${pageTitle}` : "",
+         pageUrl ? `Page URL: ${pageUrl}` : "",
+         pageText ? `Page text:\n${pageText}` : "",
+         `User question: ${userMessage}`,
+       ]
+         .filter(Boolean)
+         .join("\n\n");
 
-      const cohereRes = await fetch("https://api.cohere.ai/v1/chat", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "command-r-plus",
-          message: fullPrompt,
-        }),
-      });
+       const cohereRes = await fetch("https://api.cohere.ai/v1/chat", {
+         method: "POST",
+         headers: {
+           Authorization: `Bearer ${apiKey}`,
+           "Content-Type": "application/json",
+         },
+         body: JSON.stringify({
+           model: "command-r-plus",
+           message: fullPrompt,
+           temperature: 0.3,
+         }),
+       });
 
-      const cohereJson = await cohereRes.json().catch(() => null);
+       const cohereJson = await cohereRes.json().catch(() => null);
 
-      if (!cohereRes.ok) {
-        const apiError =
-          (cohereJson && (cohereJson.message || cohereJson.error)) ||
-          cohereRes.statusText ||
-          "Unknown Cohere error";
-        console.error("Cohere API error:", apiError);
-        return json(
-          { ok: false, error: "Cohere API error: " + apiError },
-          500,
-        );
-      }
+       if (!cohereRes.ok) {
+         const apiError =
+           (cohereJson && (cohereJson.message || cohereJson.error)) ||
+           cohereRes.statusText ||
+           "Unknown Cohere error";
+         console.error("Cohere API error:", apiError);
+         return json(
+           { ok: false, error: "Cohere API error: " + apiError },
+           500,
+         );
+       }
 
-      const replyText = (cohereJson?.text ?? "").toString().trim();
-      if (!replyText.length) {
-        return json(
-          { ok: false, error: "Cohere returned an empty reply" },
-          500,
-        );
-      }
+       const replyText = (cohereJson?.text ?? "").toString().trim();
+       if (!replyText.length) {
+         return json(
+           { ok: false, error: "Cohere returned an empty reply" },
+           500,
+         );
+       }
 
-      return json({ ok: true, reply: replyText }, 200);
+       return json({ ok: true, reply: replyText }, 200);
     } catch (err) {
       console.error("ai-page-chat unexpected error:", err);
       const msg =
