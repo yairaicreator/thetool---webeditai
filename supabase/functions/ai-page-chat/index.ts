@@ -48,31 +48,38 @@ serve(async (req) => {
       );
     }
 
-    const body = await req.json();
-    const { message, pageContext } = body ?? {};
+    const { message, pageContext } = await req.json();
 
-    if (!message || typeof message !== "string") {
-      return new Response(JSON.stringify({ ok: false, error: "Missing or invalid 'message'" }), {
-        status: 400,
-        headers: {
-          "Content-Type": "application/json",
-          ...corsHeaders,
+    const normalizedMessage =
+      typeof message === "string" ? message.trim() :
+        typeof message === "number" ? String(message).trim() :
+          "";
+
+    if (!normalizedMessage) {
+      return new Response(
+        JSON.stringify({ ok: false, error: "message must be a non-empty string" }),
+        {
+          status: 400,
+          headers: {
+            "Content-Type": "application/json",
+            ...corsHeaders,
+          },
         },
-      });
+      );
     }
 
-    let combinedUserMessage = message.trim();
+    const safeContext = pageContext && typeof pageContext === "object" ? pageContext : {};
+    const pageText = typeof safeContext.text === "string" ? safeContext.text : "";
+    const pageTitle = typeof safeContext.title === "string" ? safeContext.title : "";
+    const pageUrl = typeof safeContext.url === "string" ? safeContext.url : "";
 
-    if (pageContext && typeof pageContext === "object") {
-      const contextPieces: string[] = [];
-      if (pageContext.url) contextPieces.push(`URL: ${pageContext.url}`);
-      if (pageContext.title) contextPieces.push(`Title: ${pageContext.title}`);
-      if (pageContext.text) contextPieces.push(`Page text:\n${pageContext.text}`);
-
-      if (contextPieces.length > 0) {
-        combinedUserMessage = `${contextPieces.join("\n")}\n\nUser question: ${combinedUserMessage}`;
-      }
-    }
+    const fullPrompt = [
+      "You are an assistant helping the user understand the content of a web page.",
+      pageTitle ? `Page title: ${pageTitle}` : "",
+      pageUrl ? `Page URL: ${pageUrl}` : "",
+      pageText ? `Page text: ${pageText}` : "",
+      `User question: ${normalizedMessage}`,
+    ].filter(Boolean).join("\n\n");
 
     const cohereResponse = await fetch(COHERE_CHAT_URL, {
       method: "POST",
@@ -85,7 +92,7 @@ serve(async (req) => {
         temperature: 0.3,
         messages: [
           { role: "system", content: instructionPrompt },
-          { role: "user", content: combinedUserMessage },
+          { role: "user", content: fullPrompt || normalizedMessage },
         ],
       }),
     });
