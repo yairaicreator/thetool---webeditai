@@ -55,6 +55,15 @@ let currentEditTarget = {
   pageKey: null
 };
 
+function resetCurrentEditTarget() {
+  currentEditTarget = {
+    element: null,
+    selector: null,
+    description: null,
+    pageKey: null
+  };
+}
+
 // Chat messages
 let chatMessages = [];
 let referenceDismissTimeout = null;
@@ -81,6 +90,7 @@ function queryPanel(selector) {
 // ============================================
 
 const PANEL_WIDTH_FALLBACK = 400;
+const PANEL_GAP_PX = 24;
 let pageShiftResizeHandler = null;
 
 function getPanelWidthForShift() {
@@ -96,7 +106,7 @@ function applyPageShiftWidth() {
   if (!document.documentElement || !document.body) {
     return;
   }
-  const width = getPanelWidthForShift();
+  const width = getPanelWidthForShift() + PANEL_GAP_PX;
   const widthValue = `${width}px`;
   document.documentElement.style.setProperty('--webedit-panel-width', widthValue);
   document.body.style.setProperty('--webedit-panel-width', widthValue);
@@ -439,12 +449,7 @@ async function enforceUnauthorizedExperience() {
   chatMessages = [];
   renderChatMessages();
   currentSessionId = null;
-  currentEditTarget = {
-    element: null,
-    selector: null,
-    description: null,
-    pageKey: null
-  };
+  resetCurrentEditTarget();
   updateChatInputPrompt("Sign in to start editing");
   setActiveToolButton("remove");
   updateAuthGuardUI();
@@ -1029,10 +1034,10 @@ function ensureChatPanelExists() {
 }
 
 function setActiveToolButton(tool) {
-  currentTool = tool;
+  currentTool = tool || null;
   const toolButtons = queryPanel(".webedit-tool-btn");
   toolButtons.forEach((btn) => {
-    if (btn.dataset.tool === tool) {
+    if (tool && btn.dataset.tool === tool) {
       btn.classList.add("active");
     } else {
       btn.classList.remove("active");
@@ -1040,6 +1045,40 @@ function setActiveToolButton(tool) {
   });
   schedulePanelStateSave();
 }
+
+function exitActiveFeatures(options = {}) {
+  const keepToolSelection = options.keepToolSelection || false;
+  console.log("🚪 Exiting all active WebEdit features");
+
+  // Ensure placeholder resets if we were mid Add Feature flow
+  isAddFeatureMode = false;
+  stopPickMode();
+  stopRemoveMode();
+  clearHover();
+  clearSelected();
+  resetAddFeaturePromptState();
+  resetCurrentEditTarget();
+
+  const customizePanel = getPanelElement("webedit-customize-panel");
+  if (customizePanel) {
+    customizePanel.classList.remove("visible");
+  }
+
+  const toolsMenu = getPanelElement("webedit-tools-menu");
+  if (toolsMenu) {
+    toolsMenu.classList.remove("visible");
+  }
+
+  updateChatInputPrompt("What do you want to change?");
+
+  if (!keepToolSelection) {
+    setActiveToolButton(null);
+  }
+}
+
+window.WebEditControls = window.WebEditControls || {};
+window.WebEditControls.exitActiveFeatures = exitActiveFeatures;
+window.exitActiveFeatures = exitActiveFeatures;
 
 /**
  * Creates and injects the AI chat panel into the page
@@ -1060,9 +1099,22 @@ function createPanel() {
   panelHost.style.width = "0";
   panelHost.style.height = "0";
   panelHost.style.zIndex = "2147483647";
+  panelHost.style.display = "none"; // Start hidden to prevent FOUC (Flash of Unstyled Content)
 
   // Create Shadow Root
   panelShadow = panelHost.attachShadow({ mode: "open" });
+
+  // Inject prevent-FOUC styles synchronously
+  // This ensures the panel is hidden immediately before the external CSS file loads
+  const foucStyle = document.createElement("style");
+  foucStyle.textContent = `
+    #webedit-chat-panel {
+      display: none; 
+      opacity: 0;
+      transform: translateX(100%);
+    }
+  `;
+  panelShadow.appendChild(foucStyle);
 
   // Inject Stylesheet into Shadow Root
   const linkEl = document.createElement("link");
@@ -1211,6 +1263,9 @@ async function togglePanel(show, options = {}) {
 
   if (show) {
     chatPanel.classList.remove("hidden");
+    if (panelHost) {
+      panelHost.style.display = "block";
+    }
     document.documentElement.classList.add("webedit-panel-open");
     document.body.classList.add("webedit-panel-open");
     applyPageShiftWidth();
@@ -1226,6 +1281,9 @@ async function togglePanel(show, options = {}) {
     document.body.classList.remove("webedit-panel-open");
     stopPageShiftTracking();
     clearPageShiftWidth();
+    if (panelHost) {
+      panelHost.style.display = "none";
+    }
   }
   if (!skipSave) {
     schedulePanelStateSave();
@@ -1239,7 +1297,10 @@ async function togglePanel(show, options = {}) {
 function attachPanelEventListeners() {
   // Close button
   const closeBtn = getPanelElement("webedit-close-btn");
-  closeBtn.addEventListener("click", () => togglePanel(false));
+  closeBtn.addEventListener("click", () => {
+    exitActiveFeatures();
+    togglePanel(false);
+  });
 
   // History Sidebar Toggle
   const headerHamburger = getPanelElement("webedit-header-hamburger");
@@ -1327,6 +1388,8 @@ function attachPanelEventListeners() {
         return;
       }
 
+      exitActiveFeatures({ keepToolSelection: true });
+
       // Update active state
       setActiveToolButton(tool);
       toolsMenu.classList.remove("visible"); // Close menu after selection
@@ -1397,11 +1460,7 @@ function attachPanelEventListeners() {
   const modeCloseBtn = getPanelElement("webedit-mode-close-btn");
   if (modeCloseBtn) {
     modeCloseBtn.addEventListener("click", () => {
-      if (activeInteractionMode === "pick") {
-        stopPickMode();
-      } else if (activeInteractionMode === "remove") {
-        stopRemoveMode();
-      }
+      exitActiveFeatures();
     });
   }
 
@@ -1462,7 +1521,7 @@ function attachPanelEventListeners() {
   const fontSizeInput = getPanelElement("webedit-font-size");
 
   customizeCloseBtn.addEventListener("click", () => {
-    customizePanel.classList.remove("visible");
+    exitActiveFeatures();
   });
 
   applyBtn.addEventListener("click", async () => {
@@ -2783,12 +2842,7 @@ function finalizeAddFeatureFlow() {
   isAddFeatureMode = false;
   resetAddFeaturePromptState();
   clearSelected();
-  currentEditTarget = {
-    element: null,
-    selector: null,
-    description: null,
-    pageKey: null
-  };
+  resetCurrentEditTarget();
   updateChatInputPrompt("What do you want to change?");
 }
 

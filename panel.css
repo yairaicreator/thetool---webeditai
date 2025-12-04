@@ -2,15 +2,15 @@
 
 #webedit-chat-panel {
   position: fixed;
-  top: 0;
-  right: 0;
+  top: 12px;
+  right: 16px;
   width: 400px;
-  height: 100vh;
+  height: calc(100vh - 24px);
   z-index: 2147483647;
   background: #d7fbff;
-  border-left: 3px solid #0f172a;
-  border-radius: 24px 0 0 24px;
-  box-shadow: -8px 0 32px rgba(15, 23, 42, 0.2);
+  border-radius: 24px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.18);
   display: flex;
   flex-direction: column;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -64,17 +64,19 @@
 .webedit-avatar-container {
   position: relative;
   padding: 4px !important;
-  background: rgba(34, 197, 94, 0.3) !important;
+  background: rgba(255, 255, 255, 0.18) !important;
+  border: 1px solid rgba(255, 255, 255, 0.35);
   cursor: pointer;
   transition: all 0.2s;
   display: flex;
   align-items: center;
   justify-content: center;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.25);
 }
 
 .webedit-avatar-container:hover {
-  background: rgba(34, 197, 94, 0.45) !important;
-  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.2);
+  background: rgba(255, 255, 255, 0.28) !important;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.28);
 }
 
 /* Avatar circle */
@@ -384,25 +386,27 @@
 }
 
 .webedit-chat-message-user {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
+  background: #0f172a;
+  color: #f8fafc;
   align-self: flex-end;
   margin-left: auto;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.35);
 }
 
 .webedit-chat-message-system {
-  background: #f3f4f6;
-  color: #374151;
-  align-self: flex-start;
-  border-left: 3px solid #6366f1;
-}
-
-.webedit-chat-message-assistant {
   background: #ffffff;
   color: #0f172a;
   align-self: flex-start;
+  border-left: 3px solid #5b8def;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+}
+
+.webedit-chat-message-assistant {
+  background: #f5f8ff;
+  color: #0f172a;
+  align-self: flex-start;
   border-left: 3px solid #14b8a6;
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
 }
 
 /* References container - holds all reference messages at bottom */
@@ -415,14 +419,14 @@
   gap: 12px;
 }
 
-/* Reference message - slightly whiter than chat background (#d7fbff) */
+/* Reference message - keep high contrast */
 .webedit-chat-message-reference {
-  background: #f0fdff;
-  color: #1e293b;
+  background: #ffffff;
+  color: #0f172a;
   align-self: flex-start;
-  border-left: 4px solid #06b6d4;
+  border-left: 4px solid #0ea5e9;
   padding: 12px 16px;
-  box-shadow: 0 2px 8px rgba(6, 182, 212, 0.15);
+  box-shadow: 0 6px 16px rgba(6, 182, 212, 0.12);
   max-width: 90%;
 }
 
@@ -436,7 +440,7 @@
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: #0891b2;
+  color: #0ea5e9;
   margin-bottom: 6px;
   display: block;
 }
@@ -445,7 +449,7 @@
   font-size: 13px;
   font-weight: 500;
   color: #0f172a;
-  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+  font-family: inherit;
   word-break: break-word;
 }
 
@@ -754,24 +758,25 @@
 
 .webedit-chat-input {
   width: 100%;
-  border: none;
+  border: 1px solid #cbd5ff;
   padding: 14px 20px;
   border-radius: 999px;
-  background: linear-gradient(90deg, #ff6b8a, #a78bfa);
-  color: white;
+  background: #ffffff;
+  color: #0f172a;
   font-size: 13px;
   outline: none;
   font-family: inherit;
-  box-shadow: 0 4px 16px rgba(236, 72, 153, 0.3);
-  transition: box-shadow 0.2s;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+  transition: box-shadow 0.2s, border-color 0.2s;
 }
 
 .webedit-chat-input:focus {
-  box-shadow: 0 6px 20px rgba(236, 72, 153, 0.4);
+  border-color: #5b8def;
+  box-shadow: 0 12px 32px rgba(91, 141, 239, 0.25);
 }
 
 .webedit-chat-input::placeholder {
-  color: rgba(255, 255, 255, 0.85);
+  color: #94a3b8;
   font-weight: 400;
 }
 
@@ -785,6 +790,8 @@
 @media (max-width: 768px) {
   #webedit-chat-panel {
     width: 320px;
+    right: 12px;
+    height: calc(100vh - 24px);
   }
 }
 
@@ -793,6 +800,11 @@
     width: 100%;
     border-left: none;
     border-radius: 0;
+    top: 0;
+    right: 0;
+    height: 100vh;
+    border: none;
+    box-shadow: none;
   }
 
   /* On very small screens, overlay instead of push to preserve usability */
