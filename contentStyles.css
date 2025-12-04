@@ -35,3 +35,21 @@
   border-left: 4px solid rgba(255, 255, 255, 0.3) !important;
 }
 
+/* Shift the underlying page when the WebEdit panel is open */
+html.webedit-panel-open,
+body.webedit-panel-open {
+  overflow-x: hidden !important;
+}
+
+body.webedit-panel-open {
+  margin-right: var(--webedit-panel-width, 400px) !important;
+  transition: margin-right 0.3s ease-in-out !important;
+  box-sizing: border-box !important;
+}
+
+@media (max-width: 480px) {
+  body.webedit-panel-open {
+    margin-right: 0 !important;
+  }
+}
+

@@ -77,6 +77,61 @@ function queryPanel(selector) {
 }
 
 // ============================================
+// Page Shift Helpers
+// ============================================
+
+const PANEL_WIDTH_FALLBACK = 400;
+let pageShiftResizeHandler = null;
+
+function getPanelWidthForShift() {
+  if (!chatPanel) {
+    return PANEL_WIDTH_FALLBACK;
+  }
+  const rect = chatPanel.getBoundingClientRect();
+  const measured = Math.round(rect.width || chatPanel.offsetWidth || PANEL_WIDTH_FALLBACK);
+  return measured > 0 ? measured : PANEL_WIDTH_FALLBACK;
+}
+
+function applyPageShiftWidth() {
+  if (!document.documentElement || !document.body) {
+    return;
+  }
+  const width = getPanelWidthForShift();
+  const widthValue = `${width}px`;
+  document.documentElement.style.setProperty('--webedit-panel-width', widthValue);
+  document.body.style.setProperty('--webedit-panel-width', widthValue);
+}
+
+function clearPageShiftWidth() {
+  if (!document.documentElement || !document.body) {
+    return;
+  }
+  document.documentElement.style.removeProperty('--webedit-panel-width');
+  document.body.style.removeProperty('--webedit-panel-width');
+}
+
+function startPageShiftTracking() {
+  if (pageShiftResizeHandler) {
+    return;
+  }
+  pageShiftResizeHandler = () => {
+    if (!isPanelOpen) {
+      return;
+    }
+    applyPageShiftWidth();
+  };
+  window.addEventListener('resize', pageShiftResizeHandler);
+}
+
+function stopPageShiftTracking() {
+  if (!pageShiftResizeHandler) {
+    return;
+  }
+  window.removeEventListener('resize', pageShiftResizeHandler);
+  pageShiftResizeHandler = null;
+}
+
+// ============================================
 // Supabase Authentication Integration
 // ============================================
 
@@ -1158,6 +1213,8 @@ async function togglePanel(show, options = {}) {
     chatPanel.classList.remove("hidden");
     document.documentElement.classList.add("webedit-panel-open");
     document.body.classList.add("webedit-panel-open");
+    applyPageShiftWidth();
+    startPageShiftTracking();
 
     // Check auth status when opening the panel
     console.log("🔍 Checking auth status...");
@@ -1167,6 +1224,8 @@ async function togglePanel(show, options = {}) {
     chatPanel.classList.add("hidden");
     document.documentElement.classList.remove("webedit-panel-open");
     document.body.classList.remove("webedit-panel-open");
+    stopPageShiftTracking();
+    clearPageShiftWidth();
   }
   if (!skipSave) {
     schedulePanelStateSave();

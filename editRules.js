@@ -801,6 +801,12 @@ const SupabaseSyncManager = {
           return []; // Return empty array but don't log as error
         }
 
+        // Handle 401 (JWT expired) - log info but don't treat as error
+        if (response.status === 401) {
+          console.log('ℹ️ Supabase auth expired - fetch skipped');
+          return []; // Return empty array
+        }
+
         // Handle other errors
         console.error('❌ Supabase fetch error:', response.status, errorData.message || errorText);
         return [];

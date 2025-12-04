@@ -767,37 +767,16 @@
   font-weight: 400;
 }
 
-/* Adjust page content when panel is open */
-body.webedit-panel-open {
-  margin-right: 400px !important;
-  transition: margin-right 0.3s ease-in-out !important;
-  box-sizing: border-box !important;
-}
-
-/* Ensure html and body can accommodate the shift */
-html.webedit-panel-open,
-body.webedit-panel-open {
-  overflow-x: hidden !important;
-}
-
 /* Responsive adjustments */
 @media (max-width: 1200px) {
   #webedit-chat-panel {
     width: 360px;
-  }
-
-  body.webedit-panel-open {
-    margin-right: 360px !important;
   }
 }
 
 @media (max-width: 768px) {
   #webedit-chat-panel {
     width: 320px;
-  }
-
-  body.webedit-panel-open {
-    margin-right: 320px !important;
   }
 }
 
@@ -806,10 +785,6 @@ body.webedit-panel-open {
     width: 100%;
     border-left: none;
     border-radius: 0;
-  }
-
-  body.webedit-panel-open {
-    margin-right: 0 !important;
   }
 
   /* On very small screens, overlay instead of push to preserve usability */
