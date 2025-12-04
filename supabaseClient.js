@@ -22,9 +22,66 @@ const HISTORY_URL = "https://www.webeditai.com/#/history";
  * Simple Supabase client implementation
  * Uses chrome.storage.local for session persistence and REST API calls.
  */
+async function callPageChat(message, pageContext = null) {
+  if (!message || typeof message !== 'string') {
+    return { ok: false, error: 'Message is required' };
+  }
+
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || SUPABASE_URL.includes("YOUR_SUPABASE_URL")) {
+    return { ok: false, error: 'Supabase not configured' };
+  }
+
+  const payload = {
+    message: message.trim()
+  };
+
+  if (pageContext && typeof pageContext === 'object') {
+    payload.pageContext = pageContext;
+  }
+
+  try {
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/ai-page-chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const text = await response.text();
+    let json = null;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch (parseError) {
+      console.error('[SupabaseClient] Failed to parse ai-page-chat response:', parseError);
+    }
+
+    if (!json) {
+      return { ok: false, error: 'Invalid response from ai-page-chat' };
+    }
+
+    if (!response.ok && typeof json.error === 'string') {
+      return { ok: false, error: json.error };
+    }
+
+    if (!response.ok) {
+      return { ok: false, error: `ai-page-chat failed with status ${response.status}` };
+    }
+
+    return json;
+  } catch (error) {
+    console.error('[SupabaseClient] ai-page-chat request failed:', error);
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, error: message };
+  }
+}
+
 const SupabaseClient = {
   url: SUPABASE_URL,
   anonKey: SUPABASE_ANON_KEY,
+  callPageChat,
 
   /**
    * Get the current session from chrome.storage.local
@@ -94,4 +151,5 @@ const SupabaseClient = {
 // Export for use in other extension files
 if (typeof window !== 'undefined') {
   window.SupabaseClient = SupabaseClient;
+  window.callPageChat = callPageChat;
 }

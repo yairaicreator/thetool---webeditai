@@ -3,7 +3,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
-const COHERE_API_KEY = Deno.env.get("COHERE_API_KEY");
+const COHERE_API_KEY = Deno.env.get("CXFukYursZkdvnGHryR6opijOuJNACUOrapf72nk");
 const COHERE_CHAT_URL = "https://api.cohere.com/v1/chat";
 const COHERE_MODEL = "command-r-plus";
 
