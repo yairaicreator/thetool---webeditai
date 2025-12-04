@@ -1242,13 +1242,14 @@ function createPanel() {
 
     <!-- Chat Input Bar (at bottom) -->
     <div class="webedit-input-container">
-      <input 
-        type="text" 
+      <textarea 
         class="webedit-chat-input" 
         id="webedit-chat-input" 
         placeholder="What to do you want to change?"
+        rows="2"
         autocomplete="off"
-      />
+        spellcheck="true"
+      ></textarea>
     </div>
 
   `;

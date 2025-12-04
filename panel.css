@@ -772,6 +772,11 @@
   font-family: inherit;
   box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
   transition: box-shadow 0.2s, border-color 0.2s;
+  resize: none;
+  line-height: 1.4;
+  min-height: 48px;
+  max-height: 180px;
+  overflow-y: auto;
 }
 
 .webedit-chat-input:focus {
