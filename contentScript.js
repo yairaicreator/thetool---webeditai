@@ -2773,12 +2773,14 @@ async function handleGeneralChatMessage(userText) {
   try {
     const result = await callPageChatFn(userText, pageContext);
 
-    if (result?.ok && result.reply) {
+    if (result?.ok && typeof result.reply === "string" && result.reply.trim()) {
       thinkingMessage.content = result.reply.trim();
-    } else {
-      const errorMessage = result?.error || "Unknown error";
+    } else if (result?.error) {
+      const errorMessage = result.error;
       console.error("[WebEdit Chat] AI reply error:", errorMessage);
       thinkingMessage.content = `There was a problem talking to the AI: ${errorMessage}`;
+    } else {
+      thinkingMessage.content = "AI chat is not available right now.";
     }
   } catch (error) {
     console.error("[WebEdit Chat] Failed to call AI chat:", error);
