@@ -1,158 +1,145 @@
-// Supabase Edge Function: ai-page-chat
-// Provides a general-purpose Cohere-powered chat endpoint for WebEdit AI
+// supabase/functions/ai-page-chat/index.ts
 
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 
-const COHERE_CHAT_URL = "https://api.cohere.com/v1/chat";
-const COHERE_MODEL = "command-r-plus";
-
-const buildCorsHeaders = () => ({
+const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, apikey",
-});
+  "Access-Control-Allow-Headers": "authorization, apikey, content-type",
+};
 
-const instructionPrompt =
-  "You are an assistant helping the user understand and work with the content of a web page. Use the page text when relevant, but if something is not in the page, answer from general knowledge.";
-
-serve(async (req) => {
-  const corsHeaders = buildCorsHeaders();
-
+serve(async (req: Request): Promise<Response> => {
+  // CORS preflight
   if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
+    return new Response("ok", { headers: corsHeaders });
   }
 
+  // Only allow POST requests
   if (req.method !== "POST") {
-    return new Response(JSON.stringify({ ok: false, error: "Method not allowed" }), {
-      status: 405,
-      headers: {
-        "Content-Type": "application/json",
-        ...corsHeaders,
-      },
-    });
+    return json(
+      { ok: false, error: "Method not allowed" },
+      405,
+    );
   }
 
   try {
+    // 1. Read Cohere API key
     const apiKey = Deno.env.get("COHERE_API_KEY");
     if (!apiKey) {
       console.error("COHERE_API_KEY not configured");
-      return new Response(
-        JSON.stringify({ ok: false, error: "COHERE_API_KEY not configured" }),
-        {
-          status: 500,
-          headers: {
-            "Content-Type": "application/json",
-            ...corsHeaders,
-          },
-        },
+      return json(
+        { ok: false, error: "COHERE_API_KEY not configured" },
+        500,
       );
     }
 
-    const { message, pageContext } = await req.json();
+    // 2. Parse request body: { message, pageContext }
+    const body = await req.json().catch(() => ({}));
+    const message = body?.message;
+    const pageContext = body?.pageContext ?? {};
 
-    const normalizedMessage =
+    const userMessage = 
       typeof message === "string" ? message.trim() :
-        typeof message === "number" ? String(message).trim() :
-          "";
+      typeof message === "number" ? String(message).trim() :
+      "";
 
-    if (!normalizedMessage) {
-      return new Response(
-        JSON.stringify({ ok: false, error: "message must be a non-empty string" }),
-        {
-          status: 400,
-          headers: {
-            "Content-Type": "application/json",
-            ...corsHeaders,
-          },
-        },
+    if (!userMessage.length) {
+      return json(
+        { ok: false, error: "message must be a non-empty string" },
+        400,
       );
     }
 
-    const safeContext = pageContext && typeof pageContext === "object" ? pageContext : {};
-    const pageText = typeof safeContext.text === "string" ? safeContext.text : "";
-    const pageTitle = typeof safeContext.title === "string" ? safeContext.title : "";
-    const pageUrl = typeof safeContext.url === "string" ? safeContext.url : "";
+    // 3. Build prompt using message + pageContext
+    const pageTitle = (pageContext.title ?? "").toString();
+    const pageUrl = (pageContext.url ?? "").toString();
+    const pageText = (pageContext.text ?? "").toString();
 
-    const contextParts: string[] = [];
-    if (pageTitle) contextParts.push(`Page title: ${pageTitle}`);
-    if (pageUrl) contextParts.push(`Page URL: ${pageUrl}`);
-    if (pageText) contextParts.push(`Page text: ${pageText}`);
-    
-    const fullPrompt = contextParts.length > 0
-      ? `${contextParts.join("\n\n")}\n\nUser question: ${normalizedMessage}`
-      : normalizedMessage;
+    const fullPrompt = [
+      "You are an assistant helping the user understand and work with the content of a web page.",
+      pageTitle ? `Page title: ${pageTitle}` : "",
+      pageUrl ? `Page URL: ${pageUrl}` : "",
+      pageText ? `Page text:\n${pageText}` : "",
+      `User question: ${userMessage}`,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
 
-    console.log(`[Cohere] Sending message length: ${fullPrompt.length} chars`);
-
-    const cohereResponse = await fetch(COHERE_CHAT_URL, {
+    // 4. Call Cohere Chat API (v1)
+    const cohereRes = await fetch("https://api.cohere.com/v1/chat", {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
         "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: COHERE_MODEL,
+        model: "command-r-plus", // you can change model later if you want
         message: fullPrompt,
-        preamble: instructionPrompt,
         temperature: 0.3,
       }),
     });
 
-    if (!cohereResponse.ok) {
-      const errorText = await cohereResponse.text();
-      return new Response(
-        JSON.stringify({ ok: false, error: `Cohere API error: ${cohereResponse.status} ${errorText}` }),
-        {
-          status: 502,
-          headers: {
-            "Content-Type": "application/json",
-            ...corsHeaders,
-          },
-        },
+    const cohereJson = await cohereRes.json().catch(() => null);
+
+    if (!cohereRes.ok) {
+      const rawError =
+        (cohereJson && (cohereJson.message || cohereJson.error)) ??
+        cohereRes.statusText ??
+        "Unknown Cohere error";
+
+      const apiError =
+        typeof rawError === "string"
+          ? rawError
+          : rawError && typeof rawError === "object"
+            ? JSON.stringify(rawError)
+            : String(rawError ?? "Unknown Cohere error");
+      console.error("Cohere API error:", apiError);
+      return json(
+        { ok: false, error: `Cohere API error: ${apiError}` },
+        502,
       );
     }
 
-    const cohereData = await cohereResponse.json();
-
-    let reply = "";
-    if (typeof cohereData.text === "string" && cohereData.text.trim()) {
-      reply = cohereData.text.trim();
-    } else if (cohereData.message?.content && Array.isArray(cohereData.message.content)) {
-      reply = cohereData.message.content
-        .map((chunk: { text?: string }) => chunk?.text ?? "")
+    // Extract reply text from Cohere response
+    // Response shape: { text: "..." } OR { message: { content: [ { type: "text", text: "..." } ] } }
+    let replyText = "";
+    
+    // Try top-level text field first (older API format)
+    if (typeof cohereJson?.text === "string" && cohereJson.text.trim()) {
+      replyText = cohereJson.text.trim();
+    } 
+    // Try nested message.content structure (newer API format)
+    else if (cohereJson?.message?.content && Array.isArray(cohereJson.message.content)) {
+      replyText = cohereJson.message.content
+        .filter((chunk: any) => chunk?.type === "text" && chunk?.text)
+        .map((chunk: any) => chunk.text)
         .join("")
         .trim();
-    } else if (typeof cohereData.message?.content === "string") {
-      reply = cohereData.message.content.trim();
+    }
+    
+    if (!replyText.length) {
+      console.error("Cohere response structure:", JSON.stringify(cohereJson));
+      return json(
+        { ok: false, error: "Cohere returned an empty reply" },
+        500,
+      );
     }
 
-    if (!reply) {
-      return new Response(JSON.stringify({ ok: false, error: "Cohere response missing text" }), {
-        status: 500,
-        headers: {
-          "Content-Type": "application/json",
-          ...corsHeaders,
-        },
-      });
-    }
-
-    return new Response(JSON.stringify({ ok: true, reply }), {
-      status: 200,
-      headers: {
-        "Content-Type": "application/json",
-        ...corsHeaders,
-      },
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return new Response(JSON.stringify({ ok: false, error: message }), {
-      status: 500,
-      headers: {
-        "Content-Type": "application/json",
-        ...corsHeaders,
-      },
-    });
+    return json({ ok: true, reply: replyText }, 200);
+  } catch (err) {
+    console.error("ai-page-chat unexpected error:", err);
+    const msg =
+      err instanceof Error ? err.message : (String(err) || "Unknown error");
+    return json({ ok: false, error: msg }, 500);
   }
 });
 
-
+function json(data: unknown, status = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      "Content-Type": "application/json",
+      ...corsHeaders,
+    },
+  });
+}
