@@ -433,7 +433,8 @@ async function handleAuthStateChange(nextUser, options = {}) {
 }
 
 async function loadAuthorizedExperience() {
-  if (!currentUser?.id || hasRestoredStateForUser) {
+  const userSnapshot = currentUser;
+  if (!userSnapshot?.id || hasRestoredStateForUser) {
     return;
   }
 
@@ -443,8 +444,9 @@ async function loadAuthorizedExperience() {
   if (window.EditRules) {
     try {
       await window.EditRules.applyAllRulesForCurrentPage(true);
-      const remoteRules = await window.EditRules.fetchRules(currentUser, getPageKey());
-      console.log(`🔐 Loaded ${remoteRules.length} remote rule(s) for ${currentUser.email}`);
+      const remoteRules = await window.EditRules.fetchRules(userSnapshot, getPageKey());
+      const email = userSnapshot.email || userSnapshot.id || "unknown user";
+      console.log(`🔐 Loaded ${remoteRules.length} remote rule(s) for ${email}`);
     } catch (error) {
       console.error("❌ Failed to apply persisted rules:", error);
     }
