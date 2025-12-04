@@ -3,7 +3,6 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
-const COHERE_API_KEY = Deno.env.get("CXFukYursZkdvnGHryR6opijOuJNACUOrapf72nk");
 const COHERE_CHAT_URL = "https://api.cohere.com/v1/chat";
 const COHERE_MODEL = "command-r-plus";
 
@@ -33,20 +32,22 @@ serve(async (req) => {
     });
   }
 
-  if (!COHERE_API_KEY) {
-    return new Response(
-      JSON.stringify({ ok: false, error: "COHERE_API_KEY not configured" }),
-      {
-        status: 500,
-        headers: {
-          "Content-Type": "application/json",
-          ...corsHeaders,
-        },
-      },
-    );
-  }
-
   try {
+    const apiKey = Deno.env.get("COHERE_API_KEY");
+    if (!apiKey) {
+      console.error("COHERE_API_KEY not configured");
+      return new Response(
+        JSON.stringify({ ok: false, error: "COHERE_API_KEY not configured" }),
+        {
+          status: 500,
+          headers: {
+            "Content-Type": "application/json",
+            ...corsHeaders,
+          },
+        },
+      );
+    }
+
     const body = await req.json();
     const { message, pageContext } = body ?? {};
 
@@ -77,7 +78,7 @@ serve(async (req) => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${COHERE_API_KEY}`,
+        "Authorization": `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
         model: COHERE_MODEL,
