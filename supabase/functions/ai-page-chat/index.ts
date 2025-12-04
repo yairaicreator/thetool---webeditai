@@ -89,11 +89,9 @@ serve(async (req) => {
       },
       body: JSON.stringify({
         model: COHERE_MODEL,
+        message: fullPrompt,
+        preamble: instructionPrompt,
         temperature: 0.3,
-        messages: [
-          { role: "system", content: instructionPrompt },
-          { role: "user", content: fullPrompt || normalizedMessage },
-        ],
       }),
     });
 
