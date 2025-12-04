@@ -17,7 +17,7 @@ type PageContext = {
 };
 
 const COHERE_CHAT_URL = "https://api.cohere.com/v1/chat";
-const COHERE_MODEL = "command-r-plus";
+const COHERE_MODEL = "command-r-plus-08-2024";
 const DEFAULT_AUTO_PROMPT = "Summarize the important points from this page for the user.";
 const INSTRUCTION_PROMPT =
   "You are an assistant helping the user understand and work with the content of a web page. " +
