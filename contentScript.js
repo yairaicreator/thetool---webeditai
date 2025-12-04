@@ -1426,6 +1426,8 @@ function attachPanelEventListeners() {
         await handleAddFeatureChatEntry(userText);
         return;
       }
+
+      await handleGeneralChatMessage(userText);
     }
   });
 
@@ -1994,6 +1996,11 @@ function getPageKey() {
   return `${hostname}${pathname}`;
 }
 
+function getPagePlainText() {
+  const text = document.body?.innerText || "";
+  return text.slice(0, 5000).trim();
+}
+
 // ============================================
 // Chat Message Management
 // ============================================
@@ -2032,6 +2039,8 @@ function addChatMessage(type, content) {
       referenceDismissTimeout = null;
     }, 10000);
   }
+
+  return message;
 }
 
 // ============================================
@@ -2648,6 +2657,52 @@ async function handleAddFeatureChatEntry(userText) {
   // If step is idle or unknown, remind user to pick an element to start over
   addChatMessage("system", "Pick an element and provide the edit name first.");
   showNotification("Pick an element to start Add feature.", "error");
+}
+
+async function handleGeneralChatMessage(userText) {
+  addChatMessage("user", userText);
+
+  const thinkingMessage = addChatMessage("assistant", "🤖 Assistant is thinking...");
+
+  const callPageChatFn =
+    (window.SupabaseClient && typeof window.SupabaseClient.callPageChat === "function"
+      ? window.SupabaseClient.callPageChat
+      : null) ||
+    (typeof window.callPageChat === "function" ? window.callPageChat : null);
+
+  if (!callPageChatFn) {
+    thinkingMessage.content = "AI chat is not available right now.";
+    renderChatMessages();
+    schedulePanelStateSave();
+    saveChatHistory();
+    return;
+  }
+
+  const pageContext = {
+    url: window.location.href,
+    title: document.title || "",
+    text: getPagePlainText()
+  };
+
+  try {
+    const result = await callPageChatFn(userText, pageContext);
+
+    if (result?.ok && result.reply) {
+      thinkingMessage.content = result.reply.trim();
+    } else {
+      const errorMessage = result?.error || "Unknown error";
+      console.error("[WebEdit Chat] AI reply error:", errorMessage);
+      thinkingMessage.content = `There was a problem talking to the AI: ${errorMessage}`;
+    }
+  } catch (error) {
+    console.error("[WebEdit Chat] Failed to call AI chat:", error);
+    const message = error instanceof Error ? error.message : String(error);
+    thinkingMessage.content = `There was a problem talking to the AI: ${message}`;
+  }
+
+  renderChatMessages();
+  schedulePanelStateSave();
+  saveChatHistory();
 }
 
 async function completeAddFeatureCreation() {
