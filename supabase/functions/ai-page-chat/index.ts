@@ -73,13 +73,16 @@ serve(async (req) => {
     const pageTitle = typeof safeContext.title === "string" ? safeContext.title : "";
     const pageUrl = typeof safeContext.url === "string" ? safeContext.url : "";
 
-    const fullPrompt = [
-      "You are an assistant helping the user understand the content of a web page.",
-      pageTitle ? `Page title: ${pageTitle}` : "",
-      pageUrl ? `Page URL: ${pageUrl}` : "",
-      pageText ? `Page text: ${pageText}` : "",
-      `User question: ${normalizedMessage}`,
-    ].filter(Boolean).join("\n\n");
+    const contextParts: string[] = [];
+    if (pageTitle) contextParts.push(`Page title: ${pageTitle}`);
+    if (pageUrl) contextParts.push(`Page URL: ${pageUrl}`);
+    if (pageText) contextParts.push(`Page text: ${pageText}`);
+    
+    const fullPrompt = contextParts.length > 0
+      ? `${contextParts.join("\n\n")}\n\nUser question: ${normalizedMessage}`
+      : normalizedMessage;
+
+    console.log(`[Cohere] Sending message length: ${fullPrompt.length} chars`);
 
     const cohereResponse = await fetch(COHERE_CHAT_URL, {
       method: "POST",
