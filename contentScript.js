@@ -1133,6 +1133,13 @@ function createPanel() {
   const linkEl = document.createElement("link");
   linkEl.rel = "stylesheet";
   linkEl.href = chrome.runtime.getURL("panel.css");
+  const removeFoucStyle = () => {
+    if (foucStyle && foucStyle.parentNode) {
+      foucStyle.parentNode.removeChild(foucStyle);
+    }
+  };
+  linkEl.addEventListener("load", removeFoucStyle, { once: true });
+  linkEl.addEventListener("error", removeFoucStyle, { once: true });
   panelShadow.appendChild(linkEl);
 
   const panel = document.createElement("div");
