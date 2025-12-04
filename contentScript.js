@@ -479,6 +479,9 @@ async function syncAuthToWebsite() {
   if (!window.location.hostname.includes(WEBEDIT_DOMAIN)) {
     return;
   }
+  if (!isExtensionContextValid()) {
+    return;
+  }
 
   try {
     const extensionSession = await new Promise((resolve) => {
