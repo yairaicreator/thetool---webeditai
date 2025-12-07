@@ -2460,6 +2460,59 @@ function ensureFeatureTemplate(spec) {
   return buildFeatureTemplate({ name, description, type: spec.type || 'note' });
 }
 
+function normalizeFeatureSpec(rawSpec) {
+  if (!rawSpec || typeof rawSpec !== 'object') {
+    return null;
+  }
+
+  const spec = { ...rawSpec };
+  const payload = rawSpec.payload && typeof rawSpec.payload === 'object' ? rawSpec.payload : null;
+
+  if (payload) {
+    const fieldsToMerge = [
+      'selector',
+      'targetSelector',
+      'position',
+      'pageKey',
+      'createdAt',
+      'name',
+      'purpose',
+      'description',
+      'content',
+      'type',
+      'html',
+      'css'
+    ];
+
+    fieldsToMerge.forEach((key) => {
+      if (spec[key] === undefined && payload[key] !== undefined) {
+        spec[key] = payload[key];
+      }
+    });
+  }
+
+  if (!spec.selector && spec.targetSelector) {
+    spec.selector = spec.targetSelector;
+  }
+
+  if (!spec.id && spec.featureId) {
+    spec.id = spec.featureId;
+  }
+
+  const { html, css } = ensureFeatureTemplate(spec);
+  spec.html = html;
+  spec.css = css;
+
+  spec.name = spec.name || spec.title || payload?.name || 'Add feature';
+  spec.purpose = spec.purpose || spec.description || spec.content || payload?.purpose || '';
+  spec.type = spec.type || payload?.type || 'note';
+
+  delete spec.element;
+  delete spec.targetElement;
+
+  return spec;
+}
+
 function schedulePanelStateSave() {
   if (!currentUser?.id) {
     return;
@@ -2723,15 +2776,24 @@ async function completeAddFeatureCreation() {
     css
   };
 
+  const normalizedSpec = normalizeFeatureSpec(featureSpec);
+  if (!normalizedSpec) {
+    console.error("➕ Error: Failed to normalize feature spec");
+    addChatMessage("system", "❌ Error: Could not add feature. Please try again.");
+    showNotification("Error adding feature", "error");
+    schedulePanelStateSave();
+    return;
+  }
+
   try {
     console.log("➕ Creating feature with prompts:", featureSpec);
-    await injectFeature(featureSpec);
+    await injectFeature(normalizedSpec);
 
-    const saved = await saveAddedFeature(featureSpec);
+    const saved = await saveAddedFeature(normalizedSpec);
 
     // Save to Supabase (non-blocking)
     if (window.SaveEdit && window.SaveEdit.saveAddFeature) {
-      window.SaveEdit.saveAddFeature(featureSpec).catch(err => {
+      window.SaveEdit.saveAddFeature(normalizedSpec).catch(err => {
         console.error('[Add Feature] Failed to save to Supabase:', err);
       });
     }
@@ -2795,9 +2857,15 @@ async function injectFeature(spec) {
   console.log("[WebEdit Add] Injecting feature", spec);
 
   try {
-    const { html, css } = ensureFeatureTemplate(spec);
+    const normalizedSpec = normalizeFeatureSpec(spec);
+    if (!normalizedSpec) {
+      console.warn("[WebEdit Add] Skipping inject - invalid spec");
+      return;
+    }
+
+    const { html, css } = ensureFeatureTemplate(normalizedSpec);
     const injectorSpec = {
-      ...spec,
+      ...normalizedSpec,
       html,
       css
     };
@@ -2816,22 +2884,22 @@ async function injectFeature(spec) {
     }
 
     // Legacy fallback if injector is unavailable
-    const targetEl = document.querySelector(spec.selector);
+    const targetEl = document.querySelector(normalizedSpec.selector);
     if (!targetEl) {
-      console.warn(`[WebEdit Add] Target element not found for selector: ${spec.selector}`);
+      console.warn(`[WebEdit Add] Target element not found for selector: ${normalizedSpec.selector}`);
       return;
     }
 
-    const existingFeature = document.querySelector(`[data-webedit-feature-id="${spec.id}"]`);
+    const existingFeature = document.querySelector(`[data-webedit-feature-id="${normalizedSpec.id}"]`);
     if (existingFeature) {
-      console.log(`[WebEdit Add] Feature ${spec.id} already exists, skipping`);
+      console.log(`[WebEdit Add] Feature ${normalizedSpec.id} already exists, skipping`);
       return;
     }
 
     const container = document.createElement("div");
     container.className = "webedit-added-feature";
-    container.setAttribute("data-webedit-feature-id", spec.id);
-    container.setAttribute("data-webedit-selector", spec.selector);
+    container.setAttribute("data-webedit-feature-id", normalizedSpec.id);
+    container.setAttribute("data-webedit-selector", normalizedSpec.selector);
     container.style.cssText = `
       margin: 8px 0;
     `;
@@ -2846,7 +2914,7 @@ async function injectFeature(spec) {
     contentHolder.innerHTML = html;
     container.appendChild(contentHolder);
 
-    switch (spec.position) {
+    switch (normalizedSpec.position) {
       case "before":
         targetEl.parentElement.insertBefore(container, targetEl);
         console.log(`[WebEdit Add] Inserted feature BEFORE target element (fallback)`);
@@ -2868,7 +2936,7 @@ async function injectFeature(spec) {
         break;
     }
 
-    console.log(`[WebEdit Add] ✅ Feature injected successfully via fallback: ${spec.id}`);
+    console.log(`[WebEdit Add] ✅ Feature injected successfully via fallback: ${normalizedSpec.id}`);
 
   } catch (error) {
     console.error("[WebEdit Add] ❌ Error injecting feature:", error);
@@ -2881,6 +2949,11 @@ async function injectFeature(spec) {
  * @returns {Promise<boolean>} Success status
  */
 async function saveAddedFeature(feature) {
+  const normalizedFeature = normalizeFeatureSpec(feature);
+  if (!normalizedFeature) {
+    return Promise.resolve(false);
+  }
+
   return new Promise((resolve) => {
     // Early bailout if extension context is invalid
     if (!isExtensionContextValid()) {
@@ -2913,14 +2986,14 @@ async function saveAddedFeature(feature) {
         const existingFeatures = result[storageKey] || [];
 
         // Check if feature already exists (by ID)
-        const existingIndex = existingFeatures.findIndex(f => f.id === feature.id);
+        const existingIndex = existingFeatures.findIndex(f => f.id === normalizedFeature.id);
 
         if (existingIndex >= 0) {
           // Update existing feature
-          existingFeatures[existingIndex] = feature;
+          existingFeatures[existingIndex] = normalizedFeature;
         } else {
           // Add new feature
-          existingFeatures.push(feature);
+          existingFeatures.push(normalizedFeature);
         }
 
         // Save back to storage
@@ -2994,7 +3067,11 @@ async function restoreAddedFeatures() {
         // Inject each feature
         let successCount = 0;
         for (const feature of features) {
-          await injectFeature(feature);
+          const normalized = normalizeFeatureSpec(feature);
+          if (!normalized) {
+            continue;
+          }
+          await injectFeature(normalized);
           successCount++;
         }
 
@@ -3051,7 +3128,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     (async () => {
       try {
-        const spec = message.payload;
+        const spec = normalizeFeatureSpec(message.payload);
+        if (!spec) {
+          sendResponse({ success: false, error: "Invalid feature spec" });
+          return;
+        }
 
         // Inject the feature
         await injectFeature(spec);
