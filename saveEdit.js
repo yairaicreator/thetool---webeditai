@@ -100,6 +100,343 @@ async function dbRequest(endpoint, method, body = null) {
 }
 
 // ============================================
+// Metadata Generation Helpers
+// ============================================
+const GENERIC_TEXT_PATTERNS = [
+  'new add edit',
+  'add edit',
+  'new edit',
+  'add feature',
+  'add element',
+  'remove element',
+  'customize element',
+  'customize edit',
+  'customized element',
+  'new remove edit',
+  'new customize edit',
+  'saved edit'
+];
+
+const SHORT_NAME_ALLOWLIST = ['cta', 'faq'];
+const METADATA_PREVIEW_LOG_LIMIT = 5;
+let metadataPreviewLogCount = 0;
+
+function collapseWhitespace(value) {
+  if (value === undefined || value === null) {
+    return '';
+  }
+  const stringValue = typeof value === 'string' ? value : String(value);
+  return stringValue.replace(/\s+/g, ' ').trim();
+}
+
+function truncateText(value, maxLength = 60) {
+  const text = collapseWhitespace(value);
+  if (!text) return '';
+  if (text.length <= maxLength) return text;
+  return text.slice(0, Math.max(0, maxLength - 3)).trimEnd() + '...';
+}
+
+function isMeaningfulText(text) {
+  const trimmed = collapseWhitespace(text);
+  if (!trimmed) return false;
+  const lowerTrimmed = trimmed.toLowerCase();
+  if (trimmed.length < 4 && !SHORT_NAME_ALLOWLIST.includes(lowerTrimmed)) {
+    return false;
+  }
+  if (/^(removed|remove|styled|style|customize|customized)\s+/i.test(trimmed) && /[#.:>]/.test(trimmed)) {
+    return false;
+  }
+  return !GENERIC_TEXT_PATTERNS.some(pattern =>
+    lowerTrimmed === pattern || lowerTrimmed.includes(pattern)
+  );
+}
+
+function ensureSentence(text) {
+  const trimmed = collapseWhitespace(text);
+  if (!trimmed) return '';
+  if (/[.!?]"?$/.test(trimmed)) {
+    return trimmed;
+  }
+  return `${trimmed}.`;
+}
+
+function isDevelopmentBuild() {
+  try {
+    if (typeof chrome === 'undefined' || !chrome.runtime || typeof chrome.runtime.getManifest !== 'function') {
+      return true;
+    }
+    const manifest = chrome.runtime.getManifest();
+    return !manifest || !manifest.update_url;
+  } catch (error) {
+    return true;
+  }
+}
+
+function shouldLogMetadataPreview() {
+  return isDevelopmentBuild() && metadataPreviewLogCount < METADATA_PREVIEW_LOG_LIMIT;
+}
+
+function logMetadataPreview(editType, name, description, targetContext) {
+  if (!shouldLogMetadataPreview()) {
+    return;
+  }
+  metadataPreviewLogCount += 1;
+  console.log(`[SaveEdit] Metadata preview (${editType}) #${metadataPreviewLogCount}`, {
+    name,
+    description,
+    target: {
+      snippet: targetContext?.snippet || null,
+      reference: targetContext?.reference || null,
+      selector: targetContext?.selector || null
+    }
+  });
+}
+
+function getSiteMetadata(websiteTitle, websiteUrl) {
+  const title = collapseWhitespace(
+    websiteTitle ||
+    (typeof document !== 'undefined' ? document.title : '')
+  );
+  let hostname = '';
+  const urlSource = websiteUrl || (typeof window !== 'undefined' && window.location ? window.location.href : '');
+  if (urlSource) {
+    try {
+      const parsed = new URL(urlSource);
+      hostname = parsed.hostname || '';
+    } catch (error) {
+      hostname = typeof window !== 'undefined' && window.location ? (window.location.hostname || '') : '';
+    }
+  }
+  const displayName = title || hostname || 'this page';
+  return {
+    title,
+    hostname,
+    displayName
+  };
+}
+
+function querySelectorSafe(selector) {
+  if (!selector || typeof document === 'undefined' || typeof document.querySelector !== 'function') {
+    return null;
+  }
+  try {
+    return document.querySelector(selector);
+  } catch (error) {
+    if (isDevelopmentBuild()) {
+      console.warn('[SaveEdit] Invalid selector during metadata lookup:', selector, error);
+    }
+    return null;
+  }
+}
+
+function extractSnippetFromElement(element) {
+  if (!element) return '';
+  const candidates = [];
+  if (typeof element.innerText === 'string') {
+    candidates.push(element.innerText);
+  }
+  if (typeof element.textContent === 'string') {
+    candidates.push(element.textContent);
+  }
+  if (typeof element.getAttribute === 'function') {
+    const ariaLabel = element.getAttribute('aria-label');
+    const alt = element.getAttribute('alt');
+    const placeholder = element.getAttribute('placeholder');
+    if (ariaLabel) candidates.push(ariaLabel);
+    if (alt) candidates.push(alt);
+    if (placeholder) candidates.push(placeholder);
+  }
+  if (typeof element.value === 'string') {
+    candidates.push(element.value);
+  }
+  const firstMeaningful = candidates
+    .map(candidate => truncateText(candidate, 60))
+    .find(Boolean);
+  return firstMeaningful || '';
+}
+
+function extractSnippetFromMetadata(description) {
+  const text = collapseWhitespace(description);
+  if (!text) return '';
+  const quoted = text.match(/"([^"]+)"/);
+  if (quoted && quoted[1]) {
+    return truncateText(quoted[1], 60);
+  }
+  return '';
+}
+
+function extractTagFromMetadata(description) {
+  const text = collapseWhitespace(description);
+  if (!text) return '';
+  const match = text.match(/^[a-z0-9-]+/i);
+  return match ? match[0].toLowerCase() : '';
+}
+
+function getTargetContext(payload = {}, explicitElement = null, targetInfo = {}) {
+  const selector = payload?.selector || payload?.targetSelector || targetInfo?.selector || null;
+  const metadataDescription = payload?.metadata?.description || targetInfo?.description || '';
+  const providedSnippet = collapseWhitespace(
+    targetInfo?.text ||
+    targetInfo?.innerText ||
+    targetInfo?.label ||
+    payload?.targetText ||
+    ''
+  );
+  const element = explicitElement || querySelectorSafe(selector);
+  const elementSnippet = extractSnippetFromElement(element);
+  const metadataSnippet = extractSnippetFromMetadata(metadataDescription);
+  const snippet = truncateText(providedSnippet || elementSnippet || metadataSnippet || '', 40);
+  const tagFromInfo = collapseWhitespace(targetInfo?.tag || targetInfo?.tagName);
+  const tagName = (tagFromInfo && tagFromInfo.toLowerCase()) ||
+    (element && element.tagName ? element.tagName.toLowerCase() : '') ||
+    extractTagFromMetadata(metadataDescription);
+  const baseLabel = tagName || (selector ? `elements matching ${selector}` : 'page element');
+  const descriptiveLabel = collapseWhitespace(
+    snippet
+      ? `the element containing ${snippet}`
+      : baseLabel.startsWith('elements') ? baseLabel : `the ${baseLabel}`
+  ) || 'the page element';
+  const reference = collapseWhitespace(snippet || baseLabel || 'page element');
+
+  return {
+    element,
+    selector: selector || null,
+    snippet,
+    tagName,
+    baseLabel,
+    descriptiveLabel,
+    reference
+  };
+}
+
+function humanizeTemplateType(typeValue, fallbackName) {
+  const raw = collapseWhitespace(typeValue);
+  if (raw) {
+    const normalized = raw.replace(/[-_]+/g, ' ').trim();
+    if (normalized.toLowerCase() === 'cta') {
+      return 'CTA';
+    }
+    return normalized.toLowerCase();
+  }
+  const fallback = collapseWhitespace(fallbackName);
+  if (!fallback) return null;
+  return fallback.replace(/^add\s+/i, '').trim();
+}
+
+function humanizeCssProp(prop) {
+  if (!prop) return 'style';
+  return prop
+    .toString()
+    .replace(/([A-Z])/g, '-$1')
+    .toLowerCase()
+    .replace(/[-_]+/g, ' ')
+    .trim();
+}
+
+function describeStyles(styles) {
+  if (!styles || typeof styles !== 'object') return '';
+  const entries = Object.entries(styles).filter(([, value]) => collapseWhitespace(value));
+  if (entries.length === 0) return '';
+  const parts = entries.map(([prop, value]) => `${humanizeCssProp(prop)} to ${collapseWhitespace(value)}`);
+  if (parts.length === 1) {
+    return parts[0];
+  }
+  if (parts.length === 2) {
+    return `${parts[0]} and ${parts[1]}`;
+  }
+  return `${parts.slice(0, -1).join(', ')}, and ${parts[parts.length - 1]}`;
+}
+
+function buildAddName(templateLabel, targetContext) {
+  const descriptor = templateLabel || 'content block';
+  if (targetContext.reference) {
+    return collapseWhitespace(`Add ${descriptor} near ${targetContext.reference}`);
+  }
+  return collapseWhitespace(`Add ${descriptor}`);
+}
+
+function buildRemoveName(targetContext) {
+  if (targetContext.reference) {
+    return collapseWhitespace(`Remove ${targetContext.reference}`);
+  }
+  return 'Remove page element';
+}
+
+function buildCustomizeName(targetContext) {
+  if (targetContext.reference) {
+    return collapseWhitespace(`Customize ${targetContext.reference}`);
+  }
+  return 'Customize page element';
+}
+
+function buildEditMetadata(options = {}) {
+  const {
+    editType = 'add',
+    payload = {},
+    targetElement = null,
+    targetInfo = null,
+    userText = {},
+    websiteTitle = null,
+    websiteUrl = null
+  } = options || {};
+
+  const normalizedType = (editType || 'add').toLowerCase();
+  const userProvidedName = userText?.name;
+  const userProvidedDescription = userText?.description;
+  const meaningfulUserName = isMeaningfulText(userProvidedName) ? collapseWhitespace(userProvidedName) : '';
+  const meaningfulUserDescription = isMeaningfulText(userProvidedDescription) ? ensureSentence(userProvidedDescription) : '';
+
+  const site = getSiteMetadata(websiteTitle, websiteUrl);
+  const targetContext = getTargetContext(payload, targetElement, targetInfo || {});
+
+  let generatedName = '';
+  let generatedDescription = '';
+
+  switch (normalizedType) {
+    case 'remove':
+      generatedName = buildRemoveName(targetContext);
+      generatedDescription = `Removes ${targetContext.descriptiveLabel} from ${site.displayName}.`;
+      break;
+    case 'customize': {
+      const styleSummary = describeStyles(
+        payload?.metadata?.styles || payload?.styles
+      );
+      generatedName = buildCustomizeName(targetContext);
+      const summaryText = styleSummary || 'the styles';
+      generatedDescription = `Updates ${summaryText} for ${targetContext.descriptiveLabel} on ${site.displayName}.`;
+      break;
+    }
+    case 'add':
+    default: {
+      const templateLabel = humanizeTemplateType(payload?.type, meaningfulUserName || payload?.name);
+      generatedName = buildAddName(templateLabel, targetContext);
+      const descriptor = templateLabel || 'content block';
+      generatedDescription = `Adds a ${descriptor} near ${targetContext.descriptiveLabel} on ${site.displayName}.`;
+      break;
+    }
+  }
+
+  const descriptionParts = [];
+  if (meaningfulUserDescription) {
+    descriptionParts.push(meaningfulUserDescription);
+  }
+  if (generatedDescription) {
+    descriptionParts.push(ensureSentence(generatedDescription));
+  }
+  const combinedDescription = descriptionParts.join(' ').trim();
+
+  const finalName = meaningfulUserName || generatedName || `New ${normalizedType} edit`;
+  const finalDescription = combinedDescription || ensureSentence(`Auto-generated ${normalizedType} edit on ${site.displayName}.`);
+
+  logMetadataPreview(normalizedType, finalName, finalDescription, targetContext);
+
+  return {
+    name: finalName,
+    description: finalDescription
+  };
+}
+
+// ============================================
 // Core Logic
 // ============================================
 
@@ -177,12 +514,20 @@ async function saveEditToSupabase(params) {
     if (!website) throw new Error('Could not get website ID');
 
     // 2. Prepare Edit Data
-    // description fallback
-    const desc = params.description || params.name || `New ${params.type || 'add'} edit`;
+    const metadataInput = params.metadataContext || {
+      editType: params.type || 'add',
+      payload: params.payload || {},
+      targetElement: params.targetElement || null,
+      userText: {
+        name: params.name,
+        description: params.description
+      }
+    };
+    const generatedMetadata = buildEditMetadata(metadataInput);
 
-    // payload is the full details
     const payload = params.payload || {};
-    const name = params.name || desc;
+    const name = generatedMetadata.name;
+    const description = generatedMetadata.description;
 
     // 3. INSERT into edits table
     const editRow = {
@@ -192,7 +537,7 @@ async function saveEditToSupabase(params) {
       edit_type: params.type || 'add',
       status: params.status || 'active',
       name,
-      description: desc,
+      description,
       payload: payload,
       before_image_url: params.beforeImageUrl || params.beforeImage || null,
       after_image_url: params.afterImageUrl || params.afterImage || null
@@ -214,29 +559,73 @@ async function saveEditToSupabase(params) {
 // ============================================
 
 async function saveAddFeature(spec) {
+  const selector = spec?.selector;
+  const targetElement = selector ? querySelectorSafe(selector) : null;
+  const metadataContext = {
+    editType: 'add',
+    payload: spec,
+    targetElement,
+    userText: {
+      name: spec?.name,
+      description: spec?.purpose || spec?.description || spec?.content
+    },
+    websiteTitle: typeof document !== 'undefined' ? document.title : '',
+    websiteUrl: typeof window !== 'undefined' && window.location ? window.location.href : ''
+  };
+
   return saveEditToSupabase({
     type: 'add',
     name: spec.name,
     description: spec.purpose || spec.name,
-    payload: spec
+    payload: spec,
+    metadataContext
   });
 }
 
 async function saveRemoveEdit(el, rule) {
+  const metadataContext = {
+    editType: 'remove',
+    payload: rule,
+    targetElement: el || null,
+    targetInfo: {
+      description: rule?.metadata?.description,
+      selector: rule?.selector
+    },
+    websiteTitle: typeof document !== 'undefined' ? document.title : '',
+    websiteUrl: typeof window !== 'undefined' && window.location ? window.location.href : ''
+  };
+
   return saveEditToSupabase({
     type: 'remove',
     name: 'Remove Element',
     description: `Removed ${rule.selector}`,
-    payload: rule
+    payload: rule,
+    metadataContext
   });
 }
 
 async function saveCustomizeEdit(el, rule) {
+  const metadataContext = {
+    editType: 'customize',
+    payload: rule,
+    targetElement: el || null,
+    targetInfo: {
+      description: rule?.metadata?.description,
+      selector: rule?.selector
+    },
+    userText: {
+      description: rule?.metadata?.note || ''
+    },
+    websiteTitle: typeof document !== 'undefined' ? document.title : '',
+    websiteUrl: typeof window !== 'undefined' && window.location ? window.location.href : ''
+  };
+
   return saveEditToSupabase({
     type: 'customize',
     name: 'Customize Element',
     description: `Styled ${rule.selector}`,
-    payload: rule
+    payload: rule,
+    metadataContext
   });
 }
 
