@@ -43,9 +43,6 @@ let hasRestoredStateForUser = false;
 let authGuardElement = null;
 
 // Auth sync state
-let authSyncInterval = null;
-const AUTH_SYNC_INTERVAL_MS = 3000; // Check every 3 seconds
-const WEBEDIT_DOMAIN = "webeditai.com";
 
 // Selected element for editing (used by Pick mode)
 let currentEditTarget = {
@@ -244,6 +241,8 @@ function formatAuditTimestamp(timestamp) {
  */
 async function checkAuthStatus(options = {}) {
   const suppressStateUpdate = options.suppressStateUpdate || false;
+  const reason = options.reason || "explicit-check";
+  const forceRefresh = options.forceRefresh || false;
   // Early bailout if extension context is invalid
   if (!isExtensionContextValid()) {
     return null;
@@ -268,7 +267,7 @@ async function checkAuthStatus(options = {}) {
         const nextUser = session?.user || null;
 
         if (!suppressStateUpdate) {
-          handleAuthStateChange(nextUser, { reason: "explicit-check" }).then(() => {
+          handleAuthStateChange(nextUser, { reason, forceRefresh }).then(() => {
             resolve(currentUser);
           });
           return;
@@ -468,119 +467,6 @@ async function enforceUnauthorizedExperience() {
   updateChatInputPrompt("Sign in to start editing");
   setActiveToolButton("remove");
   updateAuthGuardUI();
-}
-
-/**
- * Sync authentication state from extension to website
- * Updates website localStorage if extension is signed in
- */
-async function syncAuthToWebsite() {
-  // Only sync if we're on the WebEdit AI website
-  if (!window.location.hostname.includes(WEBEDIT_DOMAIN)) {
-    return;
-  }
-  if (!isExtensionContextValid()) {
-    return;
-  }
-
-  try {
-    const extensionSession = await new Promise((resolve) => {
-      chrome.storage.local.get(['webeditSupabaseSession'], (result) => {
-        resolve(result.webeditSupabaseSession);
-      });
-    });
-
-    if (extensionSession) {
-      const exactKey = 'sb-eqfjkvjwsswjxkmomxax-auth-token';
-      let websiteSession = localStorage.getItem(exactKey);
-      let websiteSessionKey = websiteSession ? exactKey : null;
-
-      // Check for other keys if exact not found
-      if (!websiteSession) {
-        for (let i = 0; i < localStorage.length; i++) {
-          const key = localStorage.key(i);
-          if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
-            websiteSession = localStorage.getItem(key);
-            websiteSessionKey = key;
-            break;
-          }
-        }
-      }
-
-      // If website doesn't have session but extension does, sync to website
-      // Default to exact key for writing
-      if (!websiteSession) {
-        console.log("🔄 Syncing auth from extension to website...");
-        localStorage.setItem(exactKey, JSON.stringify(extensionSession));
-        websiteSessionKey = exactKey;
-        console.log("✅ Auth synced to website");
-      }
-
-      window.postMessage({
-        source: "webedit-extension",
-        type: "WEBEDIT_SUPABASE_SESSION",
-        payload: extensionSession
-      }, window.origin);
-    } else {
-      // Extension signed out - ensure website clears session and is notified
-      const keysToCheck = [];
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
-          keysToCheck.push(key);
-        }
-      }
-
-      if (keysToCheck.length > 0) {
-        keysToCheck.forEach((key) => localStorage.removeItem(key));
-        console.log("🔄 Cleared website auth tokens due to extension sign-out");
-      }
-
-      window.postMessage({
-        source: "webedit-extension",
-        type: "WEBEDIT_SUPABASE_SESSION",
-        payload: null
-      }, window.origin);
-    }
-  } catch (error) {
-    console.error("❌ Error syncing auth to website:", error);
-  }
-}
-
-/**
- * Start periodic auth sync between website and extension
- */
-function startAuthSync() {
-  // Only run on WebEdit AI website
-  if (!window.location.hostname.includes(WEBEDIT_DOMAIN)) {
-    return;
-  }
-
-  // Stop any existing sync
-  if (authSyncInterval) {
-    clearInterval(authSyncInterval);
-  }
-
-  console.log("🔄 Starting auth sync between website and extension...");
-
-  // Initial sync
-  syncAuthToWebsite();
-
-  // Periodic sync every 3 seconds
-  authSyncInterval = setInterval(() => {
-    syncAuthToWebsite();
-  }, AUTH_SYNC_INTERVAL_MS);
-}
-
-/**
- * Stop auth sync
- */
-function stopAuthSync() {
-  if (authSyncInterval) {
-    clearInterval(authSyncInterval);
-    authSyncInterval = null;
-    console.log("⏹️ Stopped auth sync");
-  }
 }
 
 /**
@@ -3239,10 +3125,7 @@ async function initialize() {
 
   // 1. Create Panel (hidden)
   createPanel();
-  await checkAuthStatus();
-
-  // 2. Start Auth Sync
-  startAuthSync();
+  await checkAuthStatus({ reason: "startup" });
 
   console.log("✅ WebEdit AI: Initialization complete");
 }

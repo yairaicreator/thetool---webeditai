@@ -171,14 +171,36 @@ function shouldSuppressSessionDuringCooldown(session) {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Handle WEBEDIT_STORE_SUPABASE_SESSION - Store session from website
   if (message.type === "WEBEDIT_STORE_SUPABASE_SESSION") {
-    console.log("💾 Storing Supabase session from website");
-
     const session = message.session;
+    const isSignedIn = !!(session && session.user);
+    console.log(`💾 Received session update from website: ${isSignedIn ? "SIGNED-IN" : "SIGNED-OUT"}`, isSignedIn ? session.user?.email : "");
 
     if (shouldSuppressSessionDuringCooldown(session)) {
       console.log("⚠️ Sign-out in progress; ignoring session update");
       sendResponse({ ok: false, ignored: true, reason: "SIGN_OUT_IN_PROGRESS" });
       return;
+    }
+
+    if (!session) {
+      chrome.storage.local.remove([
+        'webeditSupabaseSession',
+        'webeditSessionTimestamp',
+        'webedit_supabase_session',
+        'webedit_session_timestamp'
+      ], () => {
+        if (chrome.runtime.lastError) {
+          console.error("❌ Error clearing session:", chrome.runtime.lastError);
+          sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+          return;
+        }
+
+        console.log("🧹 Cleared stored session (website sign-out)");
+        broadcastSessionUpdate(null);
+        signOutCooldownUntil = 0;
+        lastClearedSessionToken = null;
+        sendResponse({ ok: true, cleared: true });
+      });
+      return true;
     }
 
     chrome.storage.local.get(['webeditSupabaseSession'], (result) => {

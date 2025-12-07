@@ -8,6 +8,8 @@
 
 const SUPABASE_URL = "https://eqfjkvjwsswjxkmomxax.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVxZmprdmp3c3N3anhrbW9teGF4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYxMTU1MDYsImV4cCI6MjA3MTY5MTUwNn0.sh5d5Hj5hshIOndyAodK_rlP0K1pERYyWyNqNxp-E7k";
+const SESSION_STORAGE_KEY = "webeditSupabaseSession";
+const SESSION_TIMESTAMP_KEY = "webeditSessionTimestamp";
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY || SUPABASE_URL.includes("YOUR_SUPABASE_URL")) {
   console.warn("⚠️ WebEdit AI: Supabase URL or Anon Key is missing. Edits will not be saved.");
@@ -88,8 +90,10 @@ const SupabaseClient = {
    */
   async getSession() {
     return new Promise((resolve) => {
-      chrome.storage.local.get(['webeditSupabaseSession'], (result) => {
-        const session = result.webeditSupabaseSession || null;
+      chrome.storage.local.get([SESSION_STORAGE_KEY], (result) => {
+        const session = result[SESSION_STORAGE_KEY] || null;
+        const email = session?.user?.email;
+        console.log(email ? `🔐 [SupabaseClient] Loaded session for ${email}` : "🔐 [SupabaseClient] No stored session");
         resolve({ data: { session }, error: null });
       });
     });
@@ -102,13 +106,17 @@ const SupabaseClient = {
     return new Promise((resolve) => {
       if (session) {
         chrome.storage.local.set({
-          webeditSupabaseSession: session,
-          webeditSessionTimestamp: Date.now()
+          [SESSION_STORAGE_KEY]: session,
+          [SESSION_TIMESTAMP_KEY]: Date.now()
         }, () => {
+          console.log("💾 [SupabaseClient] Stored session for", session.user?.email || "unknown user");
           resolve({ data: { session }, error: null });
         });
       } else {
-        resolve({ data: { session: null }, error: null });
+        chrome.storage.local.remove([SESSION_STORAGE_KEY, SESSION_TIMESTAMP_KEY], () => {
+          console.log("🧹 [SupabaseClient] Cleared stored session");
+          resolve({ data: { session: null }, error: null });
+        });
       }
     });
   },
@@ -128,11 +136,7 @@ const SupabaseClient = {
    * Sign out - clears the session from storage
    */
   async signOut() {
-    return new Promise((resolve) => {
-      chrome.storage.local.remove(['webeditSupabaseSession', 'webeditSessionTimestamp'], () => {
-        resolve({ error: null });
-      });
-    });
+    return this.setSession(null);
   },
 
   /**
@@ -141,10 +145,10 @@ const SupabaseClient = {
    */
   isSessionExpired(session) {
     if (!session) return true;
-    // Always return false if we have a session with a user
-    // This keeps users signed in indefinitely
-    if (session.user) return false;
-    return true;
+    if (!session.expires_at) {
+      return false;
+    }
+    return (Date.now() / 1000) > (session.expires_at - 60); // include small buffer
   }
 };
 

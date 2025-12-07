@@ -3,33 +3,55 @@
 // Its purpose is to capture Supabase sessions posted from the website
 // and forward them to the extension's background script for storage
 
-// Helper to send session to background
+const SESSION_MESSAGE_TYPE = "WEBEDIT_SUPABASE_SESSION";
+const SESSION_MESSAGE_SOURCE = "webedit-website";
+
+function normalizeSessionPayload(raw, context = "unknown") {
+  if (raw === null) {
+    return { session: null, valid: true, explicitSignOut: true };
+  }
+  if (typeof raw !== "object") {
+    console.warn(`⚠️ [Bridge] Ignoring malformed session from ${context}: expected object`, raw);
+    return { session: null, valid: false, explicitSignOut: false };
+  }
+  if (!raw.access_token || !raw.user) {
+    console.warn(`⚠️ [Bridge] Session missing access_token/user from ${context}`, raw);
+    return { session: null, valid: false, explicitSignOut: false };
+  }
+  return { session: raw, valid: true, explicitSignOut: false };
+}
+
+// Helper to send session (including sign-out) to background
 function forwardSessionToBackground(session, source) {
-  if (!session) return;
-  
-  console.log(`🔐 Bridge listener: Forwarding session from ${source}`, `for ${session.user?.email}`);
-  
-  chrome.runtime.sendMessage(
-    {
-      type: "WEBEDIT_STORE_SUPABASE_SESSION",
-      session: session,
-    },
-    (response) => {
-      if (chrome.runtime.lastError) {
-        console.error("❌ Error forwarding session to background:", chrome.runtime.lastError);
-        return;
+  const isSignedIn = !!(session && session.user);
+  const email = session?.user?.email || "anonymous";
+  console.log(`🔐 [Bridge] Forwarding ${isSignedIn ? "SIGNED-IN" : "SIGNED-OUT"} session from ${source}`, isSignedIn ? email : "");
+
+  try {
+    chrome.runtime.sendMessage(
+      {
+        type: "WEBEDIT_STORE_SUPABASE_SESSION",
+        session
+      },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          console.error("❌ [Bridge] Error forwarding session to background:", chrome.runtime.lastError);
+          return;
+        }
+        if (response?.ignored) {
+          console.log("⚠️ [Bridge] Session ignored by background:", response.reason || "unknown reason");
+          return;
+        }
+        if (response?.unchanged) {
+          console.log("ℹ️ [Bridge] Session already up to date, no broadcast needed");
+          return;
+        }
+        console.log("✅ [Bridge] Session forwarded to background:", response);
       }
-      if (response?.ignored) {
-        console.log("⚠️ Session ignored by background:", response.reason || "unknown reason");
-        return;
-      }
-      if (response?.unchanged) {
-        console.log("ℹ️ Session already up to date, no broadcast needed");
-        return;
-      }
-      console.log("✅ Session forwarded to background:", response);
-    }
-  );
+    );
+  } catch (error) {
+    console.error("❌ [Bridge] Exception while forwarding session:", error);
+  }
 }
 
 /**
@@ -52,15 +74,16 @@ function checkLocalStorageForSession() {
         const item = localStorage.getItem(key);
         if (item) {
           try {
-            const session = JSON.parse(item);
-            // Verify it looks like a valid session
-            if (session && session.access_token && session.user) {
+            const parsed = JSON.parse(item);
+            const result = normalizeSessionPayload(parsed, `localStorage:${key}`);
+            if (result.valid && result.session) {
+              const session = result.session;
               console.log("✅ Found existing session in localStorage:", key);
               forwardSessionToBackground(session, "localStorage");
               return true;
             }
           } catch (e) {
-            // Ignore parse errors
+            console.error("❌ [Bridge] Failed to parse session stored in localStorage:", e);
           }
         }
       }
@@ -89,37 +112,27 @@ window.addEventListener("message", (event) => {
   let isAuthMessage = false;
   
   // NEW FORMAT: message.source === "webedit-website" && message.type === "WEBEDIT_SUPABASE_SESSION"
-  if (message.source === "webedit-website" && message.type === "WEBEDIT_SUPABASE_SESSION") {
-    session = message.payload;
-    isAuthMessage = true;
-    console.log("🔐 Bridge listener: Received session (NEW format) from website", session ? `for ${session.user?.email}` : "(sign out)");
+  if (message.source === SESSION_MESSAGE_SOURCE && message.type === SESSION_MESSAGE_TYPE) {
+    const result = normalizeSessionPayload(message.payload, "postMessage:new-format");
+    if (result.valid) {
+      session = result.session;
+      isAuthMessage = true;
+      console.log("🔐 Bridge listener: Received session (NEW format) from website", session ? `for ${session.user?.email}` : "(sign out)");
+    }
   }
   // OLD FORMAT: message.type === "WEBEDIT_AUTH" (backward compatibility)
   else if (message.type === "WEBEDIT_AUTH") {
-    session = message.session;
-    isAuthMessage = true;
-    console.log("🔐 Bridge listener: Received session (OLD format) from website", session ? `for ${session.user?.email}` : "(sign out)");
+    const result = normalizeSessionPayload(message.session, "postMessage:legacy-format");
+    if (result.valid) {
+      session = result.session;
+      isAuthMessage = true;
+      console.log("🔐 Bridge listener: Received session (OLD format) from website", session ? `for ${session.user?.email}` : "(sign out)");
+    }
   }
   
   // If we recognized an auth message, forward it to background
   if (isAuthMessage) {
-    // If session is null (sign out), we pass it along to clear storage
-    if (!session) {
-      console.log("👋 Bridge listener: Received sign out signal");
-      try {
-        chrome.runtime.sendMessage({ type: "WEBEDIT_SIGN_OUT" }, () => {
-          if (chrome.runtime.lastError) {
-            console.error("❌ Error forwarding sign-out to background:", chrome.runtime.lastError);
-          } else {
-            console.log("✅ Sign-out forwarded to background");
-          }
-        });
-      } catch (error) {
-        console.error("❌ Exception while forwarding sign-out:", error);
-      }
-    } else {
-      forwardSessionToBackground(session, "postMessage");
-    }
+    forwardSessionToBackground(session || null, "postMessage");
   }
 });
 
