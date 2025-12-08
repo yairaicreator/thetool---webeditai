@@ -78,7 +78,7 @@ chrome.runtime.onInstalled.addListener((details) => {
 
 // PRODUCTION URLs - ALWAYS USE THESE
 const WEBEDIT_PROD_BASE_URL = "https://www.webeditai.com";
-const LOGIN_URL = "https://www.webeditai.com/#/login"; // Hash-route keeps users inside SPA even when backing out of OAuth
+const LOGIN_URL = "https://www.webeditai.com/#/signup"; // SPA route currently guarantees the login form exists; website should keep this path stable
 const HISTORY_URL = "https://www.webeditai.com/#/history";
 const SIGN_OUT_SUPPRESSION_MS = 8000;
 let signOutCooldownUntil = 0;
