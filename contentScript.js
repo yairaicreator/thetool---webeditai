@@ -2541,6 +2541,15 @@ function normalizeFeatureSpec(rawSpec) {
   spec.purpose = spec.purpose || spec.description || spec.content || payload?.purpose || '';
   spec.type = spec.type || payload?.type || 'note';
 
+  spec.ownerUserId = spec.ownerUserId || spec.userId || payload?.ownerUserId || payload?.userId || null;
+  spec.ownerEmail = spec.ownerEmail || payload?.ownerEmail || null;
+
+  if (!spec.ownerUserId && currentUser?.id) {
+    spec.ownerUserId = currentUser.id;
+    spec.ownerEmail = currentUser.email || spec.ownerEmail || null;
+    spec._needsOwnerPersist = true;
+  }
+
   delete spec.element;
   delete spec.targetElement;
 
@@ -2807,7 +2816,9 @@ async function completeAddFeatureCreation() {
     purpose: description,
     type,
     html,
-    css
+    css,
+    ownerUserId: currentUser?.id || null,
+    ownerEmail: currentUser?.email || null
   };
 
   const normalizedSpec = normalizeFeatureSpec(featureSpec);
@@ -2907,6 +2918,16 @@ async function injectFeature(spec) {
       return;
     }
 
+    if (!currentUser?.id) {
+      console.warn("[WebEdit Add] Skipping feature inject - no authenticated user");
+      return;
+    }
+
+    if (normalizedSpec.ownerUserId && normalizedSpec.ownerUserId !== currentUser.id) {
+      console.warn(`[WebEdit Add] Skipping feature ${normalizedSpec.id} - owner mismatch`);
+      return;
+    }
+
     const { html, css } = ensureFeatureTemplate(normalizedSpec);
     const injectorSpec = {
       ...normalizedSpec,
@@ -2944,6 +2965,9 @@ async function injectFeature(spec) {
     container.className = "webedit-added-feature";
     container.setAttribute("data-webedit-feature-id", normalizedSpec.id);
     container.setAttribute("data-webedit-selector", normalizedSpec.selector);
+    if (normalizedSpec.ownerUserId) {
+      container.setAttribute("data-webedit-owner", normalizedSpec.ownerUserId);
+    }
     container.style.cssText = `
       margin: 8px 0;
     `;
@@ -3008,6 +3032,12 @@ async function saveAddedFeature(feature) {
 
     if (!currentUser?.id) {
       console.warn("[WebEdit Add] No authenticated user, skipping feature save");
+      resolve(false);
+      return;
+    }
+
+    if (normalizedFeature.ownerUserId && normalizedFeature.ownerUserId !== currentUser.id) {
+      console.warn("[WebEdit Add] Feature owner mismatch, refusing to save");
       resolve(false);
       return;
     }
@@ -3092,31 +3122,57 @@ async function restoreAddedFeatures() {
           return;
         }
 
-        let features = result[storageKey] || [];
+        let features = (result[storageKey] || []).slice();
+        let migratedLegacy = false;
 
         if (features.length === 0 && result[legacyKey]) {
           features = result[legacyKey];
-          chrome.storage.local.set({ [storageKey]: features });
-          chrome.storage.local.remove(legacyKey);
+          migratedLegacy = true;
           console.log("🔄 Migrated legacy features to user-scoped storage");
         }
 
         if (features.length === 0) {
+          if (migratedLegacy) {
+            chrome.storage.local.remove(legacyKey);
+          }
           resolve(0);
           return;
         }
 
+        const activeUserId = currentUser.id;
+        const updatedFeatures = [];
+        let successCount = 0;
+        let storageChanged = migratedLegacy;
+
         console.log(`[WebEdit Add] Restoring ${features.length} feature(s) from storage for user ${currentUser?.email || currentUser?.id || 'unknown'}`);
 
-        // Inject each feature
-        let successCount = 0;
         for (const feature of features) {
           const normalized = normalizeFeatureSpec(feature);
           if (!normalized) {
+            storageChanged = true;
             continue;
           }
+
+          if (normalized.ownerUserId && normalized.ownerUserId !== activeUserId) {
+            console.log(`[WebEdit Add] Skipping feature ${normalized.id} due to owner mismatch`);
+            storageChanged = true;
+            continue;
+          }
+
+          if (!normalized.ownerUserId) {
+            normalized.ownerUserId = activeUserId;
+            normalized.ownerEmail = currentUser.email || normalized.ownerEmail || null;
+            storageChanged = true;
+          }
+
           await injectFeature(normalized);
+          updatedFeatures.push(normalized);
           successCount++;
+        }
+
+        if (storageChanged) {
+          chrome.storage.local.set({ [storageKey]: updatedFeatures });
+          chrome.storage.local.remove(legacyKey);
         }
 
         console.log(`[WebEdit Add] ✅ Restored ${successCount} feature(s) for user ${currentUser?.email || currentUser?.id || 'unknown'}`);
