@@ -446,6 +446,7 @@ async function loadAuthorizedExperience() {
   const email = userSnapshot.email || userSnapshot.id;
   console.log(`[Auth] Restoring panel state for ${email}`);
 
+  removeInjectedFeaturesFromDom();
   await restorePanelState();
   await loadChatHistory();
   console.log(`[Auth] Chat history refreshed for ${email}`);
@@ -2062,6 +2063,12 @@ function clearInMemoryUserState(reason = "unspecified") {
   currentSessionId = null;
   renderChatMessages();
   updateChatInputPrompt("What do you want to change?");
+  removeInjectedFeaturesFromDom();
+
+  if (window.EditRules && typeof window.EditRules.resetAppliedRuleEffects === 'function') {
+    window.EditRules.resetAppliedRuleEffects();
+  }
+
   console.log(`[Auth] Cleared in-memory user-scoped state (${reason})`);
 }
 
@@ -2860,6 +2867,16 @@ function generateFeatureId() {
   return `feature-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 }
 
+function removeInjectedFeaturesFromDom() {
+  const nodes = document.querySelectorAll('[data-webedit-feature-id]');
+  const removedCount = nodes.length;
+  if (removedCount > 0) {
+    nodes.forEach(node => node.remove());
+    console.log(`[WebEdit Add] Removed ${removedCount} injected feature node(s) from DOM`);
+  }
+  return removedCount;
+}
+
 /**
  * Generate a feature storage key for current page
  * @returns {string} Storage key in format "webedit-features::hostname::pathname"
@@ -2963,7 +2980,7 @@ async function injectFeature(spec) {
         break;
     }
 
-    console.log(`[WebEdit Add] ✅ Feature injected successfully via fallback: ${normalizedSpec.id}`);
+        console.log(`[WebEdit Add] ✅ Feature injected successfully via fallback: ${normalizedSpec.id}`);
 
   } catch (error) {
     console.error("[WebEdit Add] ❌ Error injecting feature:", error);
@@ -3089,7 +3106,7 @@ async function restoreAddedFeatures() {
           return;
         }
 
-        console.log(`[WebEdit Add] Restoring ${features.length} feature(s) from storage`);
+        console.log(`[WebEdit Add] Restoring ${features.length} feature(s) from storage for user ${currentUser?.email || currentUser?.id || 'unknown'}`);
 
         // Inject each feature
         let successCount = 0;
@@ -3102,7 +3119,7 @@ async function restoreAddedFeatures() {
           successCount++;
         }
 
-        console.log(`[WebEdit Add] ✅ Restored ${successCount} feature(s)`);
+        console.log(`[WebEdit Add] ✅ Restored ${successCount} feature(s) for user ${currentUser?.email || currentUser?.id || 'unknown'}`);
         resolve(successCount);
       });
     } catch (error) {

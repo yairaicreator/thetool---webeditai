@@ -489,6 +489,8 @@ const StorageManager = {
  * Rule Applier - applies rules to the DOM
  */
 const RuleApplier = {
+  _appliedEffects: new Map(),
+
   /**
    * Apply a single rule to the DOM
    * @param {EditRule} rule - The rule to apply
@@ -505,17 +507,32 @@ const RuleApplier = {
         return 0;
       }
 
+      // Reset stored effects for this rule before reapplying
+      this._appliedEffects.set(rule.id, []);
+
       elements.forEach(el => {
         // Skip WebEdit panel elements
         if (el.closest('#webedit-chat-panel')) return;
 
+        const effectRecord = {
+          element: el,
+          action: rule.action,
+          attr: null,
+          previousDisplay: null,
+          properties: []
+        };
+
         switch (rule.action) {
           case 'hide':
+            effectRecord.attr = 'data-webedit-hidden';
+            effectRecord.previousDisplay = el.style.getPropertyValue('display') || null;
             el.style.display = 'none';
             el.setAttribute('data-webedit-hidden', rule.id);
             break;
 
           case 'remove':
+            effectRecord.attr = 'data-webedit-removed';
+            effectRecord.previousDisplay = el.style.getPropertyValue('display') || null;
             el.style.display = 'none';
             el.setAttribute('data-webedit-removed', rule.id);
             break;
@@ -525,9 +542,17 @@ const RuleApplier = {
               Object.entries(rule.metadata.styles).forEach(([prop, value]) => {
                 // Convert camelCase to kebab-case for CSS properties
                 const cssProperty = prop.replace(/([A-Z])/g, '-$1').toLowerCase();
+                const previousValue = el.style.getPropertyValue(cssProperty) || null;
+                const previousPriority = el.style.getPropertyPriority(cssProperty) || '';
+                effectRecord.properties.push({
+                  name: cssProperty,
+                  previousValue,
+                  previousPriority
+                });
                 // Apply with !important to ensure styles override existing ones
                 el.style.setProperty(cssProperty, value, 'important');
               });
+              effectRecord.attr = 'data-webedit-styled';
               el.setAttribute('data-webedit-styled', rule.id);
             }
             break;
@@ -535,6 +560,10 @@ const RuleApplier = {
           default:
             console.warn(`⚠️ Unknown action: ${rule.action}`);
         }
+
+        const storedEffects = this._appliedEffects.get(rule.id) || [];
+        storedEffects.push(effectRecord);
+        this._appliedEffects.set(rule.id, storedEffects);
       });
 
       console.log(`✅ Applied rule ${rule.id} to ${elements.length} element(s)`);
@@ -637,6 +666,51 @@ const RuleApplier = {
         }
       });
     }, debounceMs);
+  },
+
+  /**
+   * Clear all applied rule effects from the DOM (used on logout/user switch)
+   */
+  clearAppliedEffects() {
+    this._appliedEffects.forEach((effects, ruleId) => {
+      effects.forEach(effect => {
+        try {
+          if (!effect || !effect.element) {
+            return;
+          }
+
+          if (effect.action === 'hide' || effect.action === 'remove') {
+            if (effect.previousDisplay && effect.previousDisplay.length > 0) {
+              effect.element.style.setProperty('display', effect.previousDisplay);
+            } else {
+              effect.element.style.removeProperty('display');
+            }
+          } else if (effect.action === 'style' && Array.isArray(effect.properties)) {
+            effect.properties.forEach(prop => {
+              if (!prop || !prop.name) {
+                return;
+              }
+              if (prop.previousValue && prop.previousValue.length > 0) {
+                effect.element.style.setProperty(prop.name, prop.previousValue, prop.previousPriority || '');
+              } else {
+                effect.element.style.removeProperty(prop.name);
+              }
+            });
+          }
+
+          if (effect.attr) {
+            effect.element.removeAttribute(effect.attr);
+          }
+        } catch (error) {
+          console.warn(`⚠️ Failed to clear applied effect for rule ${ruleId}:`, error);
+        }
+      });
+    });
+
+    if (this._appliedEffects.size > 0) {
+      console.log(`🧹 Cleared applied DOM effects for ${this._appliedEffects.size} rule(s)`);
+    }
+    this._appliedEffects.clear();
   }
 };
 
@@ -798,7 +872,7 @@ const SupabaseSyncManager = {
         url += `&page_key=eq.${encodeURIComponent(pageKey)}`;
       }
 
-      console.log('📥 Fetching rules from Supabase');
+      console.log(`📥 Fetching rules from Supabase for user ${user.id}${pageKey ? ` on ${pageKey}` : ''}`);
 
       const response = await fetch(url, {
         method: 'GET',
@@ -835,7 +909,7 @@ const SupabaseSyncManager = {
       }
 
       const data = await response.json();
-      console.log(`✅ Fetched ${data.length} rule(s) from Supabase`);
+      console.log(`✅ Fetched ${data.length} rule(s) from Supabase for user ${user.id}`);
 
       // Convert Supabase format to EditRule format
       return data.map(item => ({
@@ -1083,6 +1157,13 @@ const EditRules = {
    */
   async fetchRules(user, pageKey = null) {
     return SupabaseSyncManager.fetchRules(user, pageKey);
+  },
+
+  /**
+   * Clear any DOM manipulations applied by rules (used on logout)
+   */
+  resetAppliedRuleEffects() {
+    RuleApplier.clearAppliedEffects();
   }
 };
 
