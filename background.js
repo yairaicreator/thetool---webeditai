@@ -77,9 +77,11 @@ chrome.runtime.onInstalled.addListener((details) => {
 // ============================================
 
 // PRODUCTION URLs - ALWAYS USE THESE
-const WEBEDIT_PROD_BASE_URL = "https://www.webeditai.com";
+const WEBEDIT_PROD_BASE_URL = "https://webeditai.com";
 const LOGIN_URL = "https://webeditai.com/#/signup"; // Apex domain avoids redirect that broke hash routes; site should keep this SPA path live
-const HISTORY_URL = "https://www.webeditai.com/#/history";
+const HISTORY_URL = "https://webeditai.com/#/history";
+const WEBEDIT_SIGNOUT_URL = `${HISTORY_URL}?from=extension-logout`;
+const WEBEDIT_LANDING_URL = "https://webeditai.com/";
 const SIGN_OUT_SUPPRESSION_MS = 8000;
 let signOutCooldownUntil = 0;
 let lastClearedSessionToken = null;
@@ -333,9 +335,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         // Broadcast sign out to all tabs
         broadcastSessionUpdate(null);
 
-        // Open website to sign out there too
-        const logoutUrl = HISTORY_URL + "?from=extension-logout";
-        chrome.tabs.create({ url: logoutUrl });
+        // Ensure website session is cleared and user sees landing page
+        openWebsiteSignOutFlow();
 
         sendResponse({ ok: true });
       });
@@ -343,6 +344,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     return true; // Keep message channel open for async response
   }
+
+function openWebsiteSignOutFlow() {
+  console.log("🌐 Initiating website sign-out flow");
+  // First, hit a route that performs Supabase sign-out in the SPA (open in background)
+  chrome.tabs.create({ url: WEBEDIT_SIGNOUT_URL, active: false }, (tab) => {
+    if (chrome.runtime.lastError) {
+      console.warn("⚠️ Could not open website sign-out tab:", chrome.runtime.lastError.message);
+    } else if (tab) {
+      console.log("🧼 Website sign-out tab opened:", tab.id);
+    }
+  });
+
+  // Then open the public landing page for the user
+  chrome.tabs.create({ url: WEBEDIT_LANDING_URL, active: true }, (tab) => {
+    if (chrome.runtime.lastError) {
+      console.error("❌ Failed to open landing page:", chrome.runtime.lastError.message);
+    } else if (tab) {
+      console.log("🏠 Landing page opened:", tab.id);
+    }
+  });
+}
 
   // Handle WEBEDIT_OPEN_HISTORY - Open production history page
   if (message.type === "WEBEDIT_OPEN_HISTORY") {
