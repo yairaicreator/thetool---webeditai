@@ -25,6 +25,8 @@ console.log('📦 injector.js: Loading...');
 
 // In-memory map of mounted features: id -> MountedFeatureHandle
 const mountedFeatures = new Map();
+// Track last mounted spec signature per feature to prevent redundant remounts
+const mountedFeatureSignatures = new Map();
 
 // Configuration
 const CONFIG = {
@@ -88,6 +90,21 @@ function validateFeatureSpec(spec) {
   
   // All checks passed
   return { ok: true };
+}
+
+/**
+ * Generate a stable signature string for a feature spec so we can detect no-op reinjections
+ * @param {FeatureSpec} spec
+ * @returns {string}
+ */
+function createSpecSignature(spec) {
+  return JSON.stringify({
+    selector: spec.selector,
+    position: spec.position,
+    html: spec.html,
+    css: spec.css ?? null,
+    js: spec.js ?? null,
+  });
 }
 
 // ============================================
@@ -222,6 +239,7 @@ function mountFeature(spec, hostDocument = document) {
   console.log('[WebEdit Injector] Mounting feature:', spec.id);
   
   try {
+    const specSignature = createSpecSignature(spec);
     // Validate spec first (STEP 4)
     const validation = validateFeatureSpec(spec);
     if (!validation.ok) {
@@ -239,7 +257,16 @@ function mountFeature(spec, hostDocument = document) {
     
     // Check if feature is already mounted
     if (mountedFeatures.has(spec.id)) {
-      console.warn(`[WebEdit Injector] Feature ${spec.id} is already mounted, unmounting first`);
+      const existingHandle = mountedFeatures.get(spec.id);
+      const previousSignature = mountedFeatureSignatures.get(spec.id);
+      const stillMounted = !!existingHandle?.host?.isConnected;
+
+      if (stillMounted && previousSignature === specSignature) {
+        console.log(`[WebEdit Injector] Feature ${spec.id} already mounted with identical spec, skipping.`);
+        return existingHandle;
+      }
+
+      console.warn(`[WebEdit Injector] Feature ${spec.id} spec changed or host detached, remounting`);
       unmountFeature(spec.id);
     }
     
@@ -325,6 +352,7 @@ function mountFeature(spec, hostDocument = document) {
     
     // Store in map
     mountedFeatures.set(spec.id, handle);
+    mountedFeatureSignatures.set(spec.id, specSignature);
     
     console.log(`[WebEdit Injector] ✅ Feature mounted successfully: ${spec.id}`);
     return handle;
@@ -362,6 +390,7 @@ function unmountFeature(id) {
     
     // Remove from map
     mountedFeatures.delete(id);
+    mountedFeatureSignatures.delete(id);
     
     console.log(`[WebEdit Injector] ✅ Feature unmounted successfully: ${id}`);
     
