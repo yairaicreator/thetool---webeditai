@@ -17,7 +17,7 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY || SUPABASE_URL.includes("YOUR_SUPABASE_
 
 // Production URLs
 const WEBEDIT_PROD_BASE_URL = "https://www.webeditai.com";
-const LOGIN_URL = "https://www.webeditai.com/#/signup"; // SPA route that consistently hosts the auth form; website should keep this path live
+const LOGIN_URL = "https://webeditai.com/#/signup"; // Apex domain avoids redirect that broke hash routes; website should keep this SPA path live
 const HISTORY_URL = "https://www.webeditai.com/#/history";
 
 /**
