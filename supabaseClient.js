@@ -24,8 +24,10 @@ const HISTORY_URL = "https://www.webeditai.com/#/history";
  * Simple Supabase client implementation
  * Uses chrome.storage.local for session persistence and REST API calls.
  */
-async function callPageChat(message, pageContext = null) {
-  if (!message || typeof message !== 'string') {
+async function callPageChat(message, pageContext = null, attachments = []) {
+  const sanitizedMessage = typeof message === 'string' ? message.trim() : '';
+  const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
+  if (!sanitizedMessage && !hasAttachments) {
     return { ok: false, error: 'Message is required' };
   }
 
@@ -34,11 +36,23 @@ async function callPageChat(message, pageContext = null) {
   }
 
   const payload = {
-    message: message.trim()
+    message: sanitizedMessage
   };
 
   if (pageContext && typeof pageContext === 'object') {
     payload.pageContext = pageContext;
+  }
+
+  if (hasAttachments) {
+    payload.attachments = attachments
+      .filter(att => att && att.url)
+      .map(att => ({
+        type: att.type || 'file',
+        name: att.name || '',
+        url: att.url,
+        mimeType: att.mimeType || '',
+        size: att.size || 0
+      }));
   }
 
   try {

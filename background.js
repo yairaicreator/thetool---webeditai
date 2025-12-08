@@ -73,6 +73,71 @@ chrome.runtime.onInstalled.addListener((details) => {
 });
 
 // ============================================
+// Panel Visibility Sync
+// ============================================
+const PANEL_VISIBILITY_STORAGE_KEY = "webeditGlobalPanelOpen";
+const panelVisibilityStorage = (chrome.storage && chrome.storage.sync) ? chrome.storage.sync : chrome.storage.local;
+let cachedPanelVisibility = null;
+
+function readPanelVisibilityPreference() {
+  if (cachedPanelVisibility !== null) {
+    return Promise.resolve(cachedPanelVisibility);
+  }
+  return new Promise((resolve) => {
+    if (!panelVisibilityStorage) {
+      resolve(false);
+      return;
+    }
+    panelVisibilityStorage.get([PANEL_VISIBILITY_STORAGE_KEY], (result) => {
+      if (chrome.runtime.lastError) {
+        console.warn("WebEdit AI: Failed to read panel preference", chrome.runtime.lastError.message);
+        resolve(false);
+        return;
+      }
+      const stored = result?.[PANEL_VISIBILITY_STORAGE_KEY];
+      cachedPanelVisibility = typeof stored === "boolean" ? stored : false;
+      resolve(cachedPanelVisibility);
+    });
+  });
+}
+
+function writePanelVisibilityPreference(isOpen) {
+  cachedPanelVisibility = !!isOpen;
+  return new Promise((resolve) => {
+    if (!panelVisibilityStorage) {
+      resolve();
+      return;
+    }
+    panelVisibilityStorage.set({ [PANEL_VISIBILITY_STORAGE_KEY]: cachedPanelVisibility }, () => {
+      if (chrome.runtime.lastError) {
+        console.warn("WebEdit AI: Failed to persist panel preference", chrome.runtime.lastError.message);
+      }
+      resolve();
+    });
+  });
+}
+
+function broadcastPanelVisibility(isOpen, options = {}) {
+  const excludeTabId = options.excludeTabId || null;
+  chrome.tabs.query({}, (tabs) => {
+    tabs.forEach((tab) => {
+      if (!tab.id || (excludeTabId && tab.id === excludeTabId)) {
+        return;
+      }
+      chrome.tabs.sendMessage(tab.id, {
+        type: "WEBEDIT_APPLY_PANEL_VISIBILITY",
+        isOpen
+      }, () => {
+        // Suppress errors for tabs without the content script
+        if (chrome.runtime.lastError) {
+          return;
+        }
+      });
+    });
+  });
+}
+
+// ============================================
 // Supabase Authentication Handlers
 // ============================================
 
@@ -171,6 +236,29 @@ function shouldSuppressSessionDuringCooldown(session) {
  * All URLs use PRODUCTION constants - no dev URLs
  */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "WEBEDIT_GET_PANEL_OPEN_STATE") {
+    (async () => {
+      const isOpen = await readPanelVisibilityPreference();
+      sendResponse({ ok: true, isOpen });
+    })();
+    return true;
+  }
+
+  if (message.type === "WEBEDIT_SET_PANEL_OPEN_STATE") {
+    const nextState = !!message.isOpen;
+    (async () => {
+      const currentState = await readPanelVisibilityPreference();
+      if (currentState === nextState) {
+        sendResponse({ ok: true, isOpen: nextState, unchanged: true });
+        return;
+      }
+      await writePanelVisibilityPreference(nextState);
+      broadcastPanelVisibility(nextState, { excludeTabId: sender?.tab?.id });
+      sendResponse({ ok: true, isOpen: nextState });
+    })();
+    return true;
+  }
+
   // Handle WEBEDIT_STORE_SUPABASE_SESSION - Store session from website
   if (message.type === "WEBEDIT_STORE_SUPABASE_SESSION") {
     const session = message.session;

@@ -16,6 +16,12 @@ type PageContext = {
   text: string;
 };
 
+type AttachmentInfo = {
+  name: string;
+  url: string;
+  type: string;
+};
+
 const COHERE_CHAT_URL = "https://api.cohere.com/v1/chat";
 const COHERE_MODEL = "command-r-plus-08-2024";
 const DEFAULT_AUTO_PROMPT = "Summarize the important points from this page for the user.";
@@ -50,11 +56,16 @@ const sanitizePageContext = (value: unknown): PageContext => {
   };
 };
 
-const buildPrompt = (question: string, ctx: PageContext): string => {
+const buildPrompt = (question: string, ctx: PageContext, attachments: AttachmentInfo[]): string => {
   const sections = [
     ctx.title ? `Page title: ${ctx.title}` : "",
     ctx.url ? `Page URL: ${ctx.url}` : "",
     ctx.text ? `Page text:\n${ctx.text}` : "",
+    attachments.length
+      ? `Attachments:\n${attachments
+        .map((att, index) => `${index + 1}. [${att.type}] ${att.name} → ${att.url}`)
+        .join("\n")}`
+      : "",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -85,6 +96,21 @@ const extractCohereReply = (data: unknown): string => {
   }
 
   return "";
+};
+
+const sanitizeAttachments = (value: unknown): AttachmentInfo[] => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const record = item as Record<string, unknown>;
+      const url = typeof record.url === "string" ? record.url.trim() : "";
+      if (!url) return null;
+      const name = typeof record.name === "string" ? record.name.trim() : "Attachment";
+      const type = typeof record.type === "string" ? record.type.trim() : "file";
+      return { name, url, type };
+    })
+    .filter((att): att is AttachmentInfo => Boolean(att));
 };
 
 const jsonResponse = (data: unknown, status: number): Response =>
@@ -154,9 +180,10 @@ if (typeof denoServe !== "function") {
       const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
       const userMessage = sanitizeMessage(body.message ?? body.prompt ?? body.input);
       const context = sanitizePageContext(body.pageContext);
+      const attachments = sanitizeAttachments(body.attachments);
 
       const question = userMessage || DEFAULT_AUTO_PROMPT;
-      const prompt = buildPrompt(question, context);
+      const prompt = buildPrompt(question, context, attachments);
 
       console.log("[ai-page-chat] prompt length:", prompt.length);
 

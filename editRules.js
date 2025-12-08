@@ -557,6 +557,28 @@ const RuleApplier = {
             }
             break;
 
+        case 'reorder':
+          const layout = rule.metadata?.layout;
+          if (!layout) {
+            console.warn(`⚠️ Missing layout metadata for rule ${rule.id}`);
+            break;
+          }
+          const targetParent = resolveLayoutParent(el, layout);
+          if (!targetParent) {
+            console.warn(`⚠️ Could not resolve parent for reorder rule ${rule.id}`);
+            break;
+          }
+          const previousParent = el.parentElement;
+          const previousNextSibling = el.nextSibling;
+          reorderElementWithinParent(targetParent, el, layout);
+          effectRecord.attr = 'data-webedit-reordered';
+          el.setAttribute('data-webedit-reordered', rule.id);
+          effectRecord.reorder = {
+            previousParent,
+            previousNextSibling
+          };
+          break;
+
           default:
             console.warn(`⚠️ Unknown action: ${rule.action}`);
         }
@@ -696,6 +718,11 @@ const RuleApplier = {
                 effect.element.style.removeProperty(prop.name);
               }
             });
+          } else if (effect.action === 'reorder' && effect.reorder) {
+            const previousParent = effect.reorder.previousParent;
+            if (previousParent) {
+              previousParent.insertBefore(effect.element, effect.reorder.previousNextSibling || null);
+            }
           }
 
           if (effect.attr) {
@@ -713,6 +740,27 @@ const RuleApplier = {
     this._appliedEffects.clear();
   }
 };
+
+function resolveLayoutParent(element, layout = {}) {
+  if (layout.parentSelector) {
+    const parentCandidate = document.querySelector(layout.parentSelector);
+    if (parentCandidate && parentCandidate.contains(element)) {
+      return parentCandidate;
+    }
+  }
+  return element.parentElement;
+}
+
+function reorderElementWithinParent(parent, element, layout = {}) {
+  if (!parent || !element) {
+    return;
+  }
+  const siblings = Array.from(parent.children).filter(child => child !== element);
+  let targetIndex = typeof layout.targetIndex === 'number' ? layout.targetIndex : siblings.length;
+  targetIndex = Math.max(0, Math.min(targetIndex, siblings.length));
+  const referenceNode = siblings[targetIndex] || null;
+  parent.insertBefore(element, referenceNode);
+}
 
 /**
  * Supabase Sync Manager - syncs rules to Supabase for authenticated users

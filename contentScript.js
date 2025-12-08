@@ -16,6 +16,11 @@ const addFeaturePrompt = {
 const MAX_SAVED_CHAT_MESSAGES = 50;
 
 const PANEL_STATE_KEY = 'webedit-panel-state';
+const PANEL_VISIBILITY_MESSAGE_TYPES = {
+  get: "WEBEDIT_GET_PANEL_OPEN_STATE",
+  set: "WEBEDIT_SET_PANEL_OPEN_STATE",
+  sync: "WEBEDIT_APPLY_PANEL_VISIBILITY"
+};
 
 // UI state
 let currentTool = "remove";
@@ -41,6 +46,7 @@ let currentUserAudit = null;
 let lastAuthorizedUserId = null;
 let hasRestoredStateForUser = false;
 let authGuardElement = null;
+let hasAppliedInitialPanelPreference = false;
 
 // Auth sync state
 
@@ -59,11 +65,20 @@ function resetCurrentEditTarget() {
     description: null,
     pageKey: null
   };
+  updateCustomizeUiForTarget();
 }
 
 // Chat messages
 let chatMessages = [];
 let referenceDismissTimeout = null;
+let activeHistoryRenameForm = null;
+let pendingAttachments = [];
+let currentAlignmentChoice = null;
+let isComposerBusy = false;
+
+const MAX_PENDING_ATTACHMENTS = 5;
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024; // 10MB per attachment
+const SUPABASE_ATTACHMENT_BUCKET = 'chat-attachments';
 
 const WEBEDIT_ATTR = "data-webedit-id";
 const AUTH_ACTIVITY_KEY = "webeditAuthAudit";
@@ -120,6 +135,9 @@ function applyPageShiftWidth() {
   const widthValue = `${width}px`;
   document.documentElement.style.setProperty('--webedit-panel-width', widthValue);
   document.body.style.setProperty('--webedit-panel-width', widthValue);
+  if (panelHost) {
+    panelHost.style.setProperty('--webedit-panel-width', widthValue);
+  }
 }
 
 function clearPageShiftWidth() {
@@ -128,6 +146,9 @@ function clearPageShiftWidth() {
   }
   document.documentElement.style.removeProperty('--webedit-panel-width');
   document.body.style.removeProperty('--webedit-panel-width');
+  if (panelHost) {
+    panelHost.style.removeProperty('--webedit-panel-width');
+  }
 }
 
 function startPageShiftTracking() {
@@ -149,6 +170,75 @@ function stopPageShiftTracking() {
   }
   window.removeEventListener('resize', pageShiftResizeHandler);
   pageShiftResizeHandler = null;
+}
+
+// ============================================
+// Global Panel State Sync
+// ============================================
+
+function notifyBackgroundOfPanelState(isOpen) {
+  if (!isExtensionContextValid()) {
+    return;
+  }
+  try {
+    chrome.runtime.sendMessage(
+      { type: PANEL_VISIBILITY_MESSAGE_TYPES.set, isOpen: !!isOpen },
+      () => {
+        // Swallow errors when the background service worker is asleep
+        if (chrome.runtime.lastError) {
+          console.debug('[WebEdit] Panel state sync skipped:', chrome.runtime.lastError.message);
+        }
+      }
+    );
+  } catch (error) {
+    console.debug('[WebEdit] Panel state sync failed:', error?.message || error);
+  }
+}
+
+function requestGlobalPanelPreference() {
+  if (!isExtensionContextValid()) {
+    return Promise.resolve(false);
+  }
+  return new Promise((resolve) => {
+    let isResolved = false;
+    const finish = (value) => {
+      if (isResolved) {
+        return;
+      }
+      isResolved = true;
+      resolve(value);
+    };
+    try {
+      chrome.runtime.sendMessage(
+        { type: PANEL_VISIBILITY_MESSAGE_TYPES.get },
+        (response) => {
+          if (chrome.runtime.lastError) {
+            finish(false);
+            return;
+          }
+          finish(!!response?.isOpen);
+        }
+      );
+    } catch (error) {
+      finish(false);
+    }
+    setTimeout(() => finish(false), 1000);
+  });
+}
+
+async function applyInitialPanelPreference() {
+  if (hasAppliedInitialPanelPreference) {
+    return;
+  }
+  hasAppliedInitialPanelPreference = true;
+  try {
+    const shouldOpen = await requestGlobalPanelPreference();
+    if (shouldOpen) {
+      await togglePanel(true, { skipGlobalSync: true, skipAuthRefresh: true });
+    }
+  } catch (error) {
+    console.debug('[WebEdit] Failed to apply initial panel preference:', error?.message || error);
+  }
 }
 
 // ============================================
@@ -329,6 +419,9 @@ function setFeatureControlsEnabled(isEnabled) {
   const customizeInputs = customizePanel ? customizePanel.querySelectorAll("input,button") : [];
   const historyBtn = getPanelElement("webedit-history-btn");
   const newChatBtn = getPanelElement("webedit-new-chat-btn");
+  const attachBtn = getPanelElement("webedit-attach-btn");
+  const sendBtn = getPanelElement("webedit-send-btn");
+  const fileInput = getPanelElement("webedit-file-input");
 
   toolButtons.forEach((btn) => {
     btn.disabled = !isEnabled;
@@ -346,6 +439,16 @@ function setFeatureControlsEnabled(isEnabled) {
     }
     chatInput.disabled = !isEnabled;
     chatInput.placeholder = isEnabled ? chatInput.dataset.defaultPlaceholder : "Sign in to start editing";
+  }
+
+  if (attachBtn) {
+    attachBtn.disabled = !isEnabled;
+  }
+  if (sendBtn) {
+    sendBtn.disabled = !isEnabled;
+  }
+  if (fileInput) {
+    fileInput.disabled = !isEnabled;
   }
 
   customizeInputs.forEach((input) => {
@@ -1083,28 +1186,81 @@ function createPanel() {
     <div class="webedit-customize-panel" id="webedit-customize-panel">
       <div class="webedit-customize-header">
         <h3>Customize Element</h3>
-        <button class="webedit-customize-close-btn" id="webedit-customize-close-btn">×</button>
+        <button class="webedit-customize-close-btn" id="webedit-customize-close-btn" type="button">×</button>
       </div>
       <p class="webedit-customize-info">Pick an element to customize its appearance</p>
       
-      <div class="webedit-field-row">
-        <label>Background:</label>
-        <input type="color" id="webedit-bg-color" value="#ffffff" />
+      <div class="webedit-field-group">
+        <div class="webedit-field-row">
+          <label>Background:</label>
+          <input type="color" id="webedit-bg-color" value="#ffffff" />
+        </div>
+        
+        <div class="webedit-field-row">
+          <label>Text Color:</label>
+          <input type="color" id="webedit-text-color" value="#000000" />
+        </div>
+        
+        <div class="webedit-field-row">
+          <label>Font Size:</label>
+          <input type="number" id="webedit-font-size" value="16" min="8" max="72" />
+        </div>
+
+        <div class="webedit-field-row">
+          <label>Width:</label>
+          <div class="webedit-size-input-group">
+            <input type="number" id="webedit-width-value" min="0" placeholder="auto" />
+            <select id="webedit-width-unit">
+              <option value="px">px</option>
+              <option value="%">%</option>
+              <option value="rem">rem</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="webedit-field-row">
+          <label>Height:</label>
+          <div class="webedit-size-input-group">
+            <input type="number" id="webedit-height-value" min="0" placeholder="auto" />
+            <select id="webedit-height-unit">
+              <option value="px">px</option>
+              <option value="%">%</option>
+              <option value="rem">rem</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="webedit-field-row">
+          <label>Scale:</label>
+          <div class="webedit-scale-input">
+            <input type="range" id="webedit-scale-input" min="50" max="200" value="100" />
+            <span class="webedit-scale-value" id="webedit-scale-value">100%</span>
+          </div>
+        </div>
       </div>
-      
-      <div class="webedit-field-row">
-        <label>Text Color:</label>
-        <input type="color" id="webedit-text-color" value="#000000" />
+
+      <div class="webedit-panel-divider"></div>
+
+      <div class="webedit-layout-section">
+        <div class="webedit-section-label">Reposition</div>
+        <div class="webedit-layout-actions">
+          <button class="webedit-layout-btn" id="webedit-move-up-btn" type="button">Move up</button>
+          <button class="webedit-layout-btn" id="webedit-move-down-btn" type="button">Move down</button>
+        </div>
       </div>
-      
-      <div class="webedit-field-row">
-        <label>Font Size:</label>
-        <input type="number" id="webedit-font-size" value="16" min="8" max="72" />
+
+      <div class="webedit-layout-section">
+        <div class="webedit-section-label">Alignment</div>
+        <div class="webedit-align-actions">
+          <button class="webedit-align-btn" data-align="left" type="button">Left</button>
+          <button class="webedit-align-btn" data-align="center" type="button">Center</button>
+          <button class="webedit-align-btn" data-align="right" type="button">Right</button>
+        </div>
       </div>
       
       <div class="webedit-customize-actions">
-        <button class="webedit-btn-small webedit-btn-primary" id="webedit-apply-btn">Apply</button>
-        <button class="webedit-btn-small webedit-btn-secondary" id="webedit-reset-btn">Reset</button>
+        <button class="webedit-btn-small webedit-btn-primary" id="webedit-apply-btn" type="button">Apply</button>
+        <button class="webedit-btn-small webedit-btn-secondary" id="webedit-reset-btn" type="button">Reset</button>
       </div>
     </div>
 
@@ -1133,15 +1289,21 @@ function createPanel() {
     </div>
 
     <!-- Chat Input Bar (at bottom) -->
-    <div class="webedit-input-container">
-      <textarea 
-        class="webedit-chat-input" 
-        id="webedit-chat-input" 
-        placeholder="What to do you want to change?"
-        rows="2"
-        autocomplete="off"
-        spellcheck="true"
-      ></textarea>
+    <div class="webedit-input-container" id="webedit-input-container">
+      <div class="webedit-attachment-preview" id="webedit-attachment-preview"></div>
+      <div class="webedit-input-row">
+        <button class="webedit-attach-btn" id="webedit-attach-btn" type="button" aria-label="Attach files">📎</button>
+        <textarea 
+          class="webedit-chat-input" 
+          id="webedit-chat-input" 
+          placeholder="What to do you want to change?"
+          rows="2"
+          autocomplete="off"
+          spellcheck="true"
+        ></textarea>
+        <button class="webedit-send-btn" id="webedit-send-btn" type="button" aria-label="Send message">➤</button>
+      </div>
+      <input class="webedit-file-input" id="webedit-file-input" type="file" multiple accept="image/*,.pdf,.doc,.docx,.txt,.json,.csv,.md" />
     </div>
 
   `;
@@ -1169,12 +1331,21 @@ function createPanel() {
  */
 async function togglePanel(show, options = {}) {
   const skipSave = options.skipSave || false;
+  const skipGlobalSync = options.skipGlobalSync || false;
+  const skipAuthRefresh = options.skipAuthRefresh || false;
   if (!chatPanel) {
     createPanel();
   }
 
   if (show === undefined) {
     show = !isPanelOpen;
+  }
+
+  if (show === isPanelOpen) {
+    if (!skipGlobalSync) {
+      notifyBackgroundOfPanelState(isPanelOpen);
+    }
+    return;
   }
 
   isPanelOpen = show;
@@ -1189,10 +1360,12 @@ async function togglePanel(show, options = {}) {
     applyPageShiftWidth();
     startPageShiftTracking();
 
-    // Check auth status when opening the panel
-    console.log("🔍 Checking auth status...");
-    const user = await checkAuthStatus();
-    console.log("🔍 Auth check result:", user ? user.email : "Not signed in");
+    if (!skipAuthRefresh) {
+      // Check auth status when opening the panel
+      console.log("🔍 Checking auth status...");
+      const user = await checkAuthStatus();
+      console.log("🔍 Auth check result:", user ? user.email : "Not signed in");
+    }
   } else {
     chatPanel.classList.add("hidden");
     document.documentElement.classList.remove("webedit-panel-open");
@@ -1205,6 +1378,9 @@ async function togglePanel(show, options = {}) {
   }
   if (!skipSave) {
     schedulePanelStateSave();
+  }
+  if (!skipGlobalSync) {
+    notifyBackgroundOfPanelState(isPanelOpen);
   }
 }
 
@@ -1329,6 +1505,7 @@ function attachPanelEventListeners() {
         stopRemoveMode();
         stopPickMode();
         customizePanel.classList.add("visible");
+        updateCustomizeUiForTarget();
         showNotification("Pick an element to customize, or use 'Pick element' button", "info");
       } else if (currentTool === "add") {
         // Start Add feature flow
@@ -1382,39 +1559,61 @@ function attachPanelEventListeners() {
     });
   }
 
-  // Chat input
+  // Chat input + attachments
   const chatInput = getPanelElement("webedit-chat-input");
+  const sendBtn = getPanelElement("webedit-send-btn");
+  const attachBtn = getPanelElement("webedit-attach-btn");
+  const fileInput = getPanelElement("webedit-file-input");
+  const attachmentsPreview = getPanelElement("webedit-attachment-preview");
+  const inputContainer = getPanelElement("webedit-input-container");
 
-  chatInput.addEventListener("keypress", async (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
+  if (chatInput) {
+    chatInput.addEventListener("keypress", async (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        await submitChatMessage();
+      }
+    });
 
-      const userText = chatInput.value.trim();
-      if (!userText) {
-        chatInput.value = "";
+    chatInput.addEventListener("focus", () => {
+      if (inputContainer) {
+        inputContainer.classList.add("focused");
+      }
+    });
+
+    chatInput.addEventListener("blur", () => {
+      if (inputContainer) {
+        inputContainer.classList.remove("focused");
+      }
+    });
+  }
+
+  if (sendBtn) {
+    sendBtn.addEventListener("click", async () => {
+      await submitChatMessage();
+    });
+  }
+
+  if (attachBtn && fileInput) {
+    attachBtn.addEventListener("click", () => {
+      if (!requireAuth("attach files")) {
         return;
       }
+      fileInput.click();
+    });
 
-      // Clear input immediately
-      chatInput.value = "";
-
-      if (isAddFeatureMode) {
-        console.log("➕ Processing Add feature prompt input:", userText);
-        await handleAddFeatureChatEntry(userText);
-        return;
+    fileInput.addEventListener("change", (event) => {
+      const files = event.target?.files;
+      if (files && files.length > 0) {
+        handleAttachmentSelection(files);
       }
+      fileInput.value = "";
+    });
+  }
 
-      await handleGeneralChatMessage(userText);
-    }
-  });
-
-  chatInput.addEventListener("focus", () => {
-    chatInput.parentElement.classList.add("focused");
-  });
-
-  chatInput.addEventListener("blur", () => {
-    chatInput.parentElement.classList.remove("focused");
-  });
+  if (attachmentsPreview) {
+    renderAttachmentPreview();
+  }
 
   // Navigation buttons
   const logoBtn = getPanelElement("webedit-logo-btn");
@@ -1437,9 +1636,46 @@ function attachPanelEventListeners() {
   const bgColorInput = getPanelElement("webedit-bg-color");
   const textColorInput = getPanelElement("webedit-text-color");
   const fontSizeInput = getPanelElement("webedit-font-size");
+  const widthInput = getPanelElement("webedit-width-value");
+  const widthUnitSelect = getPanelElement("webedit-width-unit");
+  const heightInput = getPanelElement("webedit-height-value");
+  const heightUnitSelect = getPanelElement("webedit-height-unit");
+  const scaleInput = getPanelElement("webedit-scale-input");
+  const scaleValue = getPanelElement("webedit-scale-value");
+  const moveUpBtn = getPanelElement("webedit-move-up-btn");
+  const moveDownBtn = getPanelElement("webedit-move-down-btn");
+  const alignButtons = Array.from(queryPanel(".webedit-align-btn") || []);
 
   customizeCloseBtn.addEventListener("click", () => {
     exitActiveFeatures();
+  });
+
+  if (widthInput && widthUnitSelect) {
+    widthInput.addEventListener("input", previewSizingChanges);
+    widthUnitSelect.addEventListener("change", previewSizingChanges);
+  }
+  if (heightInput && heightUnitSelect) {
+    heightInput.addEventListener("input", previewSizingChanges);
+    heightUnitSelect.addEventListener("change", previewSizingChanges);
+  }
+  if (scaleInput && scaleValue) {
+    scaleInput.addEventListener("input", () => {
+      scaleValue.textContent = `${scaleInput.value}%`;
+      previewSizingChanges();
+    });
+  }
+  if (moveUpBtn) {
+    moveUpBtn.addEventListener("click", () => handleCustomizeReorder("up"));
+  }
+  if (moveDownBtn) {
+    moveDownBtn.addEventListener("click", () => handleCustomizeReorder("down"));
+  }
+  alignButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const value = btn.dataset.align || "left";
+      setAlignmentChoice(value);
+      applyAlignmentPreview(value);
+    });
   });
 
   applyBtn.addEventListener("click", async () => {
@@ -1456,19 +1692,26 @@ function attachPanelEventListeners() {
       return;
     }
 
-    const styles = {
-      backgroundColor: bgColorInput.value,
-      color: textColorInput.value,
-      fontSize: fontSizeInput.value + "px"
-    };
+    const styles = buildStylePayload({
+      backgroundColor: bgColorInput?.value,
+      color: textColorInput?.value,
+      fontSize: fontSizeInput?.value,
+      widthValue: widthInput?.value,
+      widthUnit: widthUnitSelect?.value,
+      heightValue: heightInput?.value,
+      heightUnit: heightUnitSelect?.value,
+      scalePercent: scaleInput?.value,
+      alignment: currentAlignmentChoice
+    });
+
+    if (!styles || Object.keys(styles).length === 0) {
+      showNotification("Adjust a style before applying.", "error");
+      return;
+    }
 
     console.log("🎨 Applying styles:", styles, "to element:", targetEl);
 
-    // Apply styles immediately with !important to override existing styles
-    // Use setProperty with 'important' priority to ensure styles are applied
-    targetEl.style.setProperty('background-color', styles.backgroundColor, 'important');
-    targetEl.style.setProperty('color', styles.color, 'important');
-    targetEl.style.setProperty('font-size', styles.fontSize, 'important');
+    applyStylePreview(targetEl, styles);
 
     console.log("✅ Styles applied to element. Current fontSize:", window.getComputedStyle(targetEl).fontSize);
 
@@ -1498,9 +1741,15 @@ function attachPanelEventListeners() {
 
   resetBtn.addEventListener("click", () => {
     // Reset input fields to defaults
-    bgColorInput.value = "#ffffff";
-    textColorInput.value = "#000000";
-    fontSizeInput.value = "16";
+    if (bgColorInput) bgColorInput.value = "#ffffff";
+    if (textColorInput) textColorInput.value = "#000000";
+    if (fontSizeInput) fontSizeInput.value = "16";
+    if (widthInput) widthInput.value = "";
+    if (heightInput) heightInput.value = "";
+    if (scaleInput) scaleInput.value = "100";
+    if (scaleValue) scaleValue.textContent = "100%";
+    currentAlignmentChoice = null;
+    updateAlignmentButtons();
 
     // Remove applied styles from the selected element
     const targetEl = currentEditTarget.element || selectedEl;
@@ -1509,6 +1758,14 @@ function attachPanelEventListeners() {
       targetEl.style.removeProperty('background-color');
       targetEl.style.removeProperty('color');
       targetEl.style.removeProperty('font-size');
+      targetEl.style.removeProperty('width');
+      targetEl.style.removeProperty('height');
+      targetEl.style.removeProperty('transform');
+      targetEl.style.removeProperty('transform-origin');
+      targetEl.style.removeProperty('text-align');
+      targetEl.style.removeProperty('align-self');
+      targetEl.style.removeProperty('margin-left');
+      targetEl.style.removeProperty('margin-right');
 
       console.log("🔄 Styles reset for element:", targetEl);
       showNotification("Styles reset - element restored to original appearance!", "success");
@@ -1516,6 +1773,316 @@ function attachPanelEventListeners() {
       showNotification("No element selected", "error");
     }
   });
+
+  updateCustomizeUiForTarget();
+
+  function previewSizingChanges() {
+    const targetEl = currentEditTarget.element || selectedEl;
+    if (!targetEl) {
+      return;
+    }
+    const sizingStyles = buildStylePayload({
+      widthValue: widthInput?.value,
+      widthUnit: widthUnitSelect?.value,
+      heightValue: heightInput?.value,
+      heightUnit: heightUnitSelect?.value,
+      scalePercent: scaleInput?.value,
+      alignment: currentAlignmentChoice
+    });
+    applyStylePreview(targetEl, sizingStyles);
+    if (!widthInput?.value) {
+      targetEl.style.removeProperty('width');
+    }
+    if (!heightInput?.value) {
+      targetEl.style.removeProperty('height');
+    }
+    if (!scaleInput || Number(scaleInput.value) === 100) {
+      targetEl.style.removeProperty('transform');
+      targetEl.style.removeProperty('transform-origin');
+    }
+  }
+}
+
+// ============================================
+// Customize Helpers
+// ============================================
+
+function getCustomizeTargetElement() {
+  return currentEditTarget.element || selectedEl;
+}
+
+function buildStylePayload(options = {}) {
+  const styles = {};
+  const {
+    backgroundColor,
+    color,
+    fontSize,
+    widthValue,
+    widthUnit = "px",
+    heightValue,
+    heightUnit = "px",
+    scalePercent,
+    alignment
+  } = options;
+
+  if (backgroundColor) {
+    styles.backgroundColor = backgroundColor;
+  }
+  if (color) {
+    styles.color = color;
+  }
+  if (fontSize && !Number.isNaN(Number(fontSize))) {
+    styles.fontSize = `${fontSize}px`;
+  }
+  if (widthValue && !Number.isNaN(Number(widthValue))) {
+    styles.width = formatMeasurement(widthValue, widthUnit);
+  }
+  if (heightValue && !Number.isNaN(Number(heightValue))) {
+    styles.height = formatMeasurement(heightValue, heightUnit);
+  }
+  if (scalePercent && Number(scalePercent) !== 100) {
+    const scale = Math.max(10, Number(scalePercent)) / 100;
+    styles.transform = `scale(${scale})`;
+    styles.transformOrigin = "center";
+  }
+  if (alignment) {
+    Object.assign(styles, getAlignmentStyles(alignment));
+  }
+  return styles;
+}
+
+function formatMeasurement(value, unit = "px") {
+  const numeric = Number(value);
+  if (Number.isNaN(numeric)) {
+    return null;
+  }
+  const normalizedUnit = unit || "px";
+  return `${numeric}${normalizedUnit}`;
+}
+
+function applyStylePreview(targetEl, styles = {}) {
+  if (!targetEl || !styles) {
+    return;
+  }
+  Object.entries(styles).forEach(([prop, value]) => {
+    if (!value) {
+      return;
+    }
+    const cssProperty = prop.replace(/([A-Z])/g, '-$1').toLowerCase();
+    targetEl.style.setProperty(cssProperty, value, 'important');
+  });
+}
+
+async function handleCustomizeReorder(direction = "up") {
+  if (!requireAuth("reposition elements")) {
+    return;
+  }
+  const targetEl = getCustomizeTargetElement();
+  if (!targetEl || !targetEl.parentElement) {
+    showNotification("Pick an element first to reposition it.", "error");
+    return;
+  }
+  const parent = targetEl.parentElement;
+  const sibling = direction === "up" ? targetEl.previousElementSibling : targetEl.nextElementSibling;
+  if (!sibling) {
+    showNotification(`Element already ${direction === "up" ? "at the top" : "at the bottom"} of its section.`, "info");
+    return;
+  }
+
+  if (direction === "up") {
+    parent.insertBefore(targetEl, sibling);
+  } else {
+    parent.insertBefore(targetEl, sibling.nextSibling);
+  }
+
+  updateLayoutButtonsState(targetEl);
+
+  try {
+    const rule = await saveLayoutRuleForElement(targetEl);
+    if (rule) {
+      showNotification(`Element moved ${direction === "up" ? "up" : "down"}`, "success");
+    }
+  } catch (error) {
+    console.error("[Customize] Failed to persist layout change:", error);
+    showNotification("Position changed, but couldn't save it. Please try again.", "error");
+  }
+}
+
+async function saveLayoutRuleForElement(targetEl) {
+  const editRules = await waitForEditRules();
+  if (!editRules) {
+    return null;
+  }
+  const layoutMetadata = buildLayoutMetadata(targetEl);
+  if (!layoutMetadata) {
+    return null;
+  }
+  const rule = await editRules.createRule(targetEl, "reorder", { layout: layoutMetadata }, currentUser);
+  if (window.SaveEdit && window.SaveEdit.saveCustomizeEdit) {
+    window.SaveEdit.saveCustomizeEdit(targetEl, rule).catch(err => {
+      console.error('[Customize] Failed to save layout change to Supabase:', err);
+    });
+  }
+  return rule;
+}
+
+function buildLayoutMetadata(targetEl) {
+  if (!targetEl || !targetEl.parentElement) {
+    return null;
+  }
+  const parent = targetEl.parentElement;
+  const parentSelector = generateSelectorForElement(parent);
+  const siblings = Array.from(parent.children);
+  const targetIndex = siblings.indexOf(targetEl);
+  const previousSibling = targetEl.previousElementSibling;
+  return {
+    type: "reorder",
+    parentSelector,
+    targetIndex,
+    previousSiblingSelector: previousSibling ? generateSelectorForElement(previousSibling) : null,
+    description: generateDescriptionForElement(targetEl)
+  };
+}
+
+function updateCustomizeUiForTarget() {
+  const targetEl = getCustomizeTargetElement();
+  hydrateSizingControlsFromTarget(targetEl);
+  detectAlignmentChoice(targetEl);
+  updateAlignmentButtons();
+  updateLayoutButtonsState(targetEl);
+}
+
+function hydrateSizingControlsFromTarget(targetEl) {
+  const widthInput = getPanelElement("webedit-width-value");
+  const widthUnitSelect = getPanelElement("webedit-width-unit");
+  const heightInput = getPanelElement("webedit-height-value");
+  const heightUnitSelect = getPanelElement("webedit-height-unit");
+  const scaleInput = getPanelElement("webedit-scale-input");
+  const scaleValue = getPanelElement("webedit-scale-value");
+
+  if (!targetEl) {
+    if (widthInput) widthInput.value = "";
+    if (heightInput) heightInput.value = "";
+    if (scaleInput) scaleInput.value = "100";
+    if (scaleValue) scaleValue.textContent = "100%";
+    return;
+  }
+
+  const computed = window.getComputedStyle(targetEl);
+  const widthParsed = parseCssMeasurement(computed.width);
+  if (widthParsed && widthInput && widthUnitSelect) {
+    widthInput.value = widthParsed.value;
+    widthUnitSelect.value = widthParsed.unit;
+  } else {
+    if (widthInput) widthInput.value = "";
+    if (widthUnitSelect) widthUnitSelect.value = "px";
+  }
+  const heightParsed = parseCssMeasurement(computed.height);
+  if (heightParsed && heightInput && heightUnitSelect) {
+    heightInput.value = heightParsed.value;
+    heightUnitSelect.value = heightParsed.unit;
+  } else {
+    if (heightInput) heightInput.value = "";
+    if (heightUnitSelect) heightUnitSelect.value = "px";
+  }
+  if (scaleInput && scaleValue) {
+    scaleInput.value = "100";
+    scaleValue.textContent = "100%";
+  }
+}
+
+function parseCssMeasurement(value) {
+  if (!value || value === "auto") {
+    return null;
+  }
+  const match = value.trim().match(/^([0-9.]+)(px|%|rem)$/i);
+  if (!match) {
+    return null;
+  }
+  return {
+    value: match[1],
+    unit: match[2]
+  };
+}
+
+function updateLayoutButtonsState(targetEl = getCustomizeTargetElement()) {
+  const moveUpBtn = getPanelElement("webedit-move-up-btn");
+  const moveDownBtn = getPanelElement("webedit-move-down-btn");
+  if (!moveUpBtn || !moveDownBtn) {
+    return;
+  }
+  if (!targetEl || !targetEl.parentElement) {
+    moveUpBtn.disabled = true;
+    moveDownBtn.disabled = true;
+    return;
+  }
+  moveUpBtn.disabled = !targetEl.previousElementSibling;
+  moveDownBtn.disabled = !targetEl.nextElementSibling;
+}
+
+function setAlignmentChoice(value) {
+  currentAlignmentChoice = value;
+  updateAlignmentButtons();
+}
+
+function updateAlignmentButtons() {
+  const buttons = queryPanel(".webedit-align-btn");
+  buttons.forEach((btn) => {
+    const align = btn.dataset.align;
+    if (align === currentAlignmentChoice) {
+      btn.classList.add("active");
+    } else {
+      btn.classList.remove("active");
+    }
+  });
+}
+
+function detectAlignmentChoice(targetEl = getCustomizeTargetElement()) {
+  if (!targetEl) {
+    currentAlignmentChoice = null;
+    return;
+  }
+  const computed = window.getComputedStyle(targetEl);
+  const textAlign = computed.textAlign;
+  if (textAlign === "center") {
+    currentAlignmentChoice = "center";
+  } else if (textAlign === "right") {
+    currentAlignmentChoice = "right";
+  } else {
+    currentAlignmentChoice = "left";
+  }
+}
+
+function applyAlignmentPreview(value) {
+  const targetEl = getCustomizeTargetElement();
+  if (!targetEl) {
+    return;
+  }
+  applyStylePreview(targetEl, getAlignmentStyles(value));
+}
+
+function getAlignmentStyles(choice = "left") {
+  switch (choice) {
+    case "center":
+      return {
+        textAlign: "center",
+        marginLeft: "auto",
+        marginRight: "auto"
+      };
+    case "right":
+      return {
+        textAlign: "right",
+        marginLeft: "auto",
+        marginRight: "0"
+      };
+    case "left":
+    default:
+      return {
+        textAlign: "left",
+        marginLeft: "0",
+        marginRight: "auto"
+      };
+  }
 }
 
 
@@ -1590,6 +2157,7 @@ function clearSelected() {
   if (selectedEl) {
     selectedEl.classList.remove("webedit-selected");
     selectedEl = null;
+    updateCustomizeUiForTarget();
   }
 }
 
@@ -1788,6 +2356,7 @@ async function handlePickClick(event) {
     };
 
     console.log("📋 Edit target set:", currentEditTarget);
+    updateCustomizeUiForTarget();
 
     // Add reference message to chat
     addChatMessage("reference", `Reference: ${description}`);
@@ -1984,7 +2553,7 @@ function getPagePlainText() {
 // Chat Message Management
 // ============================================
 
-function addChatMessage(type, content) {
+function addChatMessage(type, content, options = {}) {
   // If adding a reference, remove any existing ones first (one at a time)
   if (type === 'reference') {
     chatMessages = chatMessages.filter(msg => msg.type !== 'reference');
@@ -1996,10 +2565,13 @@ function addChatMessage(type, content) {
     }
   }
 
+  const attachments = Array.isArray(options.attachments) ? options.attachments : [];
+
   const message = {
     type: type, // "user", "system", "reference"
     content: content,
-    timestamp: Date.now()
+    timestamp: Date.now(),
+    attachments
   };
 
   chatMessages.push(message);
@@ -2061,6 +2633,7 @@ function clearInMemoryUserState(reason = "unspecified") {
   resetCurrentEditTarget();
   chatMessages = [];
   currentSessionId = null;
+  clearPendingAttachments();
   renderChatMessages();
   updateChatInputPrompt("What do you want to change?");
   removeInjectedFeaturesFromDom();
@@ -2086,14 +2659,6 @@ function saveChatHistory() {
     localStorage.setItem(sessionKey, currentSessionId);
   }
 
-  const session = {
-    id: currentSessionId,
-    timestamp: Date.now(),
-    messages: chatMessages,
-    preview: chatMessages.length > 0 ?
-      (chatMessages.find(m => m.type === 'user')?.content || 'New Chat') : 'Empty Chat'
-  };
-
   try {
     // Get existing history
     let history = [];
@@ -2101,6 +2666,17 @@ function saveChatHistory() {
     if (raw) {
       history = JSON.parse(raw);
     }
+
+    const existingEntry = history.find(s => s.id === currentSessionId);
+    const preservedTitle = existingEntry?.title || null;
+
+    const session = {
+      id: currentSessionId,
+      timestamp: Date.now(),
+      messages: chatMessages,
+      preview: getSessionPreviewText(chatMessages),
+      title: preservedTitle || getDefaultSessionTitle(chatMessages)
+    };
 
     // Update or add current session
     const index = history.findIndex(s => s.id === currentSessionId);
@@ -2185,6 +2761,7 @@ function renderHistoryList(historyData = null) {
     return;
   }
 
+  closeActiveHistoryRenameForm();
   listContainer.innerHTML = '';
 
   historyData.sort((a, b) => b.timestamp - a.timestamp).forEach(session => {
@@ -2193,18 +2770,188 @@ function renderHistoryList(historyData = null) {
 
     const date = new Date(session.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
-    item.innerHTML = `
-      <div class="webedit-history-date">${date}</div>
-      <div class="webedit-history-preview">${escapeHtml(session.preview || 'New Chat')}</div>
-    `;
+    const mainRow = document.createElement('div');
+    mainRow.className = 'webedit-history-item-main';
+
+    const titleEl = document.createElement('div');
+    titleEl.className = 'webedit-history-title';
+    titleEl.textContent = getSessionDisplayName(session);
+    mainRow.appendChild(titleEl);
+
+    const renameBtn = document.createElement('button');
+    renameBtn.className = 'webedit-history-rename-btn';
+    renameBtn.type = 'button';
+    renameBtn.setAttribute('aria-label', 'Rename chat');
+    renameBtn.innerHTML = '✏︎';
+    renameBtn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      openHistoryRenameInput(session, item);
+    });
+    mainRow.appendChild(renameBtn);
+
+    const dateEl = document.createElement('div');
+    dateEl.className = 'webedit-history-date';
+    dateEl.textContent = date;
+
+    const previewEl = document.createElement('div');
+    previewEl.className = 'webedit-history-preview';
+    previewEl.textContent = session.preview || 'New Chat';
+
+    item.appendChild(mainRow);
+    item.appendChild(dateEl);
+    item.appendChild(previewEl);
 
     item.addEventListener('click', () => loadSession(session.id));
     listContainer.appendChild(item);
   });
 }
 
+function getSessionPreviewText(messages = []) {
+  const firstUserMessage = messages.find(m => m.type === 'user');
+  if (firstUserMessage) {
+    if (firstUserMessage.content && firstUserMessage.content.trim()) {
+      return firstUserMessage.content.trim();
+    }
+    if (Array.isArray(firstUserMessage.attachments) && firstUserMessage.attachments.length > 0) {
+      if (firstUserMessage.attachments.length === 1) {
+        return `Attachment: ${firstUserMessage.attachments[0].name || 'file'}`;
+      }
+      return `${firstUserMessage.attachments.length} attachments`;
+    }
+  }
+  if (messages.length > 0) {
+    const fallback = messages[0];
+    if (fallback.content && fallback.content.trim()) {
+      return fallback.content.trim();
+    }
+  }
+  return 'New Chat';
+}
+
+function getDefaultSessionTitle(messages = []) {
+  const preview = getSessionPreviewText(messages);
+  if (preview && preview !== 'New Chat' && preview !== 'Empty Chat') {
+    return preview.length > 40 ? `${preview.substring(0, 37)}...` : preview;
+  }
+  const now = new Date();
+  return `Chat ${now.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
+}
+
+function getSessionDisplayName(session) {
+  if (!session) return 'Untitled chat';
+  const title = session.title && session.title.trim();
+  if (title) return title;
+  const preview = session.preview && session.preview.trim();
+  if (preview) return preview.length > 60 ? `${preview.substring(0, 57)}...` : preview;
+  return 'Untitled chat';
+}
+
+function closeActiveHistoryRenameForm() {
+  if (activeHistoryRenameForm && activeHistoryRenameForm.parentNode) {
+    activeHistoryRenameForm.parentNode.removeChild(activeHistoryRenameForm);
+  }
+  activeHistoryRenameForm = null;
+}
+
+function openHistoryRenameInput(session, hostElement) {
+  closeActiveHistoryRenameForm();
+  if (!hostElement) return;
+
+  const form = document.createElement('form');
+  form.className = 'webedit-history-rename-form';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = getSessionDisplayName(session);
+  input.maxLength = 80;
+  input.className = 'webedit-history-rename-input';
+  form.appendChild(input);
+
+  const actions = document.createElement('div');
+  actions.className = 'webedit-history-rename-actions';
+
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'submit';
+  saveBtn.className = 'webedit-history-rename-save';
+  saveBtn.textContent = 'Save';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.className = 'webedit-history-rename-cancel';
+  cancelBtn.textContent = 'Cancel';
+
+  actions.appendChild(saveBtn);
+  actions.appendChild(cancelBtn);
+  form.appendChild(actions);
+
+  const commit = (shouldSave) => {
+    if (shouldSave) {
+      renameChatSession(session.id, input.value);
+    }
+    closeActiveHistoryRenameForm();
+    renderHistoryList();
+  };
+
+  form.addEventListener('click', (event) => {
+    event.stopPropagation();
+  });
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    commit(true);
+  });
+
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      commit(false);
+    }
+  });
+
+  cancelBtn.addEventListener('click', (event) => {
+    event.preventDefault();
+    commit(false);
+  });
+
+  input.addEventListener('blur', (event) => {
+    if (event.relatedTarget === saveBtn || event.relatedTarget === cancelBtn) {
+      return;
+    }
+    commit(true);
+  });
+
+  hostElement.appendChild(form);
+  activeHistoryRenameForm = form;
+  input.focus();
+  input.select();
+}
+
+function renameChatSession(sessionId, newName) {
+  const historyKey = getChatHistoryStorageKey();
+  if (!historyKey) return false;
+
+  try {
+    const raw = localStorage.getItem(historyKey);
+    if (!raw) return false;
+    const history = JSON.parse(raw);
+    const session = history.find(s => s.id === sessionId);
+    if (!session) return false;
+
+    const trimmed = (newName || '').trim();
+    session.title = trimmed || getDefaultSessionTitle(session.messages || []);
+    localStorage.setItem(historyKey, JSON.stringify(history));
+    console.log(`[History] Renamed chat ${sessionId} -> ${session.title}`);
+    return true;
+  } catch (error) {
+    console.error('[History] Failed to rename chat:', error);
+    return false;
+  }
+}
+
 function loadSession(sessionId) {
   if (!currentUser?.id) return;
+
+  closeActiveHistoryRenameForm();
 
   const historyKey = getChatHistoryStorageKey();
   const sessionKey = getSessionStorageKey();
@@ -2252,6 +2999,7 @@ function startNewChat(saveOld = true) {
   currentSessionId = Date.now().toString();
   localStorage.setItem(sessionKey, currentSessionId);
   chatMessages = [];
+  clearPendingAttachments();
   renderChatMessages();
   saveChatHistory(); // Create entry for new chat
 }
@@ -2283,11 +3031,52 @@ function renderChatMessages() {
       const msgEl = document.createElement("div");
       msgEl.className = `webedit-chat-message webedit-chat-message-${msg.type}`;
 
-      const contentEl = document.createElement("div");
-      contentEl.className = "webedit-chat-message-content";
-      contentEl.textContent = msg.content;
+      if (msg.content) {
+        const contentEl = document.createElement("div");
+        contentEl.className = "webedit-chat-message-content";
+        contentEl.textContent = msg.content;
+        msgEl.appendChild(contentEl);
+      }
 
-      msgEl.appendChild(contentEl);
+      if (Array.isArray(msg.attachments) && msg.attachments.length > 0) {
+        const attachmentsEl = document.createElement("div");
+        attachmentsEl.className = "webedit-chat-message-attachments";
+
+        msg.attachments.forEach((attachment) => {
+          const attachmentEl = document.createElement("div");
+          attachmentEl.className = "webedit-chat-attachment";
+
+          if (attachment.type === "image" && attachment.url) {
+            const img = document.createElement("img");
+            img.src = attachment.previewUrl || attachment.url;
+            img.alt = attachment.name || "Image attachment";
+            attachmentEl.appendChild(img);
+          } else {
+            const icon = document.createElement("span");
+            icon.textContent = "📎";
+            attachmentEl.appendChild(icon);
+          }
+
+          const nameEl = document.createElement("div");
+          nameEl.className = "webedit-chat-attachment-name";
+          nameEl.textContent = attachment.name || "Attachment";
+          attachmentEl.appendChild(nameEl);
+
+          if (attachment.url) {
+            const link = document.createElement("a");
+            link.href = attachment.url;
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+            link.textContent = "Open";
+            attachmentEl.appendChild(link);
+          }
+
+          attachmentsEl.appendChild(attachmentEl);
+        });
+
+        msgEl.appendChild(attachmentsEl);
+      }
+
       chatContainer.appendChild(msgEl);
     });
 
@@ -2325,6 +3114,231 @@ function renderChatMessages() {
     // Scroll to bottom of chat
     chatContainer.scrollTop = chatContainer.scrollHeight;
   }
+}
+
+// ============================================
+// Chat Attachments + Composer Helpers
+// ============================================
+
+async function submitChatMessage() {
+  if (isComposerBusy) {
+    return;
+  }
+
+  const chatInput = getPanelElement("webedit-chat-input");
+  if (!chatInput) {
+    return;
+  }
+
+  let userText = (chatInput.value || "").trim();
+  const hasAttachments = pendingAttachments.length > 0;
+
+  if (!userText && !hasAttachments) {
+    chatInput.value = "";
+    return;
+  }
+
+  if (isAddFeatureMode) {
+    if (hasAttachments) {
+      showNotification("Attachments are not supported during Add feature prompts yet.", "error");
+      return;
+    }
+    chatInput.value = "";
+    await handleAddFeatureChatEntry(userText);
+    return;
+  }
+
+  chatInput.value = "";
+  isComposerBusy = true;
+  setComposerBusy(true);
+
+  try {
+    const uploadedAttachments = hasAttachments ? await uploadPendingAttachments() : [];
+    if (!userText && uploadedAttachments.length > 0) {
+      userText = "Shared attachments";
+    }
+    await handleGeneralChatMessage(userText, uploadedAttachments);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[Chat] Failed to send message:", message);
+    showNotification(message || "Failed to send message. Please try again.", "error");
+  } finally {
+    isComposerBusy = false;
+    setComposerBusy(false);
+  }
+}
+
+function setComposerBusy(isBusy) {
+  const sendBtn = getPanelElement("webedit-send-btn");
+  const attachBtn = getPanelElement("webedit-attach-btn");
+  const inputContainer = getPanelElement("webedit-input-container");
+  const authEnabled = !!currentUser;
+  if (sendBtn) sendBtn.disabled = isBusy || !authEnabled;
+  if (attachBtn) attachBtn.disabled = isBusy || !authEnabled;
+  if (inputContainer) {
+    inputContainer.classList.toggle("busy", isBusy);
+  }
+}
+
+function handleAttachmentSelection(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) {
+    return;
+  }
+
+  for (const file of files) {
+    if (pendingAttachments.length >= MAX_PENDING_ATTACHMENTS) {
+      showNotification(`You can attach up to ${MAX_PENDING_ATTACHMENTS} files per message.`, "error");
+      break;
+    }
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      showNotification(`${file.name} is too large. Max size is ${Math.round(MAX_ATTACHMENT_BYTES / (1024 * 1024))} MB.`, "error");
+      continue;
+    }
+
+    const isImage = file.type.startsWith("image/");
+    const previewUrl = isImage ? URL.createObjectURL(file) : null;
+    pendingAttachments.push({
+      id: generateAttachmentId(),
+      file,
+      name: file.name,
+      size: file.size,
+      mimeType: file.type,
+      type: isImage ? "image" : "file",
+      previewUrl
+    });
+  }
+
+  renderAttachmentPreview();
+}
+
+function renderAttachmentPreview() {
+  const container = getPanelElement("webedit-attachment-preview");
+  if (!container) {
+    return;
+  }
+  container.innerHTML = "";
+
+  pendingAttachments.forEach((attachment) => {
+    const chip = document.createElement("div");
+    chip.className = "webedit-attachment-chip";
+
+    if (attachment.type === "image" && attachment.previewUrl) {
+      const thumb = document.createElement("img");
+      thumb.className = "webedit-attachment-thumb";
+      thumb.src = attachment.previewUrl;
+      thumb.alt = attachment.name || "Attachment";
+      chip.appendChild(thumb);
+    }
+
+    const label = document.createElement("span");
+    label.textContent = attachment.name || "Attachment";
+    chip.appendChild(label);
+
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "webedit-attachment-remove";
+    removeBtn.type = "button";
+    removeBtn.textContent = "×";
+    removeBtn.addEventListener("click", () => removePendingAttachment(attachment.id));
+    chip.appendChild(removeBtn);
+
+    container.appendChild(chip);
+  });
+}
+
+function removePendingAttachment(attachmentId) {
+  pendingAttachments = pendingAttachments.filter((attachment) => {
+    if (attachment.id === attachmentId && attachment.previewUrl) {
+      URL.revokeObjectURL(attachment.previewUrl);
+    }
+    return attachment.id !== attachmentId;
+  });
+  renderAttachmentPreview();
+}
+
+function clearPendingAttachments() {
+  pendingAttachments.forEach((attachment) => {
+    if (attachment.previewUrl) {
+      URL.revokeObjectURL(attachment.previewUrl);
+    }
+  });
+  pendingAttachments = [];
+  renderAttachmentPreview();
+}
+
+async function uploadPendingAttachments() {
+  if (!pendingAttachments.length) {
+    return [];
+  }
+  if (!currentUser?.id) {
+    throw new Error("Please sign in to upload attachments.");
+  }
+
+  const uploads = [];
+  for (const attachment of pendingAttachments) {
+    const url = await uploadAttachmentFile(attachment);
+    uploads.push({
+      id: attachment.id,
+      name: attachment.name,
+      size: attachment.size,
+      mimeType: attachment.mimeType,
+      type: attachment.type,
+      url,
+      previewUrl: attachment.previewUrl || null
+    });
+  }
+
+  clearPendingAttachments();
+  return uploads;
+}
+
+async function uploadAttachmentFile(attachment) {
+  if (!window.SupabaseClient) {
+    throw new Error("Supabase is not configured for file uploads.");
+  }
+  const file = attachment.file;
+  const userId = currentUser?.id;
+  if (!file || !userId) {
+    throw new Error("Missing file information.");
+  }
+
+  const sanitizedName = sanitizeFileName(file.name);
+  const objectPath = `${userId}/${Date.now()}-${Math.random().toString(36).slice(2)}-${sanitizedName}`;
+  const encodedPath = encodeStoragePath(objectPath);
+  const uploadUrl = `${window.SupabaseClient.url}/storage/v1/object/${SUPABASE_ATTACHMENT_BUCKET}/${encodedPath}`;
+
+  const response = await fetch(uploadUrl, {
+    method: "POST",
+    headers: {
+      'Content-Type': file.type || 'application/octet-stream',
+      'apikey': window.SupabaseClient.anonKey,
+      'Authorization': `Bearer ${window.SupabaseClient.anonKey}`,
+      'x-upsert': 'true'
+    },
+    body: file
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || `Failed to upload ${file.name}`);
+  }
+
+  return `${window.SupabaseClient.url}/storage/v1/object/public/${SUPABASE_ATTACHMENT_BUCKET}/${encodedPath}`;
+}
+
+function sanitizeFileName(name = "") {
+  return name.replace(/[^\w.\-]/g, "_");
+}
+
+function generateAttachmentId() {
+  return `attachment-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function encodeStoragePath(path = "") {
+  return path
+    .split("/")
+    .map(segment => encodeURIComponent(segment))
+    .join("/");
 }
 
 // ============================================
@@ -2660,10 +3674,6 @@ async function restorePanelState() {
     chatInput.placeholder = state.chatPlaceholder;
   }
 
-  if (state.isPanelOpen) {
-    await togglePanel(true, { skipSave: true });
-  }
-
   if (isAddFeatureMode) {
     addChatMessage("system", "Reminder: pick an element again to continue Add feature.");
     isAddFeatureMode = false;
@@ -2728,8 +3738,8 @@ async function handleAddFeatureChatEntry(userText) {
   showNotification("Pick an element to start Add feature.", "error");
 }
 
-async function handleGeneralChatMessage(userText) {
-  addChatMessage("user", userText);
+async function handleGeneralChatMessage(userText, attachments = []) {
+  addChatMessage("user", userText, { attachments });
 
   const thinkingMessage = addChatMessage("assistant", "🤖 Assistant is thinking...");
 
@@ -2754,7 +3764,7 @@ async function handleGeneralChatMessage(userText) {
   };
 
   try {
-    const result = await callPageChatFn(userText, pageContext);
+    const result = await callPageChatFn(userText, pageContext, attachments);
 
     if (result?.ok && typeof result.reply === "string" && result.reply.trim()) {
       thinkingMessage.content = result.reply.trim();
@@ -3222,6 +4232,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true; // Keep message channel open for async response
   }
 
+  if (message.type === PANEL_VISIBILITY_MESSAGE_TYPES.sync) {
+    const nextState = !!message.isOpen;
+    if (nextState === isPanelOpen) {
+      sendResponse({ success: true, unchanged: true });
+      return true;
+    }
+    (async () => {
+      await togglePanel(nextState, { skipGlobalSync: true });
+      sendResponse({ success: true, applied: true });
+    })();
+    return true;
+  }
+
   // Handle Add Feature requests
   if (message.type === "WEBEDIT_ADD_FEATURE") {
     console.log("[WebEdit Add] Received ADD_FEATURE message", message.payload);
@@ -3307,6 +4330,7 @@ async function initialize() {
   // 1. Create Panel (hidden)
   createPanel();
   await checkAuthStatus({ reason: "startup" });
+  await applyInitialPanelPreference();
 
   console.log("✅ WebEdit AI: Initialization complete");
 }
