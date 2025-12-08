@@ -78,7 +78,7 @@ chrome.runtime.onInstalled.addListener((details) => {
 
 // PRODUCTION URLs - ALWAYS USE THESE
 const WEBEDIT_PROD_BASE_URL = "https://www.webeditai.com";
-const LOGIN_URL = "https://www.webeditai.com/#/signup";
+const LOGIN_URL = "https://www.webeditai.com/login"; // Stable route to avoid 404s when users back out of OAuth
 const HISTORY_URL = "https://www.webeditai.com/#/history";
 const SIGN_OUT_SUPPRESSION_MS = 8000;
 let signOutCooldownUntil = 0;

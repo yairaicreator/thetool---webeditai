@@ -17,7 +17,7 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY || SUPABASE_URL.includes("YOUR_SUPABASE_
 
 // Production URLs
 const WEBEDIT_PROD_BASE_URL = "https://www.webeditai.com";
-const LOGIN_URL = "https://www.webeditai.com/#/signup";
+const LOGIN_URL = "https://www.webeditai.com/login"; // Stable route to avoid SPA 404s during OAuth back navigation
 const HISTORY_URL = "https://www.webeditai.com/#/history";
 
 /**

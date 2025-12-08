@@ -380,6 +380,10 @@ async function handleAuthStateChange(nextUser, options = {}) {
   const nextUserId = nextUser?.id || null;
   const previousUserId = lastAuthorizedUserId;
   const userChanged = nextUserId !== previousUserId;
+  const reasonText = options.reason || "unspecified";
+  const isLogout = !nextUserId;
+
+  console.log(`[Auth] Session update (${reasonText}) | previous=${previousUserId || "none"} | next=${nextUserId || "none"} | logout=${isLogout}`);
 
   currentUser = nextUser || null;
 
@@ -400,6 +404,7 @@ async function handleAuthStateChange(nextUser, options = {}) {
     });
     lastAuthorizedUserId = currentUser.id;
     hasRestoredStateForUser = false;
+    clearInMemoryUserState(`user-change:${reasonText}`);
   } else if (!currentUser && previousUserId && userChanged) {
     await updateAuthAudit(previousUserId, {
       lastSignedOutAt: Date.now()
@@ -407,6 +412,7 @@ async function handleAuthStateChange(nextUser, options = {}) {
     currentUserAudit = null;
     lastAuthorizedUserId = null;
     hasRestoredStateForUser = false;
+    console.log(`[Auth] Recorded sign-out for user ${previousUserId}`);
   }
 
   if (currentUser && !currentUserAudit) {
@@ -427,7 +433,7 @@ async function handleAuthStateChange(nextUser, options = {}) {
       console.error("❌ Failed to load authorized experience:", error);
     }
   } else {
-    await enforceUnauthorizedExperience();
+    await enforceUnauthorizedExperience(reasonText);
   }
 }
 
@@ -437,14 +443,17 @@ async function loadAuthorizedExperience() {
     return;
   }
 
+  const email = userSnapshot.email || userSnapshot.id;
+  console.log(`[Auth] Restoring panel state for ${email}`);
+
   await restorePanelState();
   await loadChatHistory();
+  console.log(`[Auth] Chat history refreshed for ${email}`);
 
   if (window.EditRules) {
     try {
       await window.EditRules.applyAllRulesForCurrentPage(true);
       const remoteRules = await window.EditRules.fetchRules(userSnapshot, getPageKey());
-      const email = userSnapshot.email || userSnapshot.id || "unknown user";
       console.log(`🔐 Loaded ${remoteRules.length} remote rule(s) for ${email}`);
     } catch (error) {
       console.error("❌ Failed to apply persisted rules:", error);
@@ -452,18 +461,14 @@ async function loadAuthorizedExperience() {
   }
 
   await restoreAddedFeatures();
+  console.log(`[Auth] Finished restoring user-specific features for ${email}`);
   hasRestoredStateForUser = true;
 }
 
-async function enforceUnauthorizedExperience() {
+async function enforceUnauthorizedExperience(reason = "unauthorized") {
   stopRemoveMode();
   stopPickMode();
-  isAddFeatureMode = false;
-  resetAddFeaturePromptState();
-  chatMessages = [];
-  renderChatMessages();
-  currentSessionId = null;
-  resetCurrentEditTarget();
+  clearInMemoryUserState(reason);
   updateChatInputPrompt("Sign in to start editing");
   setActiveToolButton("remove");
   updateAuthGuardUI();
@@ -2045,6 +2050,21 @@ function getSessionStorageKey(userId = null) {
   return getScopedStorageKey(CURRENT_SESSION_KEY, userId);
 }
 
+function clearInMemoryUserState(reason = "unspecified") {
+  if (referenceDismissTimeout) {
+    clearTimeout(referenceDismissTimeout);
+    referenceDismissTimeout = null;
+  }
+  isAddFeatureMode = false;
+  resetAddFeaturePromptState();
+  resetCurrentEditTarget();
+  chatMessages = [];
+  currentSessionId = null;
+  renderChatMessages();
+  updateChatInputPrompt("What do you want to change?");
+  console.log(`[Auth] Cleared in-memory user-scoped state (${reason})`);
+}
+
 function saveChatHistory() {
   if (!currentUser?.id) {
     return;
@@ -2346,118 +2366,125 @@ function escapeHtml(str = '') {
     .replace(/'/g, '&#39;');
 }
 
-function buildFeatureTemplate({ name, description, type = 'note' }) {
-  const safeName = escapeHtml(name || 'WebEdit note');
+function buildFeatureTemplate({ name, description, type = 'card' }) {
+  const safeName = escapeHtml(name || 'WebEdit feature');
   const safeDescription = escapeHtml(description || '');
+  const hasDescription = Boolean(safeDescription && safeDescription.trim());
 
-  switch (type) {
-    case 'badge':
-      return {
-        html: `
-          <div class="webedit-feature-badge">
-            <span class="webedit-feature-badge-label">${safeName}</span>
-            <span class="webedit-feature-badge-text">${safeDescription}</span>
-          </div>
-        `,
-        css: `
-          .webedit-feature-badge {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            background: #1d4ed8;
-            color: white;
-            padding: 8px 12px;
-            border-radius: 999px;
-            font-size: 13px;
-            font-weight: 500;
-          }
-          .webedit-feature-badge-label {
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
-            font-size: 11px;
-            opacity: 0.85;
-          }
-          .webedit-feature-badge-text {
-            font-weight: 600;
-          }
-        `
-      };
-    case 'button':
-      return {
-        html: `
-          <button class="webedit-feature-button" data-feature-name="${safeName}" data-feature-content="${safeDescription}">
-            <span class="webedit-feature-button-title">${safeName}</span>
-            <span class="webedit-feature-button-caption">${safeDescription}</span>
+  const baseCss = `
+    .webedit-feature-card {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #ffffff;
+      color: #0f172a;
+      border: 1px solid #dbe3f0;
+      border-radius: 18px;
+      padding: 18px 20px;
+      min-width: 220px;
+      max-width: 420px;
+      box-shadow: 0 12px 32px rgba(15, 23, 42, 0.15);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .webedit-feature-card::before {
+      content: '';
+      width: 44px;
+      height: 4px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #0ea5e9 0%, #6366f1 100%);
+    }
+    .webedit-feature-card-label {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #0ea5e9;
+    }
+    .webedit-feature-card-title {
+      font-size: 18px;
+      font-weight: 600;
+      margin: 0;
+      color: #0f172a;
+    }
+    .webedit-feature-card-text {
+      font-size: 14px;
+      line-height: 1.6;
+      margin: 0;
+      color: #1e293b;
+    }
+    .webedit-feature-card-placeholder {
+      color: #64748b;
+      font-style: italic;
+    }
+    .webedit-feature-card-button-wrapper {
+      display: inline-flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .webedit-feature-card-button {
+      border: none;
+      border-radius: 999px;
+      padding: 12px 24px;
+      background: linear-gradient(135deg, #2563eb 0%, #38bdf8 100%);
+      color: #ffffff;
+      font-weight: 600;
+      font-size: 14px;
+      cursor: pointer;
+      box-shadow: 0 8px 20px rgba(37, 99, 235, 0.35);
+    }
+    .webedit-feature-card-badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      background: rgba(99, 102, 241, 0.12);
+      color: #4f46e5;
+    }
+  `;
+
+  if (type === 'button') {
+    return {
+      html: `
+        <div class="webedit-feature-card webedit-feature-card-button-wrapper">
+          <span class="webedit-feature-card-label">Call to action</span>
+          <button class="webedit-feature-card-button" type="button">
+            ${safeName}
           </button>
-        `,
-        css: `
-          .webedit-feature-button {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            border: none;
-            border-radius: 999px;
-            padding: 12px 20px;
-            background: linear-gradient(135deg, #f97316 0%, #fb923c 100%);
-            color: white;
-            cursor: pointer;
-            display: inline-flex;
-            flex-direction: column;
-            align-items: flex-start;
-            gap: 4px;
-            box-shadow: 0 4px 12px rgba(249, 115, 22, 0.35);
+          ${
+            hasDescription
+              ? `<p class="webedit-feature-card-text">${safeDescription}</p>`
+              : ''
           }
-          .webedit-feature-button-title {
-            font-weight: 600;
-            font-size: 14px;
-          }
-          .webedit-feature-button-caption {
-            font-size: 12px;
-            opacity: 0.9;
-          }
-        `
-      };
-    case 'note':
-    default:
-      return {
-        html: `
-          <div class="webedit-feature-note">
-            <div class="webedit-feature-note-title">${safeName}</div>
-            <div class="webedit-feature-note-body">${safeDescription}</div>
-          </div>
-        `,
-        css: `
-          .webedit-feature-note {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
-            color: white;
-            padding: 14px 16px;
-            border-radius: 14px;
-            box-shadow: 0 12px 30px rgba(99, 102, 241, 0.35);
-            border-left: 4px solid rgba(255, 255, 255, 0.35);
-            max-width: 360px;
-          }
-          .webedit-feature-note-title {
-            font-size: 15px;
-            font-weight: 600;
-            margin-bottom: 6px;
-          }
-          .webedit-feature-note-body {
-            font-size: 13px;
-            line-height: 1.5;
-            opacity: 0.95;
-          }
-        `
-      };
+        </div>
+      `,
+      css: baseCss
+    };
   }
+
+  const descriptionHtml = hasDescription
+    ? `<p class="webedit-feature-card-text">${safeDescription}</p>`
+    : `<p class="webedit-feature-card-text webedit-feature-card-placeholder">This feature is ready—add more details from EditHistory.</p>`;
+
+  return {
+    html: `
+      <div class="webedit-feature-card">
+        <span class="webedit-feature-card-label">WebEdit Feature</span>
+        <h3 class="webedit-feature-card-title">${safeName}</h3>
+        ${descriptionHtml}
+      </div>
+    `,
+    css: baseCss
+  };
 }
 
 function ensureFeatureTemplate(spec) {
-  if (spec.html && typeof spec.html === 'string') {
+  if (spec.html && typeof spec.html === 'string' && spec.html.trim()) {
     return { html: spec.html, css: spec.css || '' };
   }
-  const name = spec.name || spec.title || 'WebEdit note';
+  const name = spec.name || spec.title || 'WebEdit feature';
   const description = spec.purpose || spec.description || spec.content || '';
-  return buildFeatureTemplate({ name, description, type: spec.type || 'note' });
+  return buildFeatureTemplate({ name, description, type: spec.type || 'card' });
 }
 
 function normalizeFeatureSpec(rawSpec) {
