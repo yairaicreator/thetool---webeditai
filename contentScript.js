@@ -21,6 +21,14 @@ const PANEL_VISIBILITY_MESSAGE_TYPES = {
   set: "WEBEDIT_SET_PANEL_OPEN_STATE",
   sync: "WEBEDIT_APPLY_PANEL_VISIBILITY"
 };
+const PANEL_WIDTH_STORAGE_KEY = 'webeditPanelWidth';
+const PANEL_WIDTH_OPTIONS = [320, 400, 520];
+const PANEL_WIDTH_LABELS = {
+  320: 'Narrow',
+  400: 'Default',
+  520: 'Wide'
+};
+const PANEL_WIDTH_DEFAULT = PANEL_WIDTH_OPTIONS[1];
 
 // UI state
 let currentTool = "remove";
@@ -47,6 +55,8 @@ let lastAuthorizedUserId = null;
 let hasRestoredStateForUser = false;
 let authGuardElement = null;
 let hasAppliedInitialPanelPreference = false;
+let panelWidthPx = PANEL_WIDTH_DEFAULT;
+let panelLauncher = null;
 
 // Auth sync state
 
@@ -149,13 +159,16 @@ function queryPanel(selector) {
 // Page Shift Helpers
 // ============================================
 
-const PANEL_WIDTH_FALLBACK = 460;
+const PANEL_WIDTH_FALLBACK = 400;
 const PANEL_GAP_PX = 0;
 let pageShiftResizeHandler = null;
 let globalShiftStyleEl = null;
 let lastAppliedShiftWidth = null;
 
 function getPanelWidthForShift() {
+  if (panelWidthPx && panelWidthPx > 0) {
+    return panelWidthPx;
+  }
   if (!chatPanel) {
     return PANEL_WIDTH_FALLBACK;
   }
@@ -168,14 +181,20 @@ function applyPageShiftWidth() {
   if (!document.documentElement || !document.body) {
     return;
   }
-  const width = getPanelWidthForShift() + PANEL_GAP_PX;
-  const widthValue = `${width}px`;
-  document.documentElement.style.setProperty('--webedit-panel-width', widthValue);
-  document.body.style.setProperty('--webedit-panel-width', widthValue);
+  const baseWidth = getPanelWidthForShift();
+  const shiftWidth = baseWidth + PANEL_GAP_PX;
+  const shiftValue = `${shiftWidth}px`;
+  const panelWidthValue = `${baseWidth}px`;
+  document.documentElement.style.setProperty('--webedit-panel-width', shiftValue);
+  document.body.style.setProperty('--webedit-panel-width', shiftValue);
   if (panelHost) {
-    panelHost.style.setProperty('--webedit-panel-width', widthValue);
+    panelHost.style.setProperty('--webedit-panel-width', panelWidthValue);
   }
-  ensureGlobalShiftStyle(widthValue);
+  if (chatPanel) {
+    chatPanel.style.setProperty('--webedit-panel-width', panelWidthValue);
+    chatPanel.style.width = panelWidthValue;
+  }
+  ensureGlobalShiftStyle(shiftValue);
 }
 
 function clearPageShiftWidth() {
@@ -186,6 +205,9 @@ function clearPageShiftWidth() {
   document.body.style.removeProperty('--webedit-panel-width');
   if (panelHost) {
     panelHost.style.removeProperty('--webedit-panel-width');
+  }
+  if (chatPanel) {
+    chatPanel.style.removeProperty('--webedit-panel-width');
   }
   clearGlobalShiftStyle();
 }
@@ -275,6 +297,102 @@ function forceGlobalLeftShift() {
 
 if (typeof window !== "undefined") {
   window.WebEditForceGlobalLeftShift = forceGlobalLeftShift;
+}
+
+function sanitizePanelWidth(value) {
+  const numeric = Number(value);
+  if (PANEL_WIDTH_OPTIONS.includes(numeric)) {
+    return numeric;
+  }
+  return PANEL_WIDTH_DEFAULT;
+}
+
+function getNextPanelWidthValue(currentWidth) {
+  const currentIndex = PANEL_WIDTH_OPTIONS.indexOf(currentWidth);
+  if (currentIndex === -1) {
+    return PANEL_WIDTH_OPTIONS[0];
+  }
+  const nextIndex = (currentIndex + 1) % PANEL_WIDTH_OPTIONS.length;
+  return PANEL_WIDTH_OPTIONS[nextIndex];
+}
+
+async function loadPanelWidthPreference() {
+  if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) {
+    panelWidthPx = PANEL_WIDTH_DEFAULT;
+    return panelWidthPx;
+  }
+  return new Promise((resolve) => {
+    chrome.storage.local.get([PANEL_WIDTH_STORAGE_KEY], (result) => {
+      if (chrome.runtime?.lastError) {
+        resolve(PANEL_WIDTH_DEFAULT);
+        return;
+      }
+      const stored = result ? Number(result[PANEL_WIDTH_STORAGE_KEY]) : NaN;
+      resolve(sanitizePanelWidth(stored));
+    });
+  }).then((width) => {
+    panelWidthPx = sanitizePanelWidth(width);
+    return panelWidthPx;
+  }).catch(() => {
+    panelWidthPx = PANEL_WIDTH_DEFAULT;
+    return panelWidthPx;
+  });
+}
+
+function savePanelWidthPreference(width) {
+  if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) {
+    return;
+  }
+  try {
+    chrome.storage.local.set({ [PANEL_WIDTH_STORAGE_KEY]: width });
+  } catch (error) {
+    console.debug("[WebEdit] Failed to persist panel width:", error?.message || error);
+  }
+}
+
+function setPanelWidth(width, options = {}) {
+  const { skipPersist = false } = options;
+  const sanitized = sanitizePanelWidth(width);
+  panelWidthPx = sanitized;
+  const widthValue = `${sanitized}px`;
+
+  if (chatPanel) {
+    chatPanel.style.width = widthValue;
+    chatPanel.style.setProperty('--webedit-panel-width', widthValue);
+  }
+  if (panelHost) {
+    panelHost.style.setProperty('--webedit-panel-width', widthValue);
+  }
+
+  const shiftWidthValue = `${sanitized + PANEL_GAP_PX}px`;
+  ensureGlobalShiftStyle(shiftWidthValue);
+
+  if (isPanelOpen) {
+    applyPageShiftWidth();
+  }
+
+  updateResizeButtonState();
+
+  if (!skipPersist) {
+    savePanelWidthPreference(sanitized);
+  }
+}
+
+function updateResizeButtonState() {
+  const resizeBtn = getPanelElement("webedit-resize-btn");
+  if (!resizeBtn) {
+    return;
+  }
+  const label = PANEL_WIDTH_LABELS[panelWidthPx] || `${panelWidthPx}px`;
+  resizeBtn.textContent = "⇔";
+  resizeBtn.title = `Switch panel width (current: ${label})`;
+  resizeBtn.setAttribute("aria-label", `Switch panel width (current: ${label})`);
+  resizeBtn.setAttribute("data-size", label.toLowerCase());
+}
+
+function cyclePanelWidth() {
+  const next = getNextPanelWidthValue(panelWidthPx);
+  setPanelWidth(next);
 }
 
 // ============================================
@@ -913,7 +1031,7 @@ function renderSignInButton(container) {
   }
 
   // Update container WITHOUT replacing it
-  container.textContent = 'Sign in';
+  container.innerHTML = 'Sign in';
   container.className = 'webedit-nav-btn signin-btn';
   container.title = 'Sign in with Google';
 
@@ -1077,12 +1195,12 @@ function showNotification(message, type = "info") {
 
   const notification = document.createElement("div");
   notification.className = `webedit-notification webedit-notification-${type}`;
-  setElementHTML(notification, `
+  notification.innerHTML = `
     <div class="webedit-notification-content">
       <span class="webedit-notification-icon">${type === "success" ? "✓" : type === "error" ? "⚠" : "ℹ"}</span>
       <span class="webedit-notification-message">${message}</span>
     </div>
-  `);
+  `;
 
   // Append to mainContent (positioned absolutely, so it overlays)
   mainContent.appendChild(notification);
@@ -1256,13 +1374,14 @@ function createPanel() {
   const panel = document.createElement("div");
   panel.id = "webedit-chat-panel";
   panel.className = "hidden";
-  setElementHTML(panel, `
+  panel.innerHTML = `
     <!-- Header Navigation Bar -->
     <div class="webedit-panel-header">
       <button class="webedit-header-hamburger" id="webedit-header-hamburger">☰</button>
       <button class="webedit-nav-btn logo-btn" id="webedit-logo-btn">WebEdit</button>
       <button class="webedit-nav-btn history-btn" id="webedit-history-btn" style="display:none">History</button>
       <button class="webedit-nav-btn signin-btn" id="webedit-signin-btn">Sign in</button>
+      <button class="webedit-resize-btn" id="webedit-resize-btn" title="Resize panel" aria-label="Resize panel">⇔</button>
       <button class="webedit-close-btn" id="webedit-close-btn">×</button>
     </div>
 
@@ -1417,7 +1536,7 @@ function createPanel() {
       <input class="webedit-file-input" id="webedit-file-input" type="file" multiple accept="image/*,.pdf,.doc,.docx,.txt,.json,.csv,.md" />
     </div>
 
-  `);
+  `;
 
   panelShadow.appendChild(panel);
   document.body.appendChild(panelHost);
@@ -1435,6 +1554,66 @@ function createPanel() {
   return panel;
 }
 
+// ============================================
+// Launcher Button Helpers
+// ============================================
+
+function ensureLauncherExists() {
+  if (panelLauncher && panelLauncher.isConnected) {
+    return panelLauncher;
+  }
+  if (!document.body) {
+    return null;
+  }
+  const launcher = document.createElement("button");
+  launcher.id = "webedit-launcher-button";
+  launcher.type = "button";
+  launcher.className = "webedit-launcher-button";
+  launcher.textContent = "WE";
+  launcher.setAttribute("aria-label", "Open WebEdit panel");
+  launcher.title = "Open WebEdit panel";
+  applyLauncherStyles(launcher);
+  launcher.addEventListener("click", () => togglePanel(true));
+  document.body.appendChild(launcher);
+  panelLauncher = launcher;
+  return launcher;
+}
+
+function applyLauncherStyles(element) {
+  if (!element) {
+    return;
+  }
+  element.style.position = "fixed";
+  element.style.top = "40%";
+  element.style.right = "0";
+  element.style.transform = "translateY(-50%)";
+  element.style.width = "48px";
+  element.style.height = "48px";
+  element.style.borderRadius = "16px 0 0 16px";
+  element.style.border = "none";
+  element.style.background = "linear-gradient(180deg, #5b8def, #ec4899)";
+  element.style.color = "#ffffff";
+  element.style.fontWeight = "700";
+  element.style.fontSize = "14px";
+  element.style.letterSpacing = "0.04em";
+  element.style.cursor = "pointer";
+  element.style.zIndex = "2147483646";
+  element.style.boxShadow = "0 8px 24px rgba(15, 23, 42, 0.25)";
+  element.style.display = "flex";
+  element.style.alignItems = "center";
+  element.style.justifyContent = "center";
+  element.style.padding = "0";
+  element.style.userSelect = "none";
+}
+
+function updateLauncherVisibility() {
+  const launcher = ensureLauncherExists();
+  if (!launcher) {
+    return;
+  }
+  launcher.style.display = isPanelOpen ? "none" : "flex";
+}
+
 /**
  * Toggle the panel visibility on/off
  * If panel doesn't exist yet, creates it first
@@ -1447,6 +1626,7 @@ async function togglePanel(show, options = {}) {
   if (!chatPanel) {
     createPanel();
   }
+  ensureLauncherExists();
 
   if (show === undefined) {
     show = !isPanelOpen;
@@ -1485,6 +1665,7 @@ async function togglePanel(show, options = {}) {
       panelHost.style.display = "none";
     }
   }
+  updateLauncherVisibility();
   if (!skipSave) {
     schedulePanelStateSave();
   }
@@ -1504,6 +1685,13 @@ function attachPanelEventListeners() {
     exitActiveFeatures();
     togglePanel(false);
   });
+
+  const resizeBtn = getPanelElement("webedit-resize-btn");
+  if (resizeBtn) {
+    resizeBtn.addEventListener("click", () => {
+      cyclePanelWidth();
+    });
+  }
 
   // History Sidebar Toggle
   const headerHamburger = getPanelElement("webedit-header-hamburger");
@@ -2854,7 +3042,7 @@ function renderHistoryList(historyData = null) {
   if (!listContainer) return;
 
   if (!currentUser?.id) {
-    setElementHTML(listContainer, '<div style="padding:10px; color:#9ca3af; font-size:12px; text-align:center">Sign in to view history</div>');
+    listContainer.innerHTML = '<div style="padding:10px; color:#9ca3af; font-size:12px; text-align:center">Sign in to view history</div>';
     return;
   }
 
@@ -2866,12 +3054,12 @@ function renderHistoryList(historyData = null) {
   }
 
   if (!historyData || historyData.length === 0) {
-    setElementHTML(listContainer, '<div style="padding:10px; color:#9ca3af; font-size:12px; text-align:center">No history yet</div>');
+    listContainer.innerHTML = '<div style="padding:10px; color:#9ca3af; font-size:12px; text-align:center">No history yet</div>';
     return;
   }
 
   closeActiveHistoryRenameForm();
-  setElementHTML(listContainer, '');
+  listContainer.innerHTML = '';
 
   historyData.sort((a, b) => b.timestamp - a.timestamp).forEach(session => {
     const item = document.createElement('div');
@@ -2891,7 +3079,7 @@ function renderHistoryList(historyData = null) {
     renameBtn.className = 'webedit-history-rename-btn';
     renameBtn.type = 'button';
     renameBtn.setAttribute('aria-label', 'Rename chat');
-    renameBtn.textContent = '✏︎';
+    renameBtn.innerHTML = '✏︎';
     renameBtn.addEventListener('click', (event) => {
       event.stopPropagation();
       openHistoryRenameInput(session, item);
@@ -3121,14 +3309,14 @@ function renderChatMessages() {
   if (!chatContainer || !referencesContainer) return;
 
   // Always clear to ensure clean state
-  setElementHTML(chatContainer, '');
-  setElementHTML(referencesContainer, '');
+  chatContainer.innerHTML = '';
+  referencesContainer.innerHTML = '';
 
   if (chatMessages.length === 0) {
     // Restore placeholder when no messages
     const placeholder = document.createElement("div");
     placeholder.className = "webedit-chat-placeholder";
-    setElementHTML(placeholder, '<p>Select a tool from Visual Edit menu below to get started</p>');
+    placeholder.innerHTML = '<p>Select a tool from Visual Edit menu below to get started</p>';
     chatContainer.appendChild(placeholder);
   } else {
     // Separate regular messages from references
@@ -3326,7 +3514,7 @@ function renderAttachmentPreview() {
   if (!container) {
     return;
   }
-  setElementHTML(container, "");
+  container.innerHTML = "";
 
   pendingAttachments.forEach((attachment) => {
     const chip = document.createElement("div");
@@ -4098,7 +4286,7 @@ async function injectFeature(spec) {
     }
 
     const contentHolder = document.createElement("div");
-    setElementHTML(contentHolder, html);
+    contentHolder.innerHTML = html;
     container.appendChild(contentHolder);
 
     switch (normalizedSpec.position) {
@@ -4305,23 +4493,78 @@ async function restoreAddedFeatures() {
 }
 
 /**
- * Generate feature spec from chat (stub for future AI integration)
- * @param {Object} input - Input data
- * @param {string} input.userText - User's text description
- * @param {string} input.selector - CSS selector for target element
- * @returns {Promise<Object>} AddFeatureRequest object
+ * Generate feature spec via AI Edge Function
  */
 async function generateFeatureSpecFromChat(input) {
-  console.log("[WebEdit Add] Generating feature spec from chat (no AI yet)");
+  const promptText = (input.userText || "").trim();
+  if (!promptText) {
+    throw new Error("User prompt is empty");
+  }
 
-  // TEMP: no AI yet - just wrap user text into a feature spec
+  const selector = input.selector;
+  const targetDescription = input.targetDescription || currentEditTarget.description || "";
+  const supabaseClient = window.SupabaseClient;
+
+  if (!supabaseClient || !supabaseClient.url || !supabaseClient.anonKey) {
+    throw new Error("Supabase client is not configured");
+  }
+
+  const endpoint = `${supabaseClient.url}/functions/v1/ai-generate-feature-spec`;
+  const context = {
+    pageTitle: document.title || "",
+    pageUrl: window.location.href,
+    targetSelector: selector,
+    targetDescription,
+    userName: input.name || "",
+    requestedType: input.type || "card",
+    pageExcerpt: getPagePlainText().slice(0, 2000)
+  };
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "apikey": supabaseClient.anonKey,
+      "Authorization": `Bearer ${supabaseClient.anonKey}`
+    },
+    body: JSON.stringify({
+      prompt: promptText,
+      context
+    })
+  });
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    throw new Error("Failed to parse AI response");
+  }
+
+  if (!response.ok || !payload?.ok || !payload?.spec) {
+    throw new Error(payload?.error || `AI spec request failed (${response.status})`);
+  }
+
+  const aiSpec = payload.spec;
+
+  if (aiSpec.action && aiSpec.action !== "add") {
+    throw new Error(`AI returned unsupported action: ${aiSpec.action}`);
+  }
+
+  const resolvedSelector = aiSpec.targetSelector || aiSpec.selector || selector;
+  const resolvedPosition = aiSpec.position || "after";
+  const html = typeof aiSpec.html === "string" ? aiSpec.html.trim() : "";
+  const css = typeof aiSpec.css === "string" ? aiSpec.css.trim() : "";
+
   return {
     id: generateFeatureId(),
-    selector: input.selector,
-    position: "after", // Default position
-    content: input.userText,
+    selector: resolvedSelector || selector,
+    position: resolvedPosition,
+    content: aiSpec.content || promptText,
+    html,
+    css,
     pageKey: getPageKey(),
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    aiSpec
   };
 }
 
@@ -4436,8 +4679,13 @@ async function initialize() {
 
   console.log("🚀 WebEdit AI: Initializing...");
 
+  await loadPanelWidthPreference();
+
   // 1. Create Panel (hidden)
   createPanel();
+  setPanelWidth(panelWidthPx, { skipPersist: true });
+  ensureLauncherExists();
+  updateLauncherVisibility();
   await checkAuthStatus({ reason: "startup" });
   await applyInitialPanelPreference();
 

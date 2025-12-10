@@ -4,7 +4,7 @@
   position: fixed;
   top: 0;
   right: 0;
-  width: var(--webedit-panel-width, 460px);
+  width: var(--webedit-panel-width, 400px);
   height: 100vh;
   z-index: 2147483647;
   background: #d7fbff;
@@ -281,12 +281,41 @@
   background: rgba(255, 255, 255, 0.4);
 }
 
+.webedit-resize-btn {
+  position: absolute;
+  top: 8px;
+  right: 44px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, transform 0.2s;
+}
+
+.webedit-resize-btn:hover {
+  background: rgba(255, 255, 255, 0.4);
+  transform: translateY(-1px);
+}
+
+.webedit-resize-btn:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
 /* Main Content Area */
 .webedit-main-content {
   flex: 1;
   display: flex;
   flex-direction: column;
-  padding: 6px 4px 0;
+  padding: 6px 0 0;
   background: #d7fbff;
   overflow: hidden;
   position: relative;
@@ -356,10 +385,10 @@
   width: 100%;
   overflow-y: auto;
   box-sizing: border-box;
-  padding: 30px 48px 20px 32px;
+  padding: 24px 40px 18px 24px;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 16px;
   justify-content: flex-start;
 }
 
@@ -378,11 +407,11 @@
 
 /* Chat message styles */
 .webedit-chat-message {
-  padding: 16px 20px;
-  border-radius: 18px;
-  font-size: 15px;
-  line-height: 1.65;
-  max-width: 92%;
+  padding: 14px 18px;
+  border-radius: 16px;
+  font-size: 14px;
+  line-height: 1.6;
+  max-width: 88%;
   word-wrap: break-word;
 }
 
@@ -744,7 +773,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
   position: relative;
 }
 
@@ -850,7 +879,7 @@
 
 /* Chat Input Bar at Bottom */
 .webedit-input-container {
-  padding: 12px 32px 22px;
+  padding: 16px 28px 26px;
   background: #d7fbff;
   flex-shrink: 0;
 }

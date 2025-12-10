@@ -8,6 +8,7 @@ const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
 interface FeatureSpec {
   action: "hide" | "customize" | "add" | "text";
   selector?: string;
+  targetSelector?: string;
   description?: string;
   styles?: {
     backgroundColor?: string;
@@ -17,7 +18,8 @@ interface FeatureSpec {
   };
   content?: string;
   position?: "before" | "after" | "inside" | "replace";
-  targetSelector?: string;
+  html?: string;
+  css?: string;
 }
 
 const SYSTEM_PROMPT = `You are an AI assistant that generates structured feature specifications for web editing actions.
@@ -36,7 +38,9 @@ Given a user prompt and page context, you must return ONLY valid JSON matching t
   },
   "content": "Text content to add/replace (required if action is add/text)",
   "position": "before" | "after" | "inside" | "replace",
-  "targetSelector": "CSS selector for reference element (required if action is add with position)"
+  "targetSelector": "CSS selector for reference element (required if action is add with position)",
+  "html": "For add actions ONLY: HTML snippet to insert. Use semantic markup and prefix custom classes with 'webedit-ai-'. Omit this field for other actions.",
+  "css": "For add actions ONLY: CSS rules targeting classes used in html. No <style> tags. Omit this field for other actions."
 }
 
 Action types:
@@ -50,12 +54,14 @@ Rules:
 2. Include only fields that are relevant to the action
 3. CSS selectors should be specific and stable
 4. If context is provided, use it to generate more accurate selectors
-5. If the prompt is unclear, return a minimal spec with the most likely action
+5. For add actions, the HTML should represent the requested feature (buttons, cards, links, etc.) using accessible markup.
+6. Classes inside the HTML must start with "webedit-ai-" to avoid conflicts.
+7. If the prompt is unclear, return a minimal spec with the most likely action
 
 Example responses:
 {"action":"hide","selector":"#cookie-banner"}
 {"action":"customize","selector":".header","styles":{"backgroundColor":"#ff0000","color":"#ffffff"}}
-{"action":"add","content":"New paragraph text","position":"after","targetSelector":".main-content"}`;
+{"action":"add","content":"New paragraph text","position":"after","targetSelector":".main-content","html":"<div class=\\"webedit-ai-note\\">New paragraph text</div>","css":".webedit-ai-note{padding:12px;border-radius:8px;background:#f1f5f9;}"}`
 
 serve(async (req) => {
   // CORS headers
