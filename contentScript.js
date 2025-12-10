@@ -117,6 +117,8 @@ function queryPanel(selector) {
 const PANEL_WIDTH_FALLBACK = 400;
 const PANEL_GAP_PX = 0;
 let pageShiftResizeHandler = null;
+let globalShiftStyleEl = null;
+let lastAppliedShiftWidth = null;
 
 function getPanelWidthForShift() {
   if (!chatPanel) {
@@ -138,6 +140,7 @@ function applyPageShiftWidth() {
   if (panelHost) {
     panelHost.style.setProperty('--webedit-panel-width', widthValue);
   }
+  ensureGlobalShiftStyle(widthValue);
 }
 
 function clearPageShiftWidth() {
@@ -149,6 +152,7 @@ function clearPageShiftWidth() {
   if (panelHost) {
     panelHost.style.removeProperty('--webedit-panel-width');
   }
+  clearGlobalShiftStyle();
 }
 
 function startPageShiftTracking() {
@@ -170,6 +174,72 @@ function stopPageShiftTracking() {
   }
   window.removeEventListener('resize', pageShiftResizeHandler);
   pageShiftResizeHandler = null;
+}
+
+function ensureGlobalShiftStyle(widthValue) {
+  if (!widthValue) {
+    return;
+  }
+  if (globalShiftStyleEl && lastAppliedShiftWidth === widthValue && globalShiftStyleEl.isConnected) {
+    return;
+  }
+  lastAppliedShiftWidth = widthValue;
+  if (!globalShiftStyleEl) {
+    globalShiftStyleEl = document.createElement("style");
+    globalShiftStyleEl.id = "webedit-global-shift-style";
+    globalShiftStyleEl.setAttribute("data-webedit", "layout");
+  }
+  const host = document.head || document.documentElement;
+  if (host && !globalShiftStyleEl.isConnected) {
+    host.appendChild(globalShiftStyleEl);
+  }
+  if (!globalShiftStyleEl.isConnected) {
+    return;
+  }
+  globalShiftStyleEl.textContent = `
+    html.webedit-panel-open,
+    body.webedit-panel-open {
+      overflow-x: hidden !important;
+      box-sizing: border-box !important;
+    }
+    html.webedit-panel-open {
+      margin-right: ${widthValue} !important;
+      transition: margin-right 0.3s ease-in-out !important;
+    }
+    body.webedit-panel-open {
+      margin-right: 0 !important;
+      padding-right: ${widthValue} !important;
+      transition: padding-right 0.3s ease-in-out !important;
+    }
+    @media (max-width: 480px) {
+      html.webedit-panel-open,
+      body.webedit-panel-open {
+        margin-right: 0 !important;
+        padding-right: 0 !important;
+      }
+    }
+  `;
+}
+
+function clearGlobalShiftStyle() {
+  lastAppliedShiftWidth = null;
+  if (globalShiftStyleEl) {
+    globalShiftStyleEl.textContent = "";
+  }
+}
+
+function forceGlobalLeftShift() {
+  if (document.documentElement) {
+    document.documentElement.classList.add("webedit-panel-open");
+  }
+  if (document.body) {
+    document.body.classList.add("webedit-panel-open");
+  }
+  applyPageShiftWidth();
+}
+
+if (typeof window !== "undefined") {
+  window.WebEditForceGlobalLeftShift = forceGlobalLeftShift;
 }
 
 // ============================================
@@ -1355,9 +1425,7 @@ async function togglePanel(show, options = {}) {
     if (panelHost) {
       panelHost.style.display = "block";
     }
-    document.documentElement.classList.add("webedit-panel-open");
-    document.body.classList.add("webedit-panel-open");
-    applyPageShiftWidth();
+    forceGlobalLeftShift();
     startPageShiftTracking();
 
     if (!skipAuthRefresh) {
