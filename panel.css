@@ -4,7 +4,7 @@
   position: fixed;
   top: 0;
   right: 0;
-  width: var(--webedit-panel-width, 400px);
+  width: var(--webedit-panel-width, 460px);
   height: 100vh;
   z-index: 2147483647;
   background: #d7fbff;
@@ -286,7 +286,7 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  padding: 6px 0 0;
+  padding: 6px 4px 0;
   background: #d7fbff;
   overflow: hidden;
   position: relative;
@@ -356,10 +356,10 @@
   width: 100%;
   overflow-y: auto;
   box-sizing: border-box;
-  padding: 24px 40px 28px 24px;
+  padding: 30px 48px 20px 32px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 18px;
   justify-content: flex-start;
 }
 
@@ -378,11 +378,11 @@
 
 /* Chat message styles */
 .webedit-chat-message {
-  padding: 14px 18px;
-  border-radius: 16px;
-  font-size: 14px;
-  line-height: 1.6;
-  max-width: 88%;
+  padding: 16px 20px;
+  border-radius: 18px;
+  font-size: 15px;
+  line-height: 1.65;
+  max-width: 92%;
   word-wrap: break-word;
 }
 
@@ -691,7 +691,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 22px 32px;
+  padding: 12px 32px 10px;
   background: #d7fbff;
   flex-shrink: 0;
 }
@@ -744,7 +744,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   position: relative;
 }
 
@@ -850,7 +850,7 @@
 
 /* Chat Input Bar at Bottom */
 .webedit-input-container {
-  padding: 16px 28px 26px;
+  padding: 12px 32px 22px;
   background: #d7fbff;
   flex-shrink: 0;
 }

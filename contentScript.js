@@ -83,6 +83,41 @@ const SUPABASE_ATTACHMENT_BUCKET = 'chat-attachments';
 const WEBEDIT_ATTR = "data-webedit-id";
 const AUTH_ACTIVITY_KEY = "webeditAuthAudit";
 
+/**
+ * Trusted Types safe helper to set rich HTML content without relying on element.innerHTML.
+ * Parses the markup in an isolated document and moves the nodes over.
+ */
+function createHtmlFragment(html) {
+  const fragment = document.createDocumentFragment();
+  if (!html || typeof html !== "string") {
+    return fragment;
+  }
+  try {
+    const parser = new DOMParser();
+    const parsedDoc = parser.parseFromString(html, "text/html");
+    const { body } = parsedDoc;
+    while (body.firstChild) {
+      fragment.appendChild(body.firstChild);
+    }
+  } catch (error) {
+    console.error("[WebEdit] Failed to parse HTML fragment:", error);
+  }
+  return fragment;
+}
+
+function setElementHTML(target, html) {
+  if (!target) return;
+  if (typeof target.replaceChildren === "function") {
+    target.replaceChildren();
+  } else {
+    while (target.firstChild) {
+      target.removeChild(target.firstChild);
+    }
+  }
+  if (!html) return;
+  target.appendChild(createHtmlFragment(html));
+}
+
 function cssEscape(value) {
   if (!value) {
     return '';
@@ -114,7 +149,7 @@ function queryPanel(selector) {
 // Page Shift Helpers
 // ============================================
 
-const PANEL_WIDTH_FALLBACK = 400;
+const PANEL_WIDTH_FALLBACK = 460;
 const PANEL_GAP_PX = 0;
 let pageShiftResizeHandler = null;
 let globalShiftStyleEl = null;
@@ -745,7 +780,13 @@ function renderAvatar(container, user, auditMeta = null) {
   container.title = user.email || 'Account';
 
   // Clear existing content
-  container.innerHTML = '';
+  if (typeof container.replaceChildren === "function") {
+    container.replaceChildren();
+  } else {
+    while (container.firstChild) {
+      container.removeChild(container.firstChild);
+    }
+  }
 
   // Create avatar element
   const avatar = document.createElement('div');
@@ -770,7 +811,7 @@ function renderAvatar(container, user, auditMeta = null) {
   // Create dropdown menu (hidden by default)
   const menu = document.createElement('div');
   menu.className = 'webedit-avatar-menu';
-  menu.innerHTML = `
+  setElementHTML(menu, `
     <div class="webedit-avatar-menu-header">
       <div class="webedit-avatar-menu-email">${user.email || 'User'}</div>
     </div>
@@ -787,7 +828,7 @@ function renderAvatar(container, user, auditMeta = null) {
       <span class="webedit-avatar-menu-icon">👋</span>
       <span>Sign Out</span>
     </div>
-  `;
+  `);
 
   container.appendChild(menu);
 
@@ -872,7 +913,7 @@ function renderSignInButton(container) {
   }
 
   // Update container WITHOUT replacing it
-  container.innerHTML = 'Sign in';
+  container.textContent = 'Sign in';
   container.className = 'webedit-nav-btn signin-btn';
   container.title = 'Sign in with Google';
 
@@ -1036,12 +1077,12 @@ function showNotification(message, type = "info") {
 
   const notification = document.createElement("div");
   notification.className = `webedit-notification webedit-notification-${type}`;
-  notification.innerHTML = `
+  setElementHTML(notification, `
     <div class="webedit-notification-content">
       <span class="webedit-notification-icon">${type === "success" ? "✓" : type === "error" ? "⚠" : "ℹ"}</span>
       <span class="webedit-notification-message">${message}</span>
     </div>
-  `;
+  `);
 
   // Append to mainContent (positioned absolutely, so it overlays)
   mainContent.appendChild(notification);
@@ -1215,7 +1256,7 @@ function createPanel() {
   const panel = document.createElement("div");
   panel.id = "webedit-chat-panel";
   panel.className = "hidden";
-  panel.innerHTML = `
+  setElementHTML(panel, `
     <!-- Header Navigation Bar -->
     <div class="webedit-panel-header">
       <button class="webedit-header-hamburger" id="webedit-header-hamburger">☰</button>
@@ -1376,7 +1417,7 @@ function createPanel() {
       <input class="webedit-file-input" id="webedit-file-input" type="file" multiple accept="image/*,.pdf,.doc,.docx,.txt,.json,.csv,.md" />
     </div>
 
-  `;
+  `);
 
   panelShadow.appendChild(panel);
   document.body.appendChild(panelHost);
@@ -2813,7 +2854,7 @@ function renderHistoryList(historyData = null) {
   if (!listContainer) return;
 
   if (!currentUser?.id) {
-    listContainer.innerHTML = '<div style="padding:10px; color:#9ca3af; font-size:12px; text-align:center">Sign in to view history</div>';
+    setElementHTML(listContainer, '<div style="padding:10px; color:#9ca3af; font-size:12px; text-align:center">Sign in to view history</div>');
     return;
   }
 
@@ -2825,12 +2866,12 @@ function renderHistoryList(historyData = null) {
   }
 
   if (!historyData || historyData.length === 0) {
-    listContainer.innerHTML = '<div style="padding:10px; color:#9ca3af; font-size:12px; text-align:center">No history yet</div>';
+    setElementHTML(listContainer, '<div style="padding:10px; color:#9ca3af; font-size:12px; text-align:center">No history yet</div>');
     return;
   }
 
   closeActiveHistoryRenameForm();
-  listContainer.innerHTML = '';
+  setElementHTML(listContainer, '');
 
   historyData.sort((a, b) => b.timestamp - a.timestamp).forEach(session => {
     const item = document.createElement('div');
@@ -2850,7 +2891,7 @@ function renderHistoryList(historyData = null) {
     renameBtn.className = 'webedit-history-rename-btn';
     renameBtn.type = 'button';
     renameBtn.setAttribute('aria-label', 'Rename chat');
-    renameBtn.innerHTML = '✏︎';
+    renameBtn.textContent = '✏︎';
     renameBtn.addEventListener('click', (event) => {
       event.stopPropagation();
       openHistoryRenameInput(session, item);
@@ -3080,14 +3121,14 @@ function renderChatMessages() {
   if (!chatContainer || !referencesContainer) return;
 
   // Always clear to ensure clean state
-  chatContainer.innerHTML = '';
-  referencesContainer.innerHTML = '';
+  setElementHTML(chatContainer, '');
+  setElementHTML(referencesContainer, '');
 
   if (chatMessages.length === 0) {
     // Restore placeholder when no messages
     const placeholder = document.createElement("div");
     placeholder.className = "webedit-chat-placeholder";
-    placeholder.innerHTML = '<p>Select a tool from Visual Edit menu below to get started</p>';
+    setElementHTML(placeholder, '<p>Select a tool from Visual Edit menu below to get started</p>');
     chatContainer.appendChild(placeholder);
   } else {
     // Separate regular messages from references
@@ -3285,7 +3326,7 @@ function renderAttachmentPreview() {
   if (!container) {
     return;
   }
-  container.innerHTML = "";
+  setElementHTML(container, "");
 
   pendingAttachments.forEach((attachment) => {
     const chip = document.createElement("div");
@@ -4057,7 +4098,7 @@ async function injectFeature(spec) {
     }
 
     const contentHolder = document.createElement("div");
-    contentHolder.innerHTML = html;
+    setElementHTML(contentHolder, html);
     container.appendChild(contentHolder);
 
     switch (normalizedSpec.position) {

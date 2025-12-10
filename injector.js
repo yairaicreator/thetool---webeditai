@@ -28,6 +28,36 @@ const mountedFeatures = new Map();
 // Track last mounted spec signature per feature to prevent redundant remounts
 const mountedFeatureSignatures = new Map();
 
+function createFragmentFromHTML(html) {
+  const fragment = document.createDocumentFragment();
+  if (!html || typeof html !== 'string') {
+    return fragment;
+  }
+  try {
+    const parser = new DOMParser();
+    const parsed = parser.parseFromString(html, 'text/html');
+    while (parsed.body.firstChild) {
+      fragment.appendChild(parsed.body.firstChild);
+    }
+  } catch (error) {
+    console.error('[WebEdit Injector] Failed to parse HTML fragment:', error);
+  }
+  return fragment;
+}
+
+function setElementHTML(target, html) {
+  if (!target) return;
+  if (typeof target.replaceChildren === 'function') {
+    target.replaceChildren();
+  } else {
+    while (target.firstChild) {
+      target.removeChild(target.firstChild);
+    }
+  }
+  if (!html) return;
+  target.appendChild(createFragmentFromHTML(html));
+}
+
 // Configuration
 const CONFIG = {
   MAX_HTML_SIZE: 20 * 1024, // 20 KB
@@ -308,8 +338,8 @@ function mountFeature(spec, hostDocument = document) {
     `;
     shadowRoot.appendChild(baseStyle);
     
-    // Inject HTML content
-    container.innerHTML = spec.html;
+    // Inject HTML content using Trusted Types-safe path
+    setElementHTML(container, spec.html);
     shadowRoot.appendChild(container);
     
     // Attach event listeners for button features (security: use data attributes instead of onclick)
