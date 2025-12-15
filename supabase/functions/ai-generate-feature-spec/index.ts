@@ -3,7 +3,9 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
-const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
+const COHERE_API_KEY = Deno.env.get("COHERE_API_KEY");
+const COHERE_CHAT_URL = "https://api.cohere.com/v1/chat";
+const COHERE_MODEL = "command-r";
 
 interface FeatureSpec {
   action: "hide" | "customize" | "add" | "text";
@@ -88,14 +90,9 @@ serve(async (req) => {
 
   try {
     // Validate API key
-    if (!OPENAI_API_KEY) {
-      return new Response(
-        JSON.stringify({ ok: false, error: "OPENAI_API_KEY not configured" }),
-        {
-          status: 500,
-          headers: { "Content-Type": "application/json" },
-        }
-      );
+    if (!COHERE_API_KEY) {
+      console.error("[ai-generate-feature-spec] Missing COHERE_API_KEY");
+      return buildJsonResponse({ ok: false, error: "COHERE_API_KEY not configured" }, 500);
     }
 
     // Parse request body
@@ -111,71 +108,51 @@ serve(async (req) => {
       );
     }
 
-    // Build user message
-    let userMessage = prompt;
-    if (context) {
-      userMessage = `Context: ${typeof context === "string" ? context : JSON.stringify(context)}\n\nUser request: ${prompt}`;
-    }
+    const userMessage = buildUserMessage(prompt, context);
 
-    // Call OpenAI API
-    const openaiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
+    const coherePayload = {
+      model: COHERE_MODEL,
+      message: userMessage,
+      preamble: SYSTEM_PROMPT,
+      temperature: 0.2,
+      max_output_tokens: 600,
+    };
+
+    const cohereResponse = await fetch(COHERE_CHAT_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${OPENAI_API_KEY}`,
+        Authorization: `Bearer ${COHERE_API_KEY}`,
       },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: userMessage },
-        ],
-        temperature: 0.3,
-        response_format: { type: "json_object" },
-      }),
+      body: JSON.stringify(coherePayload),
     });
 
-    if (!openaiResponse.ok) {
-      const errorText = await openaiResponse.text();
-      return new Response(
-        JSON.stringify({
-          ok: false,
-          error: `OpenAI API error: ${openaiResponse.status} ${errorText}`,
-        }),
-        {
-          status: 500,
-          headers: { "Content-Type": "application/json" },
-        }
+    const raw = await cohereResponse.text();
+    let spec: FeatureSpec;
+
+    if (!cohereResponse.ok) {
+      console.error("[ai-generate-feature-spec] Cohere API error:", cohereResponse.status, raw);
+      return buildJsonResponse(
+        { ok: false, error: `Cohere API error: ${cohereResponse.status}` },
+        500,
       );
     }
 
-    const openaiData = await openaiResponse.json();
-    const content = openaiData.choices?.[0]?.message?.content;
+    const parsedResponse = safeJsonParse(raw);
+    const content = extractCohereReply(parsedResponse);
 
     if (!content) {
-      return new Response(
-        JSON.stringify({ ok: false, error: "No content in OpenAI response" }),
-        {
-          status: 500,
-          headers: { "Content-Type": "application/json" },
-        }
-      );
+      console.error("[ai-generate-feature-spec] Empty response from Cohere");
+      return buildJsonResponse({ ok: false, error: "Empty response from Cohere" }, 500);
     }
 
-    // Parse and validate JSON response
-    let spec: FeatureSpec;
     try {
       spec = JSON.parse(content);
-    } catch (parseError) {
-      return new Response(
-        JSON.stringify({
-          ok: false,
-          error: `Failed to parse JSON response: ${parseError}`,
-        }),
-        {
-          status: 500,
-          headers: { "Content-Type": "application/json" },
-        }
+    } catch (error) {
+      console.error("[ai-generate-feature-spec] Failed to parse Cohere JSON:", content, error);
+      return buildJsonResponse(
+        { ok: false, error: "Failed to parse AI output as JSON" },
+        500,
       );
     }
 
@@ -194,27 +171,69 @@ serve(async (req) => {
     }
 
     // Return success response
-    return new Response(
-      JSON.stringify({ ok: true, spec }),
-      {
-        status: 200,
-        headers: {
-          "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*",
-        },
-      }
-    );
+    return buildJsonResponse({ ok: true, spec }, 200);
   } catch (error) {
-    return new Response(
-      JSON.stringify({
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      }),
-      {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      }
-    );
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[ai-generate-feature-spec] Unexpected error:", message);
+    return buildJsonResponse({ ok: false, error: message }, 500);
   }
 });
+
+function buildUserMessage(prompt: string, context?: unknown) {
+  if (!context) {
+    return prompt;
+  }
+
+  const contextString =
+    typeof context === "string" ? context : JSON.stringify(context, null, 2);
+
+  return `Context:\n${contextString}\n\nUser request:\n${prompt}`;
+}
+
+function safeJsonParse(value: string) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function extractCohereReply(data: unknown): string | null {
+  if (!data || typeof data !== "object") return null;
+
+  const text = (data as { text?: string }).text;
+  if (typeof text === "string" && text.trim()) {
+    return text.trim();
+  }
+
+  const message = (data as { message?: { content?: Array<{ text?: string }> } }).message;
+  if (message?.content?.length) {
+    const combined = message.content
+      .map((chunk) => (typeof chunk?.text === "string" ? chunk.text : ""))
+      .join("")
+      .trim();
+    if (combined) return combined;
+  }
+
+  const generations = (data as { generations?: Array<{ text?: string }> }).generations;
+  if (generations?.length) {
+    const combined = generations
+      .map((chunk) => (typeof chunk?.text === "string" ? chunk.text : ""))
+      .join("")
+      .trim();
+    if (combined) return combined;
+  }
+
+  return null;
+}
+
+function buildJsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",
+    },
+  });
+}
 
