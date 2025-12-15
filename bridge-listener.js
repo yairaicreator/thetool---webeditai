@@ -27,31 +27,32 @@ function forwardSessionToBackground(session, source) {
   const email = session?.user?.email || "anonymous";
   console.log(`🔐 [Bridge] Forwarding ${isSignedIn ? "SIGNED-IN" : "SIGNED-OUT"} session from ${source}`, isSignedIn ? email : "");
 
-  try {
-    chrome.runtime.sendMessage(
-      {
-        type: "WEBEDIT_STORE_SUPABASE_SESSION",
-        session
-      },
-      (response) => {
-        if (chrome.runtime.lastError) {
-          console.error("❌ [Bridge] Error forwarding session to background:", chrome.runtime.lastError);
-          return;
-        }
-        if (response?.ignored) {
-          console.log("⚠️ [Bridge] Session ignored by background:", response.reason || "unknown reason");
-          return;
-        }
-        if (response?.unchanged) {
-          console.log("ℹ️ [Bridge] Session already up to date, no broadcast needed");
-          return;
-        }
-        console.log("✅ [Bridge] Session forwarded to background:", response);
-      }
-    );
-  } catch (error) {
-    console.error("❌ [Bridge] Exception while forwarding session:", error);
+  if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.id) {
+    console.warn("⚠️ [Bridge] Cannot forward session - extension context unavailable");
+    return;
   }
+
+  chrome.runtime.sendMessage(
+    {
+      type: "WEBEDIT_STORE_SUPABASE_SESSION",
+      session
+    },
+    (response) => {
+      if (chrome.runtime.lastError) {
+        console.warn("⚠️ [Bridge] Background unavailable while forwarding session:", chrome.runtime.lastError.message);
+        return;
+      }
+      if (response?.ignored) {
+        console.log("⚠️ [Bridge] Session ignored by background:", response.reason || "unknown reason");
+        return;
+      }
+      if (response?.unchanged) {
+        console.log("ℹ️ [Bridge] Session already up to date, no broadcast needed");
+        return;
+      }
+      console.log("✅ [Bridge] Session forwarded to background:", response);
+    }
+  );
 }
 
 /**
