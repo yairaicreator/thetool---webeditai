@@ -726,15 +726,20 @@ async function handleAuthStateChange(nextUser, options = {}) {
   }
 
   if (currentUser && userChanged) {
-    const timestamp = Date.now();
-    const existingAudit = await readAuthAuditForUser(currentUser.id);
-    currentUserAudit = await updateAuthAudit(currentUser.id, {
+    const userSnapshot = currentUser;
+    if (!userSnapshot?.id) {
+      console.warn("[Auth] Skipping audit update; user snapshot missing id");
+    } else {
+      const timestamp = Date.now();
+      const existingAudit = await readAuthAuditForUser(userSnapshot.id);
+      currentUserAudit = await updateAuthAudit(userSnapshot.id, {
       firstSignedInAt: existingAudit?.firstSignedInAt || timestamp,
       lastSignedInAt: timestamp
     });
-    lastAuthorizedUserId = currentUser.id;
-    hasRestoredStateForUser = false;
-    clearInMemoryUserState(`user-change:${reasonText}`);
+      lastAuthorizedUserId = userSnapshot.id;
+      hasRestoredStateForUser = false;
+      clearInMemoryUserState(`user-change:${reasonText}`);
+    }
   } else if (!currentUser && previousUserId && userChanged) {
     await updateAuthAudit(previousUserId, {
       lastSignedOutAt: Date.now()
