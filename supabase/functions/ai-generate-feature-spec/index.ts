@@ -90,20 +90,14 @@ if (typeof denoServe !== "function") {
       headers: {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type",
+        "Access-Control-Allow-Headers": "authorization, apikey, content-type",
       },
     });
   }
 
   // Only allow POST
   if (req.method !== "POST") {
-    return new Response(
-      JSON.stringify({ ok: false, error: "Method not allowed" }),
-      {
-        status: 405,
-        headers: { "Content-Type": "application/json" },
-      }
-    );
+    return buildJsonResponse({ ok: false, error: "Method not allowed" }, 405);
   }
 
   try {
@@ -111,20 +105,14 @@ if (typeof denoServe !== "function") {
     const apiKey = getEnvVar("COHERE_API_KEY");
     if (!apiKey) {
       console.error("[ai-generate-feature-spec] Missing COHERE_API_KEY");
-      return buildJsonResponse({ ok: false, error: "COHERE_API_KEY not configured" }, 500);
+      return buildJsonResponse({ ok: false, error: "COHERE_API_KEY not set" }, 500);
     }
 
     // Parse request body
     const { prompt, context } = await req.json();
 
     if (!prompt || typeof prompt !== "string") {
-      return new Response(
-        JSON.stringify({ ok: false, error: "Missing or invalid 'prompt' field" }),
-        {
-          status: 400,
-          headers: { "Content-Type": "application/json" },
-        }
-      );
+      return buildJsonResponse({ ok: false, error: "Missing or invalid 'prompt' field" }, 400);
     }
 
     const userMessage = buildUserMessage(prompt, context);
@@ -152,7 +140,7 @@ if (typeof denoServe !== "function") {
     if (!cohereResponse.ok) {
       console.error("[ai-generate-feature-spec] Cohere API error:", cohereResponse.status, raw);
       return buildJsonResponse(
-        { ok: false, error: `Cohere API error: ${cohereResponse.status}` },
+        { ok: false, error: `Cohere request failed: ${cohereResponse.status}` },
         500,
       );
     }
@@ -177,16 +165,22 @@ if (typeof denoServe !== "function") {
 
     // Validate spec structure
     if (!spec.action || !["hide", "customize", "add", "text"].includes(spec.action)) {
-      return new Response(
-        JSON.stringify({
+      return buildJsonResponse(
+        {
           ok: false,
           error: `Invalid action: ${spec.action}. Must be one of: hide, customize, add, text`,
-        }),
-        {
-          status: 500,
-          headers: { "Content-Type": "application/json" },
-        }
+        },
+        500,
       );
+    }
+
+    if (spec.action === "add") {
+      if (typeof spec.html !== "string" || !spec.html.trim()) {
+        return buildJsonResponse({ ok: false, error: "Invalid spec: missing html" }, 500);
+      }
+      if (typeof spec.css !== "string") {
+        return buildJsonResponse({ ok: false, error: "Invalid spec: missing css" }, 500);
+      }
     }
 
     // Return success response
