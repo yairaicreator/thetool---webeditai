@@ -1,9 +1,15 @@
 // Supabase Edge Function: ai-generate-feature-spec
 // Generates a structured feature specification from a natural language prompt
 
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+type DenoLikeGlobal = typeof globalThis & {
+  Deno?: {
+    env?: {
+      get(key: string): string | undefined;
+    };
+    serve?: (handler: (req: Request) => Response | Promise<Response>) => void | Promise<void>;
+  };
+};
 
-const COHERE_API_KEY = Deno.env.get("COHERE_API_KEY");
 const COHERE_CHAT_URL = "https://api.cohere.com/v1/chat";
 const COHERE_MODEL = "command-r";
 
@@ -65,7 +71,19 @@ Example responses:
 {"action":"customize","selector":".header","styles":{"backgroundColor":"#ff0000","color":"#ffffff"}}
 {"action":"add","content":"New paragraph text","position":"after","targetSelector":".main-content","html":"<div class=\\"webedit-ai-note\\">New paragraph text</div>","css":".webedit-ai-note{padding:12px;border-radius:8px;background:#f1f5f9;}"}`
 
-serve(async (req) => {
+const denoServe = (globalThis as DenoLikeGlobal).Deno?.serve;
+
+const getEnvVar = (key: string): string | undefined => {
+  const { Deno: deno } = globalThis as DenoLikeGlobal;
+  return deno?.env?.get?.(key);
+};
+
+if (typeof denoServe !== "function") {
+  console.warn(
+    "[ai-generate-feature-spec] Deno.serve is unavailable. This file must run inside a Supabase Edge runtime.",
+  );
+} else {
+  denoServe(async (req) => {
   // CORS headers
   if (req.method === "OPTIONS") {
     return new Response(null, {
@@ -90,7 +108,8 @@ serve(async (req) => {
 
   try {
     // Validate API key
-    if (!COHERE_API_KEY) {
+    const apiKey = getEnvVar("COHERE_API_KEY");
+    if (!apiKey) {
       console.error("[ai-generate-feature-spec] Missing COHERE_API_KEY");
       return buildJsonResponse({ ok: false, error: "COHERE_API_KEY not configured" }, 500);
     }
@@ -122,7 +141,7 @@ serve(async (req) => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${COHERE_API_KEY}`,
+        Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify(coherePayload),
     });
@@ -178,6 +197,7 @@ serve(async (req) => {
     return buildJsonResponse({ ok: false, error: message }, 500);
   }
 });
+}
 
 function buildUserMessage(prompt: string, context?: unknown) {
   if (!context) {
