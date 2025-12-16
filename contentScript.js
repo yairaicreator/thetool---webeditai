@@ -793,6 +793,17 @@ async function loadAuthorizedExperience() {
 
   await restoreAddedFeatures();
   console.log(`[Auth] Finished restoring user-specific features for ${email}`);
+
+  // Replay persisted FeatureSpecs (hide/customize/add/text) for this page.
+  if (window.FeatureSpecExecutor && typeof window.FeatureSpecExecutor.restoreAndReplay === "function") {
+    try {
+      const replayResult = await window.FeatureSpecExecutor.restoreAndReplay();
+      console.log(`[Auth] Replayed FeatureSpecs for ${email}:`, replayResult);
+    } catch (error) {
+      console.error("❌ Failed to replay FeatureSpecs:", error);
+    }
+  }
+
   hasRestoredStateForUser = true;
 }
 
@@ -4044,44 +4055,124 @@ async function handleAddFeatureChatEntry(userText) {
 async function handleGeneralChatMessage(userText, attachments = []) {
   addChatMessage("user", userText, { attachments });
 
-  const thinkingMessage = addChatMessage("assistant", "🤖 Assistant is thinking...");
+  const lower = (userText || "").trim().toLowerCase();
 
-  const callPageChatFn =
-    (window.SupabaseClient && typeof window.SupabaseClient.callPageChat === "function"
-      ? window.SupabaseClient.callPageChat
-      : null) ||
-    (typeof window.callPageChat === "function" ? window.callPageChat : null);
-
-  if (!callPageChatFn) {
-    thinkingMessage.content = "AI chat is not available right now.";
+  if (lower === "undo" || lower === "/undo") {
+    const thinkingMessage = addChatMessage("assistant", "Undoing last change...");
+    const exec = window.FeatureSpecExecutor;
+    if (!exec || typeof exec.undoLast !== "function") {
+      thinkingMessage.content = "Undo is not available right now.";
+    } else {
+      const result = await exec.undoLast();
+      thinkingMessage.content = result.ok ? "✅ Undid the last change." : `❌ ${result.error}`;
+    }
     renderChatMessages();
     schedulePanelStateSave();
     saveChatHistory();
     return;
   }
 
-  const pageContext = {
-    url: window.location.href,
-    title: document.title || "",
-    text: getPagePlainText()
-  };
+  if (lower === "redo" || lower === "/redo") {
+    const thinkingMessage = addChatMessage("assistant", "Redoing last change...");
+    const exec = window.FeatureSpecExecutor;
+    if (!exec || typeof exec.redoLast !== "function") {
+      thinkingMessage.content = "Redo is not available right now.";
+    } else {
+      const result = await exec.redoLast();
+      thinkingMessage.content = result.ok ? "✅ Redid the last change." : `❌ ${result.error}`;
+    }
+    renderChatMessages();
+    schedulePanelStateSave();
+    saveChatHistory();
+    return;
+  }
+
+  const thinkingMessage = addChatMessage("assistant", "🤖 Generating edit plan...");
+
+  const supabaseClient = window.SupabaseClient;
+  if (!supabaseClient || !supabaseClient.url || !supabaseClient.anonKey) {
+    thinkingMessage.content = "AI edits are not available (Supabase is not configured).";
+    renderChatMessages();
+    schedulePanelStateSave();
+    saveChatHistory();
+    return;
+  }
+
+  const exec = window.FeatureSpecExecutor;
+  const pageContext = exec && typeof exec.getPageContext === "function"
+    ? exec.getPageContext()
+    : { url: window.location.href, title: document.title || "", outline: null };
 
   try {
-    const result = await callPageChatFn(userText, pageContext, attachments);
+    const endpoint = `${supabaseClient.url}/functions/v1/ai-generate-feature-spec`;
+    const resp = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": supabaseClient.anonKey,
+        "Authorization": `Bearer ${supabaseClient.anonKey}`
+      },
+      body: JSON.stringify({ prompt: userText, context: pageContext })
+    });
 
-    if (result?.ok && typeof result.reply === "string" && result.reply.trim()) {
-      thinkingMessage.content = result.reply.trim();
-    } else if (result?.error) {
-      const errorMessage = result.error;
-      console.error("[WebEdit Chat] AI reply error:", errorMessage);
-      thinkingMessage.content = `There was a problem talking to the AI: ${errorMessage}`;
+    const rawText = await resp.text();
+    let payload = null;
+    try {
+      payload = rawText ? JSON.parse(rawText) : null;
+    } catch (parseError) {
+      console.error("[FeatureSpec] Non-JSON response:", rawText);
+    }
+
+    if (!resp.ok || !payload?.ok) {
+      const err = payload?.error || `Request failed (${resp.status})`;
+      thinkingMessage.content = `❌ ${err}`;
+      renderChatMessages();
+      schedulePanelStateSave();
+      saveChatHistory();
+      return;
+    }
+
+    const rawSpec = typeof payload.spec === "string"
+      ? (() => { try { return JSON.parse(payload.spec); } catch { return null; } })()
+      : payload.spec;
+
+    const parser = typeof window.parseFeatureSpec === "function" ? window.parseFeatureSpec : null;
+    if (!parser) {
+      thinkingMessage.content = "❌ FeatureSpec validator is not available.";
+      renderChatMessages();
+      schedulePanelStateSave();
+      saveChatHistory();
+      return;
+    }
+
+    const parsed = parser(rawSpec);
+    if (!parsed.ok) {
+      thinkingMessage.content = `❌ ${parsed.error}`;
+      renderChatMessages();
+      schedulePanelStateSave();
+      saveChatHistory();
+      return;
+    }
+
+    if (!exec || typeof exec.applyFeatureSpec !== "function") {
+      thinkingMessage.content = "❌ FeatureSpec executor is not available.";
+      renderChatMessages();
+      schedulePanelStateSave();
+      saveChatHistory();
+      return;
+    }
+
+    const applied = await exec.applyFeatureSpec(parsed.spec);
+    if (!applied.ok) {
+      thinkingMessage.content = `❌ ${applied.error}`;
     } else {
-      thinkingMessage.content = "AI chat is not available right now.";
+      const summary = typeof exec.summarizeSpec === "function" ? exec.summarizeSpec(parsed.spec) : "Applied edit";
+      thinkingMessage.content = `✅ ${summary}`;
     }
   } catch (error) {
-    console.error("[WebEdit Chat] Failed to call AI chat:", error);
     const message = error instanceof Error ? error.message : String(error);
-    thinkingMessage.content = `There was a problem talking to the AI: ${message}`;
+    console.error("[FeatureSpec] Failed to generate/apply:", error);
+    thinkingMessage.content = `❌ ${message || "Failed to apply edit"}`;
   }
 
   renderChatMessages();
@@ -4599,6 +4690,89 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
       await togglePanel(nextState, { skipGlobalSync: true });
       sendResponse({ success: true, applied: true });
+    })();
+    return true;
+  }
+
+  // FeatureSpec AI actions (hide/customize/add/text)
+  if (message.type === "GET_PAGE_CONTEXT") {
+    const exec = window.FeatureSpecExecutor;
+    if (!exec || typeof exec.getPageContext !== "function") {
+      sendResponse({ ok: false, error: "FeatureSpec context is not available" });
+      return true;
+    }
+    try {
+      sendResponse({ ok: true, context: exec.getPageContext() });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      sendResponse({ ok: false, error: msg || "Failed to get page context" });
+    }
+    return true;
+  }
+
+  if (message.type === "APPLY_FEATURE_SPEC") {
+    (async () => {
+      try {
+        const parser = typeof window.parseFeatureSpec === "function" ? window.parseFeatureSpec : null;
+        if (!parser) {
+          sendResponse({ ok: false, error: "FeatureSpec validator is not available" });
+          return;
+        }
+        const parsed = parser(message.spec);
+        if (!parsed.ok) {
+          sendResponse({ ok: false, error: parsed.error });
+          return;
+        }
+
+        const exec = window.FeatureSpecExecutor;
+        if (!exec || typeof exec.applyFeatureSpec !== "function") {
+          sendResponse({ ok: false, error: "FeatureSpec executor is not available" });
+          return;
+        }
+
+        const result = await exec.applyFeatureSpec(parsed.spec);
+        sendResponse(result.ok ? { ok: true, applied: result.applied } : { ok: false, error: result.error });
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.error("[FeatureSpec] APPLY_FEATURE_SPEC failed:", error);
+        sendResponse({ ok: false, error: msg || "Failed to apply spec" });
+      }
+    })();
+    return true;
+  }
+
+  if (message.type === "UNDO_LAST") {
+    (async () => {
+      try {
+        const exec = window.FeatureSpecExecutor;
+        if (!exec || typeof exec.undoLast !== "function") {
+          sendResponse({ ok: false, error: "Undo is not available" });
+          return;
+        }
+        const result = await exec.undoLast();
+        sendResponse(result.ok ? { ok: true, undone: result.undone } : { ok: false, error: result.error });
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        sendResponse({ ok: false, error: msg || "Undo failed" });
+      }
+    })();
+    return true;
+  }
+
+  if (message.type === "REDO_LAST") {
+    (async () => {
+      try {
+        const exec = window.FeatureSpecExecutor;
+        if (!exec || typeof exec.redoLast !== "function") {
+          sendResponse({ ok: false, error: "Redo is not available" });
+          return;
+        }
+        const result = await exec.redoLast();
+        sendResponse(result.ok ? { ok: true, redone: result.redone } : { ok: false, error: result.error });
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        sendResponse({ ok: false, error: msg || "Redo failed" });
+      }
     })();
     return true;
   }

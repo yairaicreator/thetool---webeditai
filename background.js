@@ -465,4 +465,47 @@ function openWebsiteSignOutFlow() {
 
     return true; // Keep message channel open for async response
   }
+
+  // ============================================
+  // FeatureSpec relay (UI/background -> active tab content script)
+  // ============================================
+  if (
+    message?.type === "GET_PAGE_CONTEXT" ||
+    message?.type === "APPLY_FEATURE_SPEC" ||
+    message?.type === "UNDO_LAST" ||
+    message?.type === "REDO_LAST"
+  ) {
+    (async () => {
+      try {
+        const tabIdFromSender = sender?.tab?.id || null;
+
+        const resolveActiveTabId = () =>
+          new Promise((resolve) => {
+            chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+              const tabId = tabs && tabs[0] && tabs[0].id ? tabs[0].id : null;
+              resolve(tabId);
+            });
+          });
+
+        const targetTabId = tabIdFromSender || (await resolveActiveTabId());
+        if (!targetTabId) {
+          sendResponse({ ok: false, error: "No active tab found" });
+          return;
+        }
+
+        chrome.tabs.sendMessage(targetTabId, message, (response) => {
+          if (chrome.runtime.lastError) {
+            sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+            return;
+          }
+          sendResponse(response || { ok: false, error: "No response from content script" });
+        });
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        sendResponse({ ok: false, error: msg || "Failed to relay message" });
+      }
+    })();
+
+    return true; // Keep message channel open for async response
+  }
 });

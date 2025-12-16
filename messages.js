@@ -18,6 +18,12 @@ const MessageTypes = {
   
   // Add Feature
   ADD_FEATURE: "WEBEDIT_ADD_FEATURE",
+
+  // FeatureSpec AI actions
+  GET_PAGE_CONTEXT: "GET_PAGE_CONTEXT",
+  APPLY_FEATURE_SPEC: "APPLY_FEATURE_SPEC",
+  UNDO_LAST: "UNDO_LAST",
+  REDO_LAST: "REDO_LAST",
   
   // Ping
   PING: "PING"
