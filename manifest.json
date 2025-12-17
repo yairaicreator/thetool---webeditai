@@ -6,6 +6,9 @@
   "action": {
     "default_title": "WebEdit AI - Click to toggle panel"
   },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
   "background": {
     "service_worker": "background.js"
   },
@@ -13,7 +16,8 @@
     "activeTab",
     "scripting",
     "storage",
-    "tabs"
+    "tabs",
+    "side_panel"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -26,9 +30,23 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["supabaseClient.js", "saveEdit.js", "injector.js", "messages.js", "featureSpec.js", "featureSpecExecutor.js", "editRules.js", "contentScript.js"],
-      "css": ["contentStyles.css", "panel.css"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "supabaseClient.js",
+        "saveEdit.js",
+        "injector.js",
+        "messages.js",
+        "featureSpec.js",
+        "featureSpecExecutor.js",
+        "editRules.js",
+        "contentScript.js"
+      ],
+      "css": [
+        "contentStyles.css",
+        "panel.css"
+      ],
       "run_at": "document_idle"
     },
     {
@@ -36,14 +54,22 @@
         "https://www.webeditai.com/*",
         "https://webeditai.com/*"
       ],
-      "js": ["bridge-listener.js"],
+      "js": [
+        "bridge-listener.js"
+      ],
       "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["panel.css", "contentStyles.css", "Logo/*.png"],
-      "matches": ["<all_urls>"]
+      "resources": [
+        "panel.css",
+        "contentStyles.css",
+        "Logo/*.png"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ]
 }

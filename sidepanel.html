@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebEdit AI Side Panel</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <div id="webedit-chat-panel">
+    <!-- Header Navigation Bar -->
+    <div class="webedit-panel-header">
+      <button class="webedit-nav-btn logo-btn" id="webedit-logo-btn">WebEdit</button>
+      <button class="webedit-nav-btn history-btn" id="webedit-history-btn" style="display:none">History</button>
+      <button class="webedit-nav-btn signin-btn" id="webedit-signin-btn">Sign in</button>
+      <!-- Resize and Close buttons are not needed in Side Panel as it's managed by Chrome -->
+    </div>
+
+    <div class="webedit-auth-guard hidden" id="webedit-auth-guard" aria-live="polite">
+      <div class="webedit-auth-guard-card">
+        <h3>Sign in required</h3>
+        <p>Sign in for getting access to the features.</p>
+        <button class="webedit-auth-guard-btn" id="webedit-auth-guard-signin">Sign in</button>
+      </div>
+    </div>
+
+    <!-- History Sidebar -->
+    <div class="webedit-history-sidebar" id="webedit-history-sidebar">
+      <div class="webedit-history-header">
+        <span>Chat History</span>
+        <button class="webedit-new-chat-btn" id="webedit-new-chat-btn">New Chat</button>
+      </div>
+      <div class="webedit-history-list" id="webedit-history-list"></div>
+    </div>
+
+    <!-- Main Content Area -->
+    <div class="webedit-main-content">
+      <div class="webedit-chat-messages" id="webedit-chat-messages">
+        <div class="webedit-chat-placeholder">
+          <p>Select a tool from Visual Edit menu below to get started</p>
+        </div>
+      </div>
+      <div class="webedit-references-container" id="webedit-references-container"></div>
+    </div>
+
+    <!-- Customize Panel (collapsible) -->
+    <div class="webedit-customize-panel" id="webedit-customize-panel">
+      <div class="webedit-customize-header">
+        <h3>Customize Element</h3>
+        <button class="webedit-customize-close-btn" id="webedit-customize-close-btn" type="button">×</button>
+      </div>
+      <p class="webedit-customize-info">Pick an element to customize its appearance</p>
+      
+      <div class="webedit-field-group">
+        <div class="webedit-field-row">
+          <label>Background:</label>
+          <input type="color" id="webedit-bg-color" value="#ffffff" />
+        </div>
+        
+        <div class="webedit-field-row">
+          <label>Text Color:</label>
+          <input type="color" id="webedit-text-color" value="#000000" />
+        </div>
+        
+        <div class="webedit-field-row">
+          <label>Font Size:</label>
+          <input type="number" id="webedit-font-size" value="16" min="8" max="72" />
+        </div>
+
+        <div class="webedit-field-row">
+          <label>Width:</label>
+          <div class="webedit-size-input-group">
+            <input type="number" id="webedit-width-value" min="0" placeholder="auto" />
+            <select id="webedit-width-unit">
+              <option value="px">px</option>
+              <option value="%">%</option>
+              <option value="rem">rem</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="webedit-field-row">
+          <label>Height:</label>
+          <div class="webedit-size-input-group">
+            <input type="number" id="webedit-height-value" min="0" placeholder="auto" />
+            <select id="webedit-height-unit">
+              <option value="px">px</option>
+              <option value="%">%</option>
+              <option value="rem">rem</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="webedit-field-row">
+          <label>Scale:</label>
+          <div class="webedit-scale-input">
+            <input type="range" id="webedit-scale-input" min="50" max="200" value="100" />
+            <span class="webedit-scale-value" id="webedit-scale-value">100%</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="webedit-panel-divider"></div>
+
+      <div class="webedit-layout-section">
+        <div class="webedit-section-label">Reposition</div>
+        <div class="webedit-layout-actions">
+          <button class="webedit-layout-btn" id="webedit-move-up-btn" type="button">Move up</button>
+          <button class="webedit-layout-btn" id="webedit-move-down-btn" type="button">Move down</button>
+        </div>
+      </div>
+
+      <div class="webedit-layout-section">
+        <div class="webedit-section-label">Alignment</div>
+        <div class="webedit-align-actions">
+          <button class="webedit-align-btn" data-align="left" type="button">Left</button>
+          <button class="webedit-align-btn" data-align="center" type="button">Center</button>
+          <button class="webedit-align-btn" data-align="right" type="button">Right</button>
+        </div>
+      </div>
+      
+      <div class="webedit-customize-actions">
+        <button class="webedit-btn-small webedit-btn-primary" id="webedit-apply-btn" type="button">Apply</button>
+        <button class="webedit-btn-small webedit-btn-secondary" id="webedit-reset-btn" type="button">Reset</button>
+      </div>
+    </div>
+
+    <!-- Bottom Controls -->
+    <div class="webedit-bottom-controls">
+      <div class="webedit-visual-edit">
+        <span class="webedit-tool-label">Visual Edit</span>
+        <button class="webedit-hamburger-btn" id="webedit-burger-btn">
+          <span></span>
+          <span></span>
+          <span></span>
+        </button>
+        <!-- Tools dropdown menu -->
+        <div class="webedit-tools-menu" id="webedit-tools-menu">
+          <button class="webedit-tool-btn" data-tool="add" id="webedit-add-btn">Add</button>
+          <button class="webedit-tool-btn active" data-tool="remove" id="webedit-remove-btn">Remove/hide</button>
+          <button class="webedit-tool-btn" data-tool="customize" id="webedit-customize-btn">Customize</button>
+        </div>
+      </div>
+      <button class="webedit-pick-btn-bottom" id="webedit-pick-btn">Pick element</button>
+    </div>
+
+    <div class="webedit-mode-indicator hidden" id="webedit-mode-indicator" aria-live="polite" aria-hidden="true">
+      <span class="webedit-mode-text" id="webedit-mode-text">Mode active</span>
+      <button class="webedit-mode-close-btn" id="webedit-mode-close-btn" type="button" aria-label="Exit mode">×</button>
+    </div>
+
+    <!-- Chat Input Bar (at bottom) -->
+    <div class="webedit-input-container" id="webedit-input-container">
+      <div class="webedit-attachment-preview" id="webedit-attachment-preview"></div>
+      <div class="webedit-input-row">
+        <button class="webedit-attach-btn" id="webedit-attach-btn" type="button" aria-label="Attach files">📎</button>
+        <textarea 
+          class="webedit-chat-input" 
+          id="webedit-chat-input" 
+          placeholder="What to do you want to change?"
+          rows="2"
+          autocomplete="off"
+          spellcheck="true"
+        ></textarea>
+        <button class="webedit-send-btn" id="webedit-send-btn" type="button" aria-label="Send message">➤</button>
+      </div>
+      <input class="webedit-file-input" id="webedit-file-input" type="file" multiple accept="image/*,.pdf,.doc,.docx,.txt,.json,.csv,.md" />
+    </div>
+  </div>
+  <script src="sidepanel.js"></script>
+</body>
+</html>

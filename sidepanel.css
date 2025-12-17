@@ -1,0 +1,35 @@
+@import 'panel.css';
+
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
+  background: #d7fbff;
+}
+
+#webedit-chat-panel {
+  position: static !important;
+  width: 100% !important;
+  height: 100% !important;
+  box-shadow: none !important;
+  border: none !important;
+  border-radius: 0 !important;
+  transform: none !important;
+  display: flex !important;
+  right: auto !important;
+  top: auto !important;
+}
+
+/* Hide elements not needed in side panel */
+.webedit-resize-btn,
+.webedit-close-btn,
+.webedit-header-hamburger {
+  display: none !important;
+}
+
+/* Adjustments for side panel context */
+.webedit-panel-header {
+  border-radius: 0 !important;
+}

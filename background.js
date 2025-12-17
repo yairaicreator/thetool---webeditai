@@ -1,64 +1,16 @@
 // WebEdit AI Background Service Worker
-// Handles extension icon clicks to directly toggle the in-page chat panel
+// Handles extension icon clicks to open the side panel
 
 /**
- * Listen for extension icon clicks
- * When clicked, send a message to the active tab's content script to toggle the panel
- * No popup window or intermediate UI - direct panel toggle
+ * Configure side panel behavior
+ * Open the side panel when the action icon is clicked
  */
-chrome.action.onClicked.addListener(async (tab) => {
-  // Don't try to inject into protected Chrome pages
-  if (!tab.url ||
-    tab.url.startsWith('chrome://') ||
-    tab.url.startsWith('edge://') ||
-    tab.url.startsWith('about:') ||
-    tab.url.startsWith('chrome-extension://')) {
-    console.log('WebEdit AI: Cannot inject into protected pages');
-    return;
-  }
+chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })
+  .catch((error) => console.error(error));
 
-  try {
-    // First, try to send a message to check if content script is loaded
-    await chrome.tabs.sendMessage(tab.id, {
-      type: 'WEBEDIT_TOGGLE_PANEL'
-    });
+// The previous injection logic is removed as the side panel is now used.
+// If we need to communicate with the content script, we can do it from sidepanel.js
 
-    console.log('WebEdit AI: Toggle message sent to tab', tab.id);
-  } catch (error) {
-    // Content script not loaded yet, inject it manually
-    console.log('WebEdit AI: Injecting content script...');
-
-    try {
-      // Inject CSS files
-      await chrome.scripting.insertCSS({
-        target: { tabId: tab.id },
-        files: ['contentStyles.css', 'panel.css']
-      });
-
-      // Inject JavaScript
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        files: ['supabaseClient.js', 'saveEdit.js', 'injector.js', 'messages.js', 'editRules.js', 'contentScript.js']
-      });
-
-      console.log('WebEdit AI: Content script injected successfully');
-
-      // Wait a bit for script to initialize, then toggle panel
-      setTimeout(async () => {
-        try {
-          await chrome.tabs.sendMessage(tab.id, {
-            type: 'WEBEDIT_TOGGLE_PANEL'
-          });
-        } catch (e) {
-          console.log('WebEdit AI: Please refresh the page and try again');
-        }
-      }, 100);
-
-    } catch (injectError) {
-      console.log('WebEdit AI: Could not inject content script. Please refresh the page.');
-    }
-  }
-});
 
 /**
  * Optional: Listen for installation/update events
@@ -433,26 +385,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true; // Keep message channel open for async response
   }
 
-function openWebsiteSignOutFlow() {
-  console.log("🌐 Initiating website sign-out flow");
-  // First, hit a route that performs Supabase sign-out in the SPA (open in background)
-  chrome.tabs.create({ url: WEBEDIT_SIGNOUT_URL, active: false }, (tab) => {
-    if (chrome.runtime.lastError) {
-      console.warn("⚠️ Could not open website sign-out tab:", chrome.runtime.lastError.message);
-    } else if (tab) {
-      console.log("🧼 Website sign-out tab opened:", tab.id);
-    }
-  });
+  function openWebsiteSignOutFlow() {
+    console.log("🌐 Initiating website sign-out flow");
+    // First, hit a route that performs Supabase sign-out in the SPA (open in background)
+    chrome.tabs.create({ url: WEBEDIT_SIGNOUT_URL, active: false }, (tab) => {
+      if (chrome.runtime.lastError) {
+        console.warn("⚠️ Could not open website sign-out tab:", chrome.runtime.lastError.message);
+      } else if (tab) {
+        console.log("🧼 Website sign-out tab opened:", tab.id);
+      }
+    });
 
-  // Then open the public landing page for the user
-  chrome.tabs.create({ url: WEBEDIT_LANDING_URL, active: true }, (tab) => {
-    if (chrome.runtime.lastError) {
-      console.error("❌ Failed to open landing page:", chrome.runtime.lastError.message);
-    } else if (tab) {
-      console.log("🏠 Landing page opened:", tab.id);
-    }
-  });
-}
+    // Then open the public landing page for the user
+    chrome.tabs.create({ url: WEBEDIT_LANDING_URL, active: true }, (tab) => {
+      if (chrome.runtime.lastError) {
+        console.error("❌ Failed to open landing page:", chrome.runtime.lastError.message);
+      } else if (tab) {
+        console.log("🏠 Landing page opened:", tab.id);
+      }
+    });
+  }
 
   // Handle WEBEDIT_OPEN_HISTORY - Open production history page
   if (message.type === "WEBEDIT_OPEN_HISTORY") {
