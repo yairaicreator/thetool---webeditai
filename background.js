@@ -73,34 +73,116 @@ function getActiveTabId() {
 
 // Message relay: sidepanel.js -> background.js -> contentScript.js (active tab)
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type !== "WEBEDIT_SIDEPANEL_SEND_MESSAGE") {
-    return;
-  }
-
-  (async () => {
-    const tabIdFromSender = sender?.tab?.id || null;
-    const tabId = tabIdFromSender || (await getActiveTabId());
-    if (!tabId) {
-      sendResponse({ ok: false, error: "No active tab found" });
-      return;
-    }
-
-    chrome.tabs.sendMessage(
-      tabId,
-      {
-        type: "WEBEDIT_FROM_SIDEPANEL",
-        text: String(message.text || ""),
-        at: Date.now()
-      },
-      (resp) => {
+  if (message?.type === "WEBEDIT_SIDEPANEL_COMMAND") {
+    (async () => {
+      const tabIdFromSender = sender?.tab?.id || null;
+      const tabId = tabIdFromSender || (await getActiveTabId());
+      if (!tabId) {
+        sendResponse({ ok: false, error: "No active tab found" });
+        return;
+      }
+      chrome.tabs.sendMessage(tabId, { type: "WEBEDIT_SIDEPANEL_COMMAND", payload: message.payload || {} }, (resp) => {
         if (chrome.runtime.lastError) {
           sendResponse({ ok: false, error: chrome.runtime.lastError.message });
           return;
         }
-        sendResponse({ ok: true, forwarded: true, tabId, response: resp || null });
-      }
-    );
-  })();
+        sendResponse({ ok: true, response: resp || null });
+      });
+    })();
+    return true;
+  }
 
-  return true; // async response
+  // Legacy message relay: sidepanel.js -> background.js -> contentScript.js (active tab)
+  if (message?.type !== "WEBEDIT_SIDEPANEL_SEND_MESSAGE") {
+    // fall through to auth handlers below
+  } else {
+    (async () => {
+      const tabIdFromSender = sender?.tab?.id || null;
+      const tabId = tabIdFromSender || (await getActiveTabId());
+      if (!tabId) {
+        sendResponse({ ok: false, error: "No active tab found" });
+        return;
+      }
+
+      chrome.tabs.sendMessage(
+        tabId,
+        {
+          type: "WEBEDIT_FROM_SIDEPANEL",
+          text: String(message.text || ""),
+          at: Date.now()
+        },
+        (resp) => {
+          if (chrome.runtime.lastError) {
+            sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+            return;
+          }
+          sendResponse({ ok: true, forwarded: true, tabId, response: resp || null });
+        }
+      );
+    })();
+
+    return true; // async response
+  }
+
+  if (message?.type === "WEBEDIT_STORE_SUPABASE_SESSION") {
+    const session = message.session || null;
+    chrome.storage.local.set({ webeditSupabaseSession: session, webeditSessionTimestamp: Date.now() }, () => {
+      if (chrome.runtime.lastError) {
+        sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+        return;
+      }
+      // Broadcast to all extension contexts
+      chrome.runtime.sendMessage({ type: "WEBEDIT_SESSION_UPDATED", session }).catch(() => {});
+      chrome.tabs.query({}, (tabs) => {
+        tabs.forEach((tab) => {
+          if (!tab.id) return;
+          chrome.tabs.sendMessage(tab.id, { type: "WEBEDIT_SESSION_UPDATED", session }).catch(() => {});
+        });
+      });
+      sendResponse({ ok: true, user: session?.user || null });
+    });
+    return true;
+  }
+
+  if (message?.type === "WEBEDIT_GET_SESSION") {
+    chrome.storage.local.get(["webeditSupabaseSession", "webeditSessionTimestamp"], (result) => {
+      if (chrome.runtime.lastError) {
+        sendResponse({ session: null, error: chrome.runtime.lastError.message });
+        return;
+      }
+      sendResponse({ session: result.webeditSupabaseSession || null, timestamp: result.webeditSessionTimestamp || null });
+    });
+    return true;
+  }
+
+  if (message?.type === "WEBEDIT_SIGN_OUT") {
+    chrome.storage.local.remove(["webeditSupabaseSession", "webeditSessionTimestamp"], () => {
+      const session = null;
+      chrome.runtime.sendMessage({ type: "WEBEDIT_SESSION_UPDATED", session }).catch(() => {});
+      chrome.tabs.query({}, (tabs) => {
+        tabs.forEach((tab) => {
+          if (!tab.id) return;
+          chrome.tabs.sendMessage(tab.id, { type: "WEBEDIT_SESSION_UPDATED", session }).catch(() => {});
+        });
+      });
+      sendResponse({ ok: true });
+    });
+    return true;
+  }
+
+  if (message?.type === "WEBEDIT_OPEN_LOGIN_TAB") {
+    chrome.tabs.create({ url: "https://www.webeditai.com/#/signup?from=extension" }, (tab) => {
+      sendResponse({ ok: true, tabId: tab?.id || null });
+    });
+    return true;
+  }
+
+  if (message?.type === "WEBEDIT_OPEN_HISTORY") {
+    chrome.tabs.create({ url: "https://www.webeditai.com/#/history" }, (tab) => {
+      sendResponse({ ok: true, tabId: tab?.id || null });
+    });
+    return true;
+  }
+
+  return false;
 });

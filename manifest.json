@@ -13,7 +13,8 @@
     "sidePanel",
     "tabs",
     "storage",
-    "activeTab"
+    "activeTab",
+    "scripting"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -31,6 +32,15 @@
     {
       "matches": ["<all_urls>"],
       "js": ["contentScript.js"],
+      "css": ["contentStyles.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.webeditai.com/*",
+        "https://webeditai.com/*"
+      ],
+      "js": ["bridge-listener.js"],
       "run_at": "document_idle"
     }
   ]
