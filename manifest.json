@@ -6,9 +6,6 @@
   "action": {
     "default_title": "WebEdit AI - Click to toggle panel"
   },
-  "side_panel": {
-    "default_path": "sidepanel.html"
-  },
   "background": {
     "service_worker": "background.js"
   },
@@ -16,8 +13,7 @@
     "activeTab",
     "scripting",
     "storage",
-    "tabs",
-    "side_panel"
+    "tabs"
   ],
   "host_permissions": [
     "<all_urls>"
