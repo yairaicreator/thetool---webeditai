@@ -21,54 +21,41 @@ function normalizeSessionPayload(raw, context = "unknown") {
   return { session: raw, valid: true, explicitSignOut: false };
 }
 
-let bridgeRetryCount = 0;
-
 // Helper to send session (including sign-out) to background
 function forwardSessionToBackground(session, source) {
   const isSignedIn = !!(session && session.user);
   const email = session?.user?.email || "anonymous";
   console.log(`🔐 [Bridge] Forwarding ${isSignedIn ? "SIGNED-IN" : "SIGNED-OUT"} session from ${source}`, isSignedIn ? email : "");
 
-  const sendToBackground = () => {
-    chrome.runtime.sendMessage(
-      {
-        type: "WEBEDIT_STORE_SUPABASE_SESSION",
-        session
-      },
-      (response) => {
-        if (chrome.runtime.lastError) {
-          const message = chrome.runtime.lastError.message || "unknown";
-          const isContextInvalid =
-            message.includes("Extension context invalidated") ||
-            message.includes("Receiving end does not exist") ||
-            message.includes("No tab with id") ||
-            message.includes("Could not establish connection");
-          if (isContextInvalid) {
-            console.log("⌛ [Bridge] Extension context unavailable, will retry shortly…");
-            if (bridgeRetryCount < 5) {
-              bridgeRetryCount += 1;
-              setTimeout(sendToBackground, 200 * bridgeRetryCount);
-            }
-          } else {
-            console.warn("⚠️ [Bridge] Background unavailable while forwarding session:", message);
-          }
-          return;
+  chrome.runtime.sendMessage(
+    {
+      type: "WEBEDIT_STORE_SUPABASE_SESSION",
+      session
+    },
+    (response) => {
+      if (chrome.runtime.lastError) {
+        const message = chrome.runtime.lastError.message || "unknown";
+        const isContextInvalid =
+          message.includes("Extension context invalidated") ||
+          message.includes("Receiving end does not exist") ||
+          message.includes("No tab with id") ||
+          message.includes("Could not establish connection");
+        if (!isContextInvalid) {
+          console.warn("⚠️ [Bridge] Background unavailable while forwarding session:", message);
         }
-        bridgeRetryCount = 0;
-        if (response?.ignored) {
-          console.log("⚠️ [Bridge] Session ignored by background:", response.reason || "unknown reason");
-          return;
-        }
-        if (response?.unchanged) {
-          console.log("ℹ️ [Bridge] Session already up to date, no broadcast needed");
-          return;
-        }
-        console.log("✅ [Bridge] Session forwarded to background:", response);
+        return;
       }
-    );
-  };
-
-  sendToBackground();
+      if (response?.ignored) {
+        console.log("⚠️ [Bridge] Session ignored by background:", response.reason || "unknown reason");
+        return;
+      }
+      if (response?.unchanged) {
+        console.log("ℹ️ [Bridge] Session already up to date, no broadcast needed");
+        return;
+      }
+      console.log("✅ [Bridge] Session forwarded to background:", response);
+    }
+  );
 }
 
 /**
