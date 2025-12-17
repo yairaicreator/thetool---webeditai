@@ -16,9 +16,9 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY || SUPABASE_URL.includes("YOUR_SUPABASE_
 }
 
 // Production URLs
-const WEBEDIT_PROD_BASE_URL = "https://www.webeditai.com";
+const WEBEDIT_PROD_BASE_URL = "https://webeditai.com";
 const LOGIN_URL = "https://webeditai.com/#/signup"; // Apex domain avoids redirect that broke hash routes; website should keep this SPA path live
-const HISTORY_URL = "https://www.webeditai.com/#/history";
+const HISTORY_URL = "https://webeditai.com/#/history";
 
 /**
  * Simple Supabase client implementation

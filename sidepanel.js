@@ -3,8 +3,8 @@
 
 (() => {
   const els = {
-    logoBtn: document.getElementById("webedit-logo-btn"),
-    historyBtn: document.getElementById("webedit-history-btn"),
+    headerHamburger: document.getElementById("webedit-header-hamburger"),
+    homeBtn: document.getElementById("webedit-home-btn"),
     signinBtn: document.getElementById("webedit-signin-btn"),
     authGuard: document.getElementById("webedit-auth-guard"),
     authGuardSignin: document.getElementById("webedit-auth-guard-signin"),
@@ -46,6 +46,7 @@
   const MAX_MESSAGES = 200;
 
   let currentUser = null;
+  let lastUserId = null;
   let currentSessionId = null;
   let chatMessages = [];
   let activeHistoryRenameForm = null;
@@ -299,6 +300,17 @@
         });
         main.appendChild(renameBtn);
 
+        const deleteBtn = document.createElement("button");
+        deleteBtn.className = "webedit-history-delete-btn";
+        deleteBtn.type = "button";
+        deleteBtn.setAttribute("aria-label", "Delete chat");
+        deleteBtn.innerHTML = "🗑";
+        deleteBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          deleteChatSession(session.id);
+        });
+        main.appendChild(deleteBtn);
+
         const dateEl = document.createElement("div");
         dateEl.className = "webedit-history-date";
         const ts = session.timestamp || Date.now();
@@ -392,9 +404,6 @@
     if (els.authGuard) {
       els.authGuard.classList.toggle("hidden", signedIn);
     }
-    if (els.historyBtn) {
-      els.historyBtn.style.display = signedIn ? "" : "none";
-    }
   }
 
   function renderSignInButton() {
@@ -424,14 +433,9 @@
       <div class="webedit-avatar-menu-header">
         <div class="webedit-avatar-menu-email">${escapeHtml(user?.email || "User")}</div>
       </div>
-      <div class="webedit-avatar-menu-item" data-action="history">
-        <span class="webedit-avatar-menu-icon">📚</span>
-        <span>View History</span>
-      </div>
-      <div class="webedit-avatar-menu-divider"></div>
       <div class="webedit-avatar-menu-item" data-action="signout">
         <span class="webedit-avatar-menu-icon">👋</span>
-        <span>Sign Out</span>
+        <span>Sign out</span>
       </div>
     `;
     els.signinBtn.appendChild(menu);
@@ -448,11 +452,55 @@
       const action = e.target?.closest(".webedit-avatar-menu-item")?.dataset?.action;
       if (!action) return;
       menu.classList.remove("visible");
-      if (action === "history") {
-        chrome.runtime.sendMessage({ type: "WEBEDIT_OPEN_HISTORY" });
-      } else if (action === "signout") {
+      if (action === "signout") {
         chrome.runtime.sendMessage({ type: "WEBEDIT_SIGN_OUT" });
       }
+    });
+  }
+
+  function toggleHistorySidebar(forceState = null) {
+    if (!els.historySidebar) return;
+    const willShow = forceState === null ? !els.historySidebar.classList.contains("visible") : !!forceState;
+    els.historySidebar.classList.toggle("visible", willShow);
+  }
+
+  function attachHeaderEventListeners() {
+    if (els.headerHamburger && els.historySidebar) {
+      els.headerHamburger.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleHistorySidebar();
+      });
+
+      document.addEventListener("click", (e) => {
+        if (!els.historySidebar.classList.contains("visible")) return;
+        if (els.historySidebar.contains(e.target)) return;
+        if (els.headerHamburger.contains(e.target)) return;
+        toggleHistorySidebar(false);
+      });
+    }
+
+    if (els.homeBtn) {
+      els.homeBtn.addEventListener("click", () => {
+        chrome.tabs.create({ url: "https://webeditai.com/" });
+      });
+    }
+  }
+
+  function deleteChatSession(sessionId) {
+    const historyKey = getHistoryStorageKey();
+    if (!historyKey) return;
+    chrome.storage.local.get([historyKey], (result) => {
+      const history = Array.isArray(result[historyKey]) ? result[historyKey] : [];
+      const next = history.filter(s => s.id !== sessionId);
+      chrome.storage.local.set({ [historyKey]: next }, () => {
+        if (currentSessionId === sessionId) {
+          currentSessionId = null;
+          chatMessages = [];
+          renderChatMessages();
+        }
+        renderHistoryList(next);
+      });
     });
   }
 
@@ -464,6 +512,15 @@
     } catch (e) {
       currentUser = null;
     }
+
+    const nextUserId = currentUser?.id || null;
+    if (nextUserId !== lastUserId) {
+      console.log(`[SidePanel Auth] user changed: ${lastUserId || "none"} -> ${nextUserId || "none"}`);
+      lastUserId = nextUserId;
+      currentSessionId = null;
+      chatMessages = [];
+    }
+
     updateAuthGuardUI();
     if (currentUser) {
       renderSignedInButton(currentUser);
@@ -708,10 +765,7 @@
   });
 
   // Wire UI
-  els.logoBtn?.addEventListener("click", () => chrome.tabs.create({ url: "https://www.webeditai.com" }));
-  els.historyBtn?.addEventListener("click", () => {
-    els.historySidebar?.classList.toggle("visible");
-  });
+  attachHeaderEventListeners();
   els.newChatBtn?.addEventListener("click", () => {
     if (!requireAuth("create a chat")) return;
     startNewChat();

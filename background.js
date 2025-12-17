@@ -7,6 +7,12 @@
 
 const SIDEPANEL_PATH = "sidepanel.html";
 
+// WebEdit AI website routes (use apex domain + hash routes to avoid SPA 404s during OAuth back navigation).
+const WEBEDIT_LOGIN_URL = "https://webeditai.com/#/signup?from=extension";
+const WEBEDIT_HISTORY_URL = "https://webeditai.com/#/history";
+const WEBEDIT_SIGNOUT_URL = "https://webeditai.com/#/history?from=extension-logout";
+const WEBEDIT_LANDING_URL = "https://webeditai.com/";
+
 async function configureSidePanelForTab(tabId) {
   if (!tabId || !chrome.sidePanel?.setOptions) return;
   try {
@@ -126,12 +132,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === "WEBEDIT_STORE_SUPABASE_SESSION") {
     const session = message.session || null;
-    chrome.storage.local.set({ webeditSupabaseSession: session, webeditSessionTimestamp: Date.now() }, () => {
-      if (chrome.runtime.lastError) {
-        sendResponse({ ok: false, error: chrome.runtime.lastError.message });
-        return;
-      }
-      // Broadcast to all extension contexts
+
+    const broadcast = () => {
       chrome.runtime.sendMessage({ type: "WEBEDIT_SESSION_UPDATED", session }).catch(() => {});
       chrome.tabs.query({}, (tabs) => {
         tabs.forEach((tab) => {
@@ -139,6 +141,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           chrome.tabs.sendMessage(tab.id, { type: "WEBEDIT_SESSION_UPDATED", session }).catch(() => {});
         });
       });
+    };
+
+    if (!session) {
+      chrome.storage.local.remove(["webeditSupabaseSession", "webeditSessionTimestamp"], () => {
+        if (chrome.runtime.lastError) {
+          sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+          return;
+        }
+        broadcast();
+        sendResponse({ ok: true, user: null });
+      });
+      return true;
+    }
+
+    chrome.storage.local.set({ webeditSupabaseSession: session, webeditSessionTimestamp: Date.now() }, () => {
+      if (chrome.runtime.lastError) {
+        sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+        return;
+      }
+      broadcast();
       sendResponse({ ok: true, user: session?.user || null });
     });
     return true;
@@ -165,20 +187,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           chrome.tabs.sendMessage(tab.id, { type: "WEBEDIT_SESSION_UPDATED", session }).catch(() => {});
         });
       });
+
+      // Best-effort: open a hidden WebEdit tab to trigger website logout (if the site implements it),
+      // then bring the user to the landing page. This avoids the extension being re-signed-in
+      // immediately if the website still has a valid session.
+      chrome.tabs.create({ url: WEBEDIT_SIGNOUT_URL, active: false }, (hiddenTab) => {
+        setTimeout(() => {
+          if (hiddenTab?.id) {
+            chrome.tabs.remove(hiddenTab.id).catch(() => {});
+          }
+          chrome.tabs.create({ url: WEBEDIT_LANDING_URL, active: true }, () => {});
+        }, 1000);
+      });
+
       sendResponse({ ok: true });
     });
     return true;
   }
 
   if (message?.type === "WEBEDIT_OPEN_LOGIN_TAB") {
-    chrome.tabs.create({ url: "https://www.webeditai.com/#/signup?from=extension" }, (tab) => {
+    // Use apex domain + hash route to avoid SPA 404s/redirects that can drop the hash.
+    chrome.tabs.create({ url: WEBEDIT_LOGIN_URL }, (tab) => {
       sendResponse({ ok: true, tabId: tab?.id || null });
     });
     return true;
   }
 
   if (message?.type === "WEBEDIT_OPEN_HISTORY") {
-    chrome.tabs.create({ url: "https://www.webeditai.com/#/history" }, (tab) => {
+    chrome.tabs.create({ url: WEBEDIT_HISTORY_URL }, (tab) => {
       sendResponse({ ok: true, tabId: tab?.id || null });
     });
     return true;
