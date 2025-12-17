@@ -5,8 +5,12 @@
  * Configure side panel behavior
  * Open the side panel when the action icon is clicked
  */
-chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })
-  .catch((error) => console.error(error));
+if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })
+    .catch((error) => console.error(error));
+} else {
+  console.warn("WebEdit AI: chrome.sidePanel API is not available in this browser version.");
+}
 
 // The previous injection logic is removed as the side panel is now used.
 // If we need to communicate with the content script, we can do it from sidepanel.js
