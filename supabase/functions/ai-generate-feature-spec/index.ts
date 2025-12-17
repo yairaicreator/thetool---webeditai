@@ -11,7 +11,7 @@ type DenoLikeGlobal = typeof globalThis & {
 };
 
 const COHERE_CHAT_URL = "https://api.cohere.com/v1/chat";
-const COHERE_MODEL = "command-r";
+const COHERE_MODEL = "command-a-vision-07-2025";
 
 interface FeatureSpec {
   action: "hide" | "customize" | "add" | "text";
