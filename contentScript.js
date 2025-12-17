@@ -165,6 +165,10 @@ let pageShiftResizeHandler = null;
 let globalShiftStyleEl = null;
 let lastAppliedShiftWidth = null;
 
+// Shadow CSS load state (CSP-safe). Some sites block <link href="chrome-extension://...">.
+let panelCssLoaded = false;
+let panelCssLoadPromise = null;
+
 function getPanelWidthForShift() {
   if (panelWidthPx && panelWidthPx > 0) {
     return panelWidthPx;
@@ -287,6 +291,67 @@ function clearGlobalShiftStyle() {
   if (globalShiftStyleEl) {
     globalShiftStyleEl.textContent = "";
   }
+}
+
+function ensurePanelCssLoaded(shadowRoot, foucStyleEl) {
+  if (panelCssLoadPromise) {
+    return panelCssLoadPromise;
+  }
+  panelCssLoadPromise = (async () => {
+    try {
+      const cssUrl = chrome.runtime.getURL("panel.css");
+      const resp = await fetch(cssUrl);
+      const cssText = await resp.text();
+      const styleEl = document.createElement("style");
+      styleEl.setAttribute("data-webedit", "panel-css");
+      styleEl.textContent = cssText || "";
+      shadowRoot.appendChild(styleEl);
+      panelCssLoaded = true;
+    } catch (error) {
+      console.warn("[WebEdit] Failed to inline panel.css (CSP-safe fallback will be used):", error?.message || error);
+      panelCssLoaded = false;
+    } finally {
+      if (foucStyleEl && foucStyleEl.parentNode) {
+        foucStyleEl.parentNode.removeChild(foucStyleEl);
+      }
+    }
+    return panelCssLoaded;
+  })();
+  return panelCssLoadPromise;
+}
+
+async function waitForPanelCss(timeoutMs = 1200) {
+  if (panelCssLoaded) {
+    return true;
+  }
+  if (!panelCssLoadPromise) {
+    return false;
+  }
+  try {
+    return await Promise.race([
+      panelCssLoadPromise,
+      new Promise(resolve => setTimeout(() => resolve(false), timeoutMs))
+    ]);
+  } catch {
+    return false;
+  }
+}
+
+function applyMinimalPanelFallbackStyles(panelEl) {
+  if (!panelEl || panelCssLoaded) {
+    return;
+  }
+  // Minimal inline style so the panel is visible even if site CSP blocked CSS loading.
+  panelEl.style.position = "fixed";
+  panelEl.style.top = "0";
+  panelEl.style.right = "0";
+  panelEl.style.height = "100vh";
+  panelEl.style.zIndex = "2147483647";
+  panelEl.style.display = "flex";
+  panelEl.style.flexDirection = "column";
+  panelEl.style.background = "#d7fbff";
+  panelEl.style.borderLeft = "2px solid rgba(15, 23, 42, 0.25)";
+  panelEl.style.boxShadow = "-8px 0 24px rgba(15, 23, 42, 0.18)";
 }
 
 function forceGlobalLeftShift() {
@@ -461,7 +526,9 @@ async function applyInitialPanelPreference() {
   try {
     const shouldOpen = await requestGlobalPanelPreference();
     if (shouldOpen) {
-      await togglePanel(true, { skipGlobalSync: true, skipAuthRefresh: true });
+      // IMPORTANT: Never skip auth refresh here, otherwise some sites will show "Sign in"
+      // until the user manually closes/reopens the panel.
+      await togglePanel(true, { skipGlobalSync: true, skipAuthRefresh: false });
     }
   } catch (error) {
     console.debug('[WebEdit] Failed to apply initial panel preference:', error?.message || error);
@@ -1379,18 +1446,8 @@ function createPanel() {
   `;
   panelShadow.appendChild(foucStyle);
 
-  // Inject Stylesheet into Shadow Root
-  const linkEl = document.createElement("link");
-  linkEl.rel = "stylesheet";
-  linkEl.href = chrome.runtime.getURL("panel.css");
-  const removeFoucStyle = () => {
-    if (foucStyle && foucStyle.parentNode) {
-      foucStyle.parentNode.removeChild(foucStyle);
-    }
-  };
-  linkEl.addEventListener("load", removeFoucStyle, { once: true });
-  linkEl.addEventListener("error", removeFoucStyle, { once: true });
-  panelShadow.appendChild(linkEl);
+  // CSP-safe: inline the CSS into the shadow root (some sites block <link href="chrome-extension://...">)
+  ensurePanelCssLoaded(panelShadow, foucStyle);
 
   const panel = document.createElement("div");
   panel.id = "webedit-chat-panel";
@@ -1663,18 +1720,35 @@ async function togglePanel(show, options = {}) {
   isPanelOpen = show;
 
   if (show) {
-    chatPanel.classList.remove("hidden");
-    if (panelHost) {
-      panelHost.style.display = "block";
-    }
-    forceGlobalLeftShift();
-    startPageShiftTracking();
+    try {
+      chatPanel.classList.remove("hidden");
+      applyMinimalPanelFallbackStyles(chatPanel);
+      if (panelHost) {
+        panelHost.style.display = "block";
+      }
 
-    if (!skipAuthRefresh) {
-      // Check auth status when opening the panel
-      console.log("🔍 Checking auth status...");
-      const user = await checkAuthStatus();
-      console.log("🔍 Auth check result:", user ? user.email : "Not signed in");
+      // Only apply the global page shift after the panel is actually able to render.
+      await waitForPanelCss(900);
+      applyMinimalPanelFallbackStyles(chatPanel);
+
+      forceGlobalLeftShift();
+      startPageShiftTracking();
+
+      if (!skipAuthRefresh) {
+        // Check auth status when opening the panel
+        console.log("🔍 Checking auth status...");
+        const user = await checkAuthStatus({ reason: "panel-open", forceRefresh: true });
+        console.log("🔍 Auth check result:", user ? user.email : "Not signed in");
+      }
+    } catch (error) {
+      console.error("[WebEdit] Failed to open panel cleanly, reverting layout:", error);
+      chatPanel.classList.add("hidden");
+      stopPageShiftTracking();
+      clearPageShiftWidth();
+      if (panelHost) {
+        panelHost.style.display = "none";
+      }
+      isPanelOpen = false;
     }
   } else {
     chatPanel.classList.add("hidden");
@@ -4777,7 +4851,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true;
     }
     (async () => {
-      await togglePanel(nextState, { skipGlobalSync: true });
+      // IMPORTANT: don't skip auth refresh when opening due to global visibility sync.
+      await togglePanel(nextState, { skipGlobalSync: true, skipAuthRefresh: false });
       sendResponse({ success: true, applied: true });
     })();
     return true;
@@ -4955,7 +5030,7 @@ async function initialize() {
   setPanelWidth(panelWidthPx, { skipPersist: true });
   ensureLauncherExists();
   updateLauncherVisibility();
-  await checkAuthStatus({ reason: "startup" });
+  await checkAuthStatus({ reason: "startup", forceRefresh: true });
   await applyInitialPanelPreference();
 
   console.log("✅ WebEdit AI: Initialization complete");
