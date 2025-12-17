@@ -27,11 +27,6 @@ function forwardSessionToBackground(session, source) {
   const email = session?.user?.email || "anonymous";
   console.log(`🔐 [Bridge] Forwarding ${isSignedIn ? "SIGNED-IN" : "SIGNED-OUT"} session from ${source}`, isSignedIn ? email : "");
 
-  if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.id) {
-    console.warn("⚠️ [Bridge] Cannot forward session - extension context unavailable");
-    return;
-  }
-
   chrome.runtime.sendMessage(
     {
       type: "WEBEDIT_STORE_SUPABASE_SESSION",
@@ -39,7 +34,15 @@ function forwardSessionToBackground(session, source) {
     },
     (response) => {
       if (chrome.runtime.lastError) {
-        console.warn("⚠️ [Bridge] Background unavailable while forwarding session:", chrome.runtime.lastError.message);
+        const message = chrome.runtime.lastError.message || "unknown";
+        const isContextInvalid =
+          message.includes("Extension context invalidated") ||
+          message.includes("Receiving end does not exist") ||
+          message.includes("No tab with id") ||
+          message.includes("Could not establish connection");
+        if (!isContextInvalid) {
+          console.warn("⚠️ [Bridge] Background unavailable while forwarding session:", message);
+        }
         return;
       }
       if (response?.ignored) {
