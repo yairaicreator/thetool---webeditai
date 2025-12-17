@@ -28,7 +28,8 @@ const BRIDGE_BASE_DELAY_MS = 200;
 function forwardSessionToBackground(session, source, attempt = 0) {
   const isSignedIn = !!(session && session.user);
   const email = session?.user?.email || "anonymous";
-  console.log(`🔐 [Bridge] Forwarding ${isSignedIn ? "SIGNED-IN" : "SIGNED-OUT"} session from ${source}`, isSignedIn ? email : "");
+  const prefix = attempt > 0 ? `retry ${attempt}/${BRIDGE_MAX_ATTEMPTS}` : "forward";
+  console.log(`🔐 [Bridge:${prefix}] ${isSignedIn ? "SIGNED-IN" : "SIGNED-OUT"} session from ${source}`, isSignedIn ? email : "");
 
   const retry = (reason) => {
     if (attempt + 1 >= BRIDGE_MAX_ATTEMPTS) {
