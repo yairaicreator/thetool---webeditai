@@ -29,29 +29,6 @@ function forwardSessionToBackground(session, source, attempt = 0) {
   const isSignedIn = !!(session && session.user);
   const email = session?.user?.email || "anonymous";
   const prefix = attempt > 0 ? `retry ${attempt}/${BRIDGE_MAX_ATTEMPTS}` : "forward";
-  const namespace = `webedit-bridge:${source}`;
-  const requeuedKey = `${namespace}:requeued`;
-  const minActiveDelayMs = 4000;
-  const now = Date.now();
-  const lastRequeue = Number(sessionStorage.getItem(requeuedKey)) || 0;
-  const tabs = chrome?.tabs;
-  const isChromeTabInvalidated = typeof tabs === "undefined";
-
-  if (isChromeTabInvalidated && now - lastRequeue < minActiveDelayMs) {
-    console.log("⌛ [Bridge] Deferring session forwarding until extension context returns");
-    setTimeout(() => forwardSessionToBackground(session, source, attempt), minActiveDelayMs);
-    return;
-  }
-
-  if (isChromeTabInvalidated) {
-    sessionStorage.setItem(requeuedKey, String(now));
-    chrome.runtime.sendMessage({ type: "WEBEDIT_FORCE_EXTENSION_CONTEXT_WAKE" }, () => {
-      // Ignore errors; this is best effort to wake the SW.
-      setTimeout(() => forwardSessionToBackground(session, source, attempt), 250);
-    });
-    return;
-  }
-
   console.log(`🔐 [Bridge:${prefix}] ${isSignedIn ? "SIGNED-IN" : "SIGNED-OUT"} session from ${source}`, isSignedIn ? email : "");
 
   const retry = (reason) => {
