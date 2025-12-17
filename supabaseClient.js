@@ -94,10 +94,65 @@ async function callPageChat(message, pageContext = null, attachments = []) {
   }
 }
 
+async function generateFeatureSpec(prompt, context = null) {
+  const sanitizedPrompt = typeof prompt === 'string' ? prompt.trim() : '';
+  if (!sanitizedPrompt) {
+    return { ok: false, error: 'Prompt is required' };
+  }
+
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || SUPABASE_URL.includes("YOUR_SUPABASE_URL")) {
+    return { ok: false, error: 'Supabase not configured' };
+  }
+
+  const payload = { prompt: sanitizedPrompt };
+  if (context && typeof context === 'object') {
+    payload.context = context;
+  }
+
+  try {
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/ai-generate-feature-spec`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const text = await response.text();
+    let json = null;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch (parseError) {
+      console.error('[SupabaseClient] Failed to parse ai-generate-feature-spec response:', parseError);
+    }
+
+    if (!json) {
+      return { ok: false, error: 'Invalid response from ai-generate-feature-spec' };
+    }
+
+    if (!response.ok && typeof json.error === 'string') {
+      return { ok: false, error: json.error };
+    }
+
+    if (!response.ok) {
+      return { ok: false, error: `ai-generate-feature-spec failed with status ${response.status}` };
+    }
+
+    return json;
+  } catch (error) {
+    console.error('[SupabaseClient] ai-generate-feature-spec request failed:', error);
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, error: message };
+  }
+}
+
 const SupabaseClient = {
   url: SUPABASE_URL,
   anonKey: SUPABASE_ANON_KEY,
   callPageChat,
+  generateFeatureSpec,
 
   /**
    * Get the current session from chrome.storage.local

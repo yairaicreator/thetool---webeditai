@@ -127,8 +127,9 @@ function generateDescriptionForElement(el) {
 }
 
 function isEventInsideExtensionUI(target) {
-  // Sidepanel is separate; only exclude our injected nodes (added features) if needed.
-  return false;
+  if (!target || target === document.body || target === document.documentElement) return true;
+  // Side panel UI is separate; we only exclude injected WebEdit nodes from selection/removal.
+  return !!(target.closest && target.closest('[data-webedit-feature-id]'));
 }
 
 function startPickMode() {
@@ -234,21 +235,100 @@ function resetStylesForSelector(selector) {
   el.style.removeProperty("background-color");
   el.style.removeProperty("color");
   el.style.removeProperty("font-size");
+  el.style.removeProperty("width");
+  el.style.removeProperty("height");
+  el.style.removeProperty("transform");
+  el.style.removeProperty("transform-origin");
+  el.style.removeProperty("display");
+  el.style.removeProperty("margin-left");
+  el.style.removeProperty("margin-right");
   return true;
 }
 
-function injectFeatureCard(selector, name, description) {
+function injectFeatureCard(payload = {}) {
+  const selector = payload.selector || payload.targetSelector || null;
   const target = selector ? document.querySelector(selector) : null;
   if (!target || !target.parentElement) return false;
+
+  const id = payload.featureId || payload.id || `feature-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const position = payload.position || "after";
+  const name = payload.name || "WebEdit feature";
+  const description = payload.description || payload.content || "";
+  const html = typeof payload.html === "string" && payload.html.trim() ? payload.html : null;
+  const css = typeof payload.css === "string" ? payload.css : null;
+
   const container = document.createElement("div");
   container.className = "webedit-added-feature";
-  container.setAttribute("data-webedit-feature-id", `feature-${Date.now()}`);
-  container.innerHTML = `
-    <div style="font-weight:600; font-size:15px; margin-bottom:6px;">${escapeHtml(name || "WebEdit feature")}</div>
-    <div style="font-size:13px; line-height:1.5;">${escapeHtml(description || "")}</div>
-  `;
-  target.parentElement.insertBefore(container, target.nextSibling);
+  container.setAttribute("data-webedit-feature-id", id);
+  container.setAttribute("data-webedit-selector", selector);
+
+  if (css && css.trim()) {
+    const styleEl = document.createElement("style");
+    styleEl.textContent = css;
+    container.appendChild(styleEl);
+  }
+
+  const contentHolder = document.createElement("div");
+  if (html) {
+    contentHolder.innerHTML = html;
+  } else {
+    contentHolder.innerHTML = `
+      <div style="font-weight:600; font-size:15px; margin-bottom:6px;">${escapeHtml(name)}</div>
+      <div style="font-size:13px; line-height:1.5;">${escapeHtml(description)}</div>
+    `;
+  }
+  container.appendChild(contentHolder);
+
+  if (position === "before") {
+    target.parentElement.insertBefore(container, target);
+  } else if (position === "inside") {
+    target.insertBefore(container, target.firstChild);
+  } else {
+    target.parentElement.insertBefore(container, target.nextSibling);
+  }
+
   return true;
+}
+
+function moveElement(selector, direction) {
+  const el = selector ? document.querySelector(selector) : null;
+  if (!el || !el.parentElement) return false;
+  const parent = el.parentElement;
+  if (direction === "up") {
+    const prev = el.previousElementSibling;
+    if (!prev) return false;
+    parent.insertBefore(el, prev);
+    return true;
+  }
+  if (direction === "down") {
+    const next = el.nextElementSibling;
+    if (!next) return false;
+    parent.insertBefore(next, el);
+    return true;
+  }
+  return false;
+}
+
+function alignElement(selector, align) {
+  const el = selector ? document.querySelector(selector) : null;
+  if (!el) return false;
+  el.style.setProperty("display", "block", "important");
+  if (align === "left") {
+    el.style.setProperty("margin-left", "0", "important");
+    el.style.setProperty("margin-right", "auto", "important");
+    return true;
+  }
+  if (align === "center") {
+    el.style.setProperty("margin-left", "auto", "important");
+    el.style.setProperty("margin-right", "auto", "important");
+    return true;
+  }
+  if (align === "right") {
+    el.style.setProperty("margin-left", "auto", "important");
+    el.style.setProperty("margin-right", "0", "important");
+    return true;
+  }
+  return false;
 }
 
 function getPagePlainText() {
@@ -291,7 +371,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true;
     }
     if (type === "ADD_FEATURE_CARD") {
-      const ok = injectFeatureCard(payload.selector, payload.name, payload.description);
+      const ok = injectFeatureCard(payload);
+      sendResponse({ ok });
+      return true;
+    }
+    if (type === "MOVE_ELEMENT") {
+      const ok = moveElement(payload.selector, payload.direction);
+      sendResponse({ ok });
+      return true;
+    }
+    if (type === "ALIGN_ELEMENT") {
+      const ok = alignElement(payload.selector, payload.align);
       sendResponse({ ok });
       return true;
     }

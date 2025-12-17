@@ -27,6 +27,15 @@
     bgColorInput: document.getElementById("webedit-bg-color"),
     textColorInput: document.getElementById("webedit-text-color"),
     fontSizeInput: document.getElementById("webedit-font-size"),
+    widthValueInput: document.getElementById("webedit-width-value"),
+    widthUnitSelect: document.getElementById("webedit-width-unit"),
+    heightValueInput: document.getElementById("webedit-height-value"),
+    heightUnitSelect: document.getElementById("webedit-height-unit"),
+    scaleInput: document.getElementById("webedit-scale-input"),
+    scaleValue: document.getElementById("webedit-scale-value"),
+    moveUpBtn: document.getElementById("webedit-move-up-btn"),
+    moveDownBtn: document.getElementById("webedit-move-down-btn"),
+    alignBtns: Array.from(document.querySelectorAll(".webedit-align-btn")),
     chatInput: document.getElementById("webedit-chat-input"),
     sendBtn: document.getElementById("webedit-send-btn")
   };
@@ -531,10 +540,21 @@
       showNotificationInChat("Pick an element first.");
       return;
     }
+
+    const widthValue = (els.widthValueInput?.value || "").trim();
+    const widthUnit = els.widthUnitSelect?.value || "px";
+    const heightValue = (els.heightValueInput?.value || "").trim();
+    const heightUnit = els.heightUnitSelect?.value || "px";
+    const scalePct = Number(els.scaleInput?.value || 100);
+    const scale = Number.isFinite(scalePct) ? Math.max(0.1, scalePct / 100) : 1;
+
     const styles = {
       backgroundColor: els.bgColorInput?.value || "#ffffff",
       color: els.textColorInput?.value || "#000000",
-      fontSize: (els.fontSizeInput?.value || "16") + "px"
+      fontSize: (els.fontSizeInput?.value || "16") + "px",
+      ...(widthValue ? { width: `${widthValue}${widthUnit}` } : {}),
+      ...(heightValue ? { height: `${heightValue}${heightUnit}` } : {}),
+      ...(scale !== 1 ? { transform: `scale(${scale})`, transformOrigin: "center" } : {})
     };
     await sendToActiveTab({ type: "APPLY_STYLES", selector: lastPickedTarget.selector, styles });
     showNotificationInChat("Styles applied.");
@@ -543,6 +563,10 @@
   async function resetCustomize() {
     if (!lastPickedTarget?.selector) return;
     await sendToActiveTab({ type: "RESET_STYLES", selector: lastPickedTarget.selector });
+    if (els.widthValueInput) els.widthValueInput.value = "";
+    if (els.heightValueInput) els.heightValueInput.value = "";
+    if (els.scaleInput) els.scaleInput.value = "100";
+    if (els.scaleValue) els.scaleValue.textContent = "100%";
     showNotificationInChat("Styles reset.");
   }
 
@@ -574,12 +598,53 @@
         addFeatureDescription = text;
         pendingAddFeatureStep = "idle";
 
-        await sendToActiveTab({
-          type: "ADD_FEATURE_CARD",
-          selector: lastPickedTarget.selector,
-          name: addFeatureName,
-          description: addFeatureDescription
-        });
+        const thinking = addChatMessage("assistant", "Generating your feature...");
+        try {
+          const pageContextResp = await sendToActiveTab({ type: "GET_PAGE_CONTEXT" });
+          const pageContext = pageContextResp?.response?.pageContext || null;
+
+          const prompt = `${addFeatureName}\n\n${addFeatureDescription}`;
+          const context = {
+            pageContext,
+            target: lastPickedTarget
+          };
+
+          const aiResp = window.SupabaseClient?.generateFeatureSpec
+            ? await window.SupabaseClient.generateFeatureSpec(prompt, context)
+            : null;
+
+          const spec = aiResp?.ok ? aiResp.spec : null;
+          if (spec?.action === "add" && typeof spec.html === "string" && spec.html.trim()) {
+            await sendToActiveTab({
+              type: "ADD_FEATURE_CARD",
+              selector: spec.targetSelector || lastPickedTarget.selector,
+              position: spec.position || "after",
+              name: addFeatureName,
+              description: addFeatureDescription,
+              html: spec.html,
+              css: spec.css || ""
+            });
+            thinking.content = "✅ Feature generated and added.";
+          } else {
+            await sendToActiveTab({
+              type: "ADD_FEATURE_CARD",
+              selector: lastPickedTarget.selector,
+              name: addFeatureName,
+              description: addFeatureDescription
+            });
+            thinking.content = aiResp?.error
+              ? `✅ Added a basic feature card (AI error: ${aiResp.error}).`
+              : "✅ Added a basic feature card (AI spec unavailable).";
+          }
+        } catch (e) {
+          await sendToActiveTab({
+            type: "ADD_FEATURE_CARD",
+            selector: lastPickedTarget.selector,
+            name: addFeatureName,
+            description: addFeatureDescription
+          });
+          thinking.content = `✅ Added a basic feature card (AI error: ${e?.message || String(e)}).`;
+        }
 
         addChatMessage("system", `✅ "${addFeatureName}" added.`);
         isAddFeatureMode = false;
@@ -673,6 +738,36 @@
   });
   els.applyBtn?.addEventListener("click", applyCustomize);
   els.resetBtn?.addEventListener("click", resetCustomize);
+
+  els.scaleInput?.addEventListener("input", () => {
+    if (els.scaleValue) {
+      els.scaleValue.textContent = `${els.scaleInput.value}%`;
+    }
+  });
+
+  els.moveUpBtn?.addEventListener("click", async () => {
+    if (!requireAuth("move elements")) return;
+    if (!lastPickedTarget?.selector) return;
+    await sendToActiveTab({ type: "MOVE_ELEMENT", selector: lastPickedTarget.selector, direction: "up" });
+    showNotificationInChat("Moved up.");
+  });
+
+  els.moveDownBtn?.addEventListener("click", async () => {
+    if (!requireAuth("move elements")) return;
+    if (!lastPickedTarget?.selector) return;
+    await sendToActiveTab({ type: "MOVE_ELEMENT", selector: lastPickedTarget.selector, direction: "down" });
+    showNotificationInChat("Moved down.");
+  });
+
+  els.alignBtns.forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!requireAuth("align elements")) return;
+      if (!lastPickedTarget?.selector) return;
+      const align = btn.dataset.align;
+      await sendToActiveTab({ type: "ALIGN_ELEMENT", selector: lastPickedTarget.selector, align });
+      showNotificationInChat(`Aligned ${align}.`);
+    });
+  });
 
   els.sendBtn?.addEventListener("click", handleSend);
   els.chatInput?.addEventListener("keydown", (e) => {
