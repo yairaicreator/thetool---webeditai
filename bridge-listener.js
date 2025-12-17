@@ -22,10 +22,29 @@ function normalizeSessionPayload(raw, context = "unknown") {
 }
 
 // Helper to send session (including sign-out) to background
-function forwardSessionToBackground(session, source) {
+const BRIDGE_MAX_ATTEMPTS = 6;
+const BRIDGE_BASE_DELAY_MS = 200;
+
+function forwardSessionToBackground(session, source, attempt = 0) {
   const isSignedIn = !!(session && session.user);
   const email = session?.user?.email || "anonymous";
   console.log(`🔐 [Bridge] Forwarding ${isSignedIn ? "SIGNED-IN" : "SIGNED-OUT"} session from ${source}`, isSignedIn ? email : "");
+
+  const retry = (reason) => {
+    if (attempt + 1 >= BRIDGE_MAX_ATTEMPTS) {
+      console.warn(`⚠️ [Bridge] Giving up forwarding session after ${BRIDGE_MAX_ATTEMPTS} attempts (${reason})`);
+      return;
+    }
+    const nextAttempt = attempt + 1;
+    const delay = BRIDGE_BASE_DELAY_MS * nextAttempt;
+    console.log(`⌛ [Bridge] Retrying session forward in ${delay}ms (attempt ${nextAttempt}/${BRIDGE_MAX_ATTEMPTS})…`);
+    setTimeout(() => forwardSessionToBackground(session, source, nextAttempt), delay);
+  };
+
+  if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.id) {
+    retry("extension context unavailable");
+    return;
+  }
 
   chrome.runtime.sendMessage(
     {
@@ -40,7 +59,9 @@ function forwardSessionToBackground(session, source) {
           message.includes("Receiving end does not exist") ||
           message.includes("No tab with id") ||
           message.includes("Could not establish connection");
-        if (!isContextInvalid) {
+        if (isContextInvalid) {
+          retry(message);
+        } else {
           console.warn("⚠️ [Bridge] Background unavailable while forwarding session:", message);
         }
         return;
