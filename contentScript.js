@@ -9,6 +9,114 @@ let hoverEl = null;
 let selectedEl = null;
 
 let lastPicked = null; // { selector, description }
+let currentUser = null; // { id, email, ... }
+
+async function refreshCurrentUser() {
+  try {
+    const resp = await chrome.runtime.sendMessage({ type: "WEBEDIT_GET_SESSION" });
+    const session = resp?.session || null;
+    currentUser = session?.user || null;
+  } catch (e) {
+    currentUser = null;
+  }
+
+  try {
+    if (window.EditRules && typeof window.EditRules.setActiveUser === "function") {
+      window.EditRules.setActiveUser(currentUser);
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  return currentUser;
+}
+
+async function applySavedEditsForUser() {
+  await refreshCurrentUser();
+  if (!currentUser?.id) {
+    return;
+  }
+  if (!window.EditRules) {
+    return;
+  }
+  try {
+    if (typeof window.EditRules.applyAllRulesForCurrentPage === "function") {
+      await window.EditRules.applyAllRulesForCurrentPage(true);
+    } else if (typeof window.EditRules.applyRules === "function") {
+      await window.EditRules.applyRules();
+    }
+    if (typeof window.EditRules.setupMutationObserver === "function") {
+      window.EditRules.setupMutationObserver();
+    }
+    console.log("[WebEdit] Re-applied saved edits for", currentUser.id);
+  } catch (e) {
+    console.warn("[WebEdit] Failed to re-apply saved edits:", e);
+  }
+}
+
+async function ensureEditRulesReady() {
+  if (!window.EditRules) {
+    return null;
+  }
+  if (!currentUser?.id) {
+    await refreshCurrentUser();
+  }
+  return currentUser?.id ? window.EditRules : null;
+}
+
+async function upsertStyleRule(selector, el, styles) {
+  const editRules = await ensureEditRulesReady();
+  if (!editRules || !selector || !el) return null;
+
+  const baseStyles = {};
+  try {
+    if (typeof editRules.getRulesForCurrentPage === "function") {
+      const rules = await editRules.getRulesForCurrentPage();
+      const existing = rules.find(r => r.selector === selector && r.action === "style");
+      if (existing?.metadata?.styles && typeof existing.metadata.styles === "object") {
+        Object.assign(baseStyles, existing.metadata.styles);
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  const merged = { ...baseStyles, ...(styles || {}) };
+  const rule = await editRules.createRule(el, "style", { styles: merged }, currentUser, selector);
+  if (window.SaveEdit?.saveCustomizeEdit) {
+    window.SaveEdit.saveCustomizeEdit(el, rule).catch(() => {});
+  }
+  return rule;
+}
+
+async function deleteRulesForSelectorAction(selector, action) {
+  const editRules = await ensureEditRulesReady();
+  if (!editRules || !selector) return 0;
+  if (typeof editRules.getRulesForCurrentPage !== "function" || typeof editRules.deleteRule !== "function") {
+    return 0;
+  }
+  const rules = await editRules.getRulesForCurrentPage();
+  const matches = rules.filter(r => r.selector === selector && r.action === action);
+  for (const rule of matches) {
+    await editRules.deleteRule(rule.id);
+  }
+  return matches.length;
+}
+
+function buildReorderLayoutMetadata(el) {
+  if (!el || !el.parentElement) return null;
+  const parent = el.parentElement;
+  const parentSelector = generateSelectorForElement(parent);
+  const siblings = Array.from(parent.children);
+  const targetIndex = siblings.indexOf(el);
+  const prev = el.previousElementSibling;
+  return {
+    type: "reorder",
+    parentSelector,
+    targetIndex,
+    previousSiblingSelector: prev ? generateSelectorForElement(prev) : null
+  };
+}
 
 function clearHover() {
   if (hoverEl) {
@@ -57,7 +165,7 @@ function generateSelectorForElement(el) {
   const path = [];
   let current = el;
   let depth = 0;
-  const maxDepth = 5;
+  const maxDepth = 12;
   while (current && current !== document.body && current !== document.documentElement && depth < maxDepth) {
     let selector = current.tagName.toLowerCase();
     if (current.id) {
@@ -84,12 +192,11 @@ function generateSelectorForElement(el) {
   if (path.length > 0) {
     const pathSelector = path.join(" > ");
     const matches = document.querySelectorAll(pathSelector);
-    if (matches.length <= 3 && matches.length > 0) return pathSelector;
+    if (matches.length > 0) return pathSelector;
   }
 
-  const uniqueId = `webedit-rule-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-  el.setAttribute("data-webedit-rule-id", uniqueId);
-  return `[data-webedit-rule-id="${cssEscape(uniqueId)}"]`;
+  // Last resort: avoid non-persistent data attributes (they won't survive refresh)
+  return el.tagName.toLowerCase();
 }
 
 function generateDescriptionForElement(el) {
@@ -212,21 +319,60 @@ function handleRemoveClick(event) {
   event.preventDefault();
   event.stopPropagation();
 
-  el.style.display = "none";
+  const selector = generateSelectorForElement(el);
+  const description = generateDescriptionForElement(el);
+  const prevDisplayValue = el.style.getPropertyValue("display") || "";
+  const prevDisplayPriority = el.style.getPropertyPriority("display") || "";
+
+  // Apply hide
+  el.style.setProperty("display", "none", "important");
+
+  // Persist hide so it survives refresh
+  ensureEditRulesReady().then((editRules) => {
+    if (!editRules || !selector) return;
+    editRules.createRule(el, "hide", {}, currentUser, selector).then((rule) => {
+      if (window.SaveEdit?.saveRemoveEdit) {
+        window.SaveEdit.saveRemoveEdit(el, rule).catch(() => {});
+      }
+    }).catch((err) => {
+      console.warn("[WebEdit] Failed to persist hide:", err);
+    });
+  });
+
   stopRemoveMode();
   chrome.runtime.sendMessage({ type: "WEBEDIT_MODE_EXITED" }).catch(() => {});
+
+  // Notify side panel so it can show Undo/Redo
+  chrome.runtime.sendMessage({
+    type: "WEBEDIT_EDIT_COMMITTED",
+    payload: {
+      kind: "remove",
+      selector,
+      description,
+      prevDisplayValue,
+      prevDisplayPriority
+    }
+  }).catch(() => {});
 }
 
 function applyStylesToSelector(selector, styles) {
   if (!selector) return false;
   const el = document.querySelector(selector);
   if (!el) return false;
+  const previous = {};
   Object.entries(styles || {}).forEach(([key, value]) => {
     if (!value) return;
     const cssKey = key.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase());
+    previous[key] = {
+      value: el.style.getPropertyValue(cssKey) || "",
+      priority: el.style.getPropertyPriority(cssKey) || ""
+    };
     el.style.setProperty(cssKey, String(value), "important");
   });
-  return true;
+  upsertStyleRule(selector, el, styles).catch((err) => {
+    console.warn("[WebEdit] Failed to persist styles:", err);
+  });
+  return { ok: true, previous };
 }
 
 function resetStylesForSelector(selector) {
@@ -242,6 +388,7 @@ function resetStylesForSelector(selector) {
   el.style.removeProperty("display");
   el.style.removeProperty("margin-left");
   el.style.removeProperty("margin-right");
+  deleteRulesForSelectorAction(selector, "style").catch(() => {});
   return true;
 }
 
@@ -287,6 +434,54 @@ function injectFeatureCard(payload = {}) {
     target.parentElement.insertBefore(container, target.nextSibling);
   }
 
+  return { ok: true, featureId: id };
+}
+
+function removeFeatureCardById(featureId) {
+  if (!featureId) return false;
+  const escapeValue = (value) => {
+    try {
+      if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+        return CSS.escape(String(value));
+      }
+    } catch (e) {}
+    return String(value).replace(/"/g, '\\"');
+  };
+  const el = document.querySelector(`[data-webedit-feature-id="${escapeValue(featureId)}"]`);
+  if (!el) return false;
+  el.remove();
+  return true;
+}
+
+function setElementDisplay(selector, value, priority) {
+  const el = selector ? document.querySelector(selector) : null;
+  if (!el) return false;
+  const nextValue = value === undefined || value === null ? "" : String(value);
+  const nextPriority = priority ? String(priority) : "";
+  if (!nextValue) {
+    el.style.removeProperty("display");
+  } else {
+    el.style.setProperty("display", nextValue, nextPriority || "");
+  }
+  return true;
+}
+
+function applyStylePatch(selector, patch = []) {
+  const el = selector ? document.querySelector(selector) : null;
+  if (!el) return false;
+  if (!Array.isArray(patch)) return false;
+  patch.forEach((entry) => {
+    const prop = entry?.prop;
+    if (!prop) return;
+    const cssKey = prop.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase());
+    const value = entry?.value ?? "";
+    const priority = entry?.priority ?? "";
+    if (!value) {
+      el.style.removeProperty(cssKey);
+    } else {
+      el.style.setProperty(cssKey, String(value), String(priority || ""));
+    }
+  });
   return true;
 }
 
@@ -298,12 +493,26 @@ function moveElement(selector, direction) {
     const prev = el.previousElementSibling;
     if (!prev) return false;
     parent.insertBefore(el, prev);
+    const layout = buildReorderLayoutMetadata(el);
+    if (layout) {
+      ensureEditRulesReady().then((editRules) => {
+        if (!editRules) return;
+        editRules.createRule(el, "reorder", { layout }, currentUser, selector).catch(() => {});
+      });
+    }
     return true;
   }
   if (direction === "down") {
     const next = el.nextElementSibling;
     if (!next) return false;
     parent.insertBefore(next, el);
+    const layout = buildReorderLayoutMetadata(el);
+    if (layout) {
+      ensureEditRulesReady().then((editRules) => {
+        if (!editRules) return;
+        editRules.createRule(el, "reorder", { layout }, currentUser, selector).catch(() => {});
+      });
+    }
     return true;
   }
   return false;
@@ -316,16 +525,19 @@ function alignElement(selector, align) {
   if (align === "left") {
     el.style.setProperty("margin-left", "0", "important");
     el.style.setProperty("margin-right", "auto", "important");
+    upsertStyleRule(selector, el, { display: "block", marginLeft: "0", marginRight: "auto" }).catch(() => {});
     return true;
   }
   if (align === "center") {
     el.style.setProperty("margin-left", "auto", "important");
     el.style.setProperty("margin-right", "auto", "important");
+    upsertStyleRule(selector, el, { display: "block", marginLeft: "auto", marginRight: "auto" }).catch(() => {});
     return true;
   }
   if (align === "right") {
     el.style.setProperty("margin-left", "auto", "important");
     el.style.setProperty("margin-right", "0", "important");
+    upsertStyleRule(selector, el, { display: "block", marginLeft: "auto", marginRight: "0" }).catch(() => {});
     return true;
   }
   return false;
@@ -337,6 +549,10 @@ function getPagePlainText() {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "WEBEDIT_SESSION_UPDATED") {
+    applySavedEditsForUser();
+    return;
+  }
   if (message?.type === "WEBEDIT_SIDEPANEL_COMMAND") {
     const payload = message.payload || {};
     const type = payload.type;
@@ -361,8 +577,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true;
     }
     if (type === "APPLY_STYLES") {
-      const ok = applyStylesToSelector(payload.selector, payload.styles || {});
-      sendResponse({ ok });
+      const result = applyStylesToSelector(payload.selector, payload.styles || {});
+      sendResponse(result?.ok ? result : { ok: false });
       return true;
     }
     if (type === "RESET_STYLES") {
@@ -371,7 +587,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true;
     }
     if (type === "ADD_FEATURE_CARD") {
-      const ok = injectFeatureCard(payload);
+      const result = injectFeatureCard(payload);
+      sendResponse(result?.ok ? result : { ok: false });
+      return true;
+    }
+    if (type === "REMOVE_FEATURE_CARD") {
+      const ok = removeFeatureCardById(payload.featureId);
+      sendResponse({ ok });
+      return true;
+    }
+    if (type === "SET_ELEMENT_DISPLAY") {
+      const ok = setElementDisplay(payload.selector, payload.value, payload.priority);
+      sendResponse({ ok });
+      return true;
+    }
+    if (type === "APPLY_STYLE_PATCH") {
+      const ok = applyStylePatch(payload.selector, payload.patch || []);
       sendResponse({ ok });
       return true;
     }
@@ -413,3 +644,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   return false;
 });
+
+// Re-apply saved edits on each page load
+applySavedEditsForUser();

@@ -16,6 +16,10 @@
     burgerBtn: document.getElementById("webedit-burger-btn"),
     toolsMenu: document.getElementById("webedit-tools-menu"),
     toolButtons: Array.from(document.querySelectorAll(".webedit-tool-btn")),
+    undoRedoBar: document.getElementById("webedit-undo-redo-bar"),
+    undoBtn: document.getElementById("webedit-undo-btn"),
+    redoBtn: document.getElementById("webedit-redo-btn"),
+    undoRedoMeta: document.getElementById("webedit-undo-redo-meta"),
     pickBtn: document.getElementById("webedit-pick-btn"),
     modeIndicator: document.getElementById("webedit-mode-indicator"),
     modeText: document.getElementById("webedit-mode-text"),
@@ -56,6 +60,145 @@
   let addFeatureName = "";
   let addFeatureDescription = "";
   let lastPickedTarget = null; // { selector, description }
+
+  const UNDO_REDO_TTL_MS = 10 * 60 * 1000; // 10 minutes
+  /** @type {Map<string, {undoAction: any, redoAction: any, expiresAt: number}>} */
+  const undoRedoBySession = new Map();
+  let undoRedoExpiryTimeout = null;
+
+  function getSessionUndoState(sessionId) {
+    if (!sessionId) return null;
+    const state = undoRedoBySession.get(sessionId) || null;
+    if (!state) return null;
+    if (Date.now() > (state.expiresAt || 0)) {
+      undoRedoBySession.delete(sessionId);
+      return null;
+    }
+    return state;
+  }
+
+  function setSessionUndoState(sessionId, nextState) {
+    if (!sessionId) return;
+    if (!nextState) {
+      undoRedoBySession.delete(sessionId);
+      return;
+    }
+    undoRedoBySession.set(sessionId, nextState);
+  }
+
+  function formatTimeRemaining(ms) {
+    const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    if (minutes <= 0) return `${seconds}s`;
+    return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+  }
+
+  function scheduleUndoRedoExpiry() {
+    if (undoRedoExpiryTimeout) {
+      clearTimeout(undoRedoExpiryTimeout);
+      undoRedoExpiryTimeout = null;
+    }
+    const state = getSessionUndoState(currentSessionId);
+    if (!state) return;
+    const remaining = (state.expiresAt || 0) - Date.now();
+    if (remaining <= 0) {
+      setSessionUndoState(currentSessionId, null);
+      renderUndoRedoBar();
+      return;
+    }
+    undoRedoExpiryTimeout = setTimeout(() => {
+      setSessionUndoState(currentSessionId, null);
+      renderUndoRedoBar();
+    }, remaining + 50);
+  }
+
+  function renderUndoRedoBar() {
+    if (!els.undoRedoBar || !els.undoBtn || !els.redoBtn || !els.undoRedoMeta) return;
+
+    const state = getSessionUndoState(currentSessionId);
+    if (!state) {
+      els.undoRedoBar.classList.add("hidden");
+      els.undoRedoBar.setAttribute("aria-hidden", "true");
+      els.undoBtn.disabled = true;
+      els.redoBtn.disabled = true;
+      els.undoRedoMeta.textContent = "";
+      if (undoRedoExpiryTimeout) {
+        clearTimeout(undoRedoExpiryTimeout);
+        undoRedoExpiryTimeout = null;
+      }
+      return;
+    }
+
+    const remaining = Math.max(0, (state.expiresAt || 0) - Date.now());
+    els.undoRedoBar.classList.remove("hidden");
+    els.undoRedoBar.setAttribute("aria-hidden", "false");
+    els.undoBtn.disabled = !state.undoAction;
+    els.redoBtn.disabled = !state.redoAction;
+    els.undoRedoMeta.textContent = remaining > 0 ? `Available for ${formatTimeRemaining(remaining)}` : "";
+    scheduleUndoRedoExpiry();
+  }
+
+  function registerEditAction(action) {
+    if (!currentSessionId) {
+      currentSessionId = Date.now().toString();
+    }
+    setSessionUndoState(currentSessionId, {
+      undoAction: action || null,
+      redoAction: null,
+      expiresAt: Date.now() + UNDO_REDO_TTL_MS
+    });
+    renderUndoRedoBar();
+  }
+
+  async function applyUndoRedoAction(action, direction) {
+    if (!action) return { ok: false, error: "No action" };
+    const kind = action.kind;
+    try {
+      if (kind === "add") {
+        if (direction === "undo") {
+          return await sendToActiveTab({ type: "REMOVE_FEATURE_CARD", featureId: action.featureId });
+        }
+        return await sendToActiveTab({ type: "ADD_FEATURE_CARD", ...action.payload, featureId: action.featureId });
+      }
+
+      if (kind === "remove") {
+        if (direction === "undo") {
+          return await sendToActiveTab({
+            type: "SET_ELEMENT_DISPLAY",
+            selector: action.selector,
+            value: action.prevDisplayValue,
+            priority: action.prevDisplayPriority
+          });
+        }
+        return await sendToActiveTab({
+          type: "SET_ELEMENT_DISPLAY",
+          selector: action.selector,
+          value: "none",
+          priority: "important"
+        });
+      }
+
+      if (kind === "customize") {
+        if (direction === "undo") {
+          return await sendToActiveTab({
+            type: "APPLY_STYLE_PATCH",
+            selector: action.selector,
+            patch: action.prevPatch || []
+          });
+        }
+        return await sendToActiveTab({
+          type: "APPLY_STYLES",
+          selector: action.selector,
+          styles: action.nextStyles || {}
+        });
+      }
+
+      return { ok: false, error: `Unknown action kind: ${kind}` };
+    } catch (e) {
+      return { ok: false, error: e?.message || String(e) };
+    }
+  }
 
   function escapeHtml(str = "") {
     return String(str)
@@ -379,6 +522,7 @@
       chrome.storage.local.set({ [sessionKey]: currentSessionId }, () => {
         renderChatMessages();
         renderHistoryList(history);
+        renderUndoRedoBar();
       });
     });
   }
@@ -389,6 +533,7 @@
     chatMessages = [];
     renderChatMessages();
     saveChatHistory();
+    renderUndoRedoBar();
   }
 
   function requireAuth(actionName) {
@@ -613,7 +758,21 @@
       ...(heightValue ? { height: `${heightValue}${heightUnit}` } : {}),
       ...(scale !== 1 ? { transform: `scale(${scale})`, transformOrigin: "center" } : {})
     };
-    await sendToActiveTab({ type: "APPLY_STYLES", selector: lastPickedTarget.selector, styles });
+    const resp = await sendToActiveTab({ type: "APPLY_STYLES", selector: lastPickedTarget.selector, styles });
+    if (resp?.ok && resp?.response?.ok) {
+      const previous = resp.response.previous || {};
+      const prevPatch = Object.entries(previous).map(([prop, info]) => ({
+        prop,
+        value: info?.value ?? "",
+        priority: info?.priority ?? ""
+      }));
+      registerEditAction({
+        kind: "customize",
+        selector: lastPickedTarget.selector,
+        nextStyles: styles,
+        prevPatch
+      });
+    }
     showNotificationInChat("Styles applied.");
   }
 
@@ -672,7 +831,7 @@
 
           const spec = aiResp?.ok ? aiResp.spec : null;
           if (spec?.action === "add" && typeof spec.html === "string" && spec.html.trim()) {
-            await sendToActiveTab({
+            const addResp = await sendToActiveTab({
               type: "ADD_FEATURE_CARD",
               selector: spec.targetSelector || lastPickedTarget.selector,
               position: spec.position || "after",
@@ -681,25 +840,63 @@
               html: spec.html,
               css: spec.css || ""
             });
+            if (addResp?.ok && addResp?.response?.ok && addResp?.response?.featureId) {
+              registerEditAction({
+                kind: "add",
+                featureId: addResp.response.featureId,
+                payload: {
+                  selector: spec.targetSelector || lastPickedTarget.selector,
+                  position: spec.position || "after",
+                  name: addFeatureName,
+                  description: addFeatureDescription,
+                  html: spec.html,
+                  css: spec.css || ""
+                }
+              });
+            }
             thinking.content = "✅ Feature generated and added.";
           } else {
-            await sendToActiveTab({
+            const addResp = await sendToActiveTab({
               type: "ADD_FEATURE_CARD",
               selector: lastPickedTarget.selector,
               name: addFeatureName,
               description: addFeatureDescription
             });
+            if (addResp?.ok && addResp?.response?.ok && addResp?.response?.featureId) {
+              registerEditAction({
+                kind: "add",
+                featureId: addResp.response.featureId,
+                payload: {
+                  selector: lastPickedTarget.selector,
+                  position: "after",
+                  name: addFeatureName,
+                  description: addFeatureDescription
+                }
+              });
+            }
             thinking.content = aiResp?.error
               ? `✅ Added a basic feature card (AI error: ${aiResp.error}).`
               : "✅ Added a basic feature card (AI spec unavailable).";
           }
         } catch (e) {
-          await sendToActiveTab({
+          const addResp = await sendToActiveTab({
             type: "ADD_FEATURE_CARD",
             selector: lastPickedTarget.selector,
             name: addFeatureName,
             description: addFeatureDescription
           });
+          if (addResp?.ok && addResp?.response?.ok && addResp?.response?.featureId) {
+            registerEditAction({
+              kind: "add",
+              featureId: addResp.response.featureId,
+              payload: {
+                selector: lastPickedTarget.selector,
+                position: "after",
+                name: addFeatureName,
+                description: addFeatureDescription
+              }
+            });
+          }
           thinking.content = `✅ Added a basic feature card (AI error: ${e?.message || String(e)}).`;
         }
 
@@ -762,6 +959,13 @@
       hideModeIndicator();
       return;
     }
+    if (message?.type === "WEBEDIT_EDIT_COMMITTED") {
+      const payload = message.payload || null;
+      if (payload?.kind === "remove" && payload?.selector) {
+        registerEditAction(payload);
+      }
+      return;
+    }
   });
 
   // Wire UI
@@ -785,6 +989,42 @@
   els.modeCloseBtn?.addEventListener("click", async () => {
     hideModeIndicator();
     await sendToActiveTab({ type: "EXIT_FEATURES" });
+  });
+
+  els.undoBtn?.addEventListener("click", async () => {
+    const state = getSessionUndoState(currentSessionId);
+    if (!state?.undoAction) return;
+    els.undoBtn.disabled = true;
+    const resp = await applyUndoRedoAction(state.undoAction, "undo");
+    if (!resp?.ok || !resp?.response?.ok) {
+      showNotificationInChat("Undo failed. Please try again.");
+      renderUndoRedoBar();
+      return;
+    }
+    setSessionUndoState(currentSessionId, {
+      ...state,
+      redoAction: state.undoAction,
+      undoAction: null
+    });
+    renderUndoRedoBar();
+  });
+
+  els.redoBtn?.addEventListener("click", async () => {
+    const state = getSessionUndoState(currentSessionId);
+    if (!state?.redoAction) return;
+    els.redoBtn.disabled = true;
+    const resp = await applyUndoRedoAction(state.redoAction, "redo");
+    if (!resp?.ok || !resp?.response?.ok) {
+      showNotificationInChat("Redo failed. Please try again.");
+      renderUndoRedoBar();
+      return;
+    }
+    setSessionUndoState(currentSessionId, {
+      ...state,
+      undoAction: state.redoAction,
+      redoAction: null
+    });
+    renderUndoRedoBar();
   });
 
   els.customizeCloseBtn?.addEventListener("click", () => {
@@ -836,4 +1076,5 @@
   // Init
   refreshAuth();
   renderChatMessages();
+  renderUndoRedoBar();
 })();
