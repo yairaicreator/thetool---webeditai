@@ -1,3 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WebEdit AI</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <header class="header">
+      <div class="title">WebEdit AI</div>
+      <div class="subtitle">Native Chrome Side Panel</div>
+    </header>
+
+    <main class="main">
+      <div id="messages" class="messages" aria-live="polite"></div>
+    </main>
+
+    <footer class="composer">
+      <input
+        id="input"
+        class="input"
+        type="text"
+        placeholder="Type a message…"
+        autocomplete="off"
+      />
+      <button id="send" class="send" type="button">Send</button>
+    </footer>
+
+    <script src="sidepanel.js"></script>
+  </body>
+</html>
 <!DOCTYPE html>
 <html lang="en">
 <head>

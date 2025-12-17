@@ -1,145 +1,19 @@
-// WebEdit AI Content Script - In-page Chat Panel
+// WebEdit AI Content Script (Side Panel scaffold)
+//
+// Logs:
+// - Page console logs: open DevTools on the page → Console
+// - Service worker logs: chrome://extensions → WebEdit AI → "service worker" → Inspect
+// - Side panel logs: open side panel → right-click inside → Inspect
 
-// Mode flags
-let isPickMode = false;
-let isRemoveMode = false;
-let isAddFeatureMode = false; // Track if we're in Add feature flow
+console.log("[WebEdit] contentScript loaded on", location.href);
 
-const addFeaturePrompt = {
-  step: 'idle', // 'idle' | 'name' | 'description'
-  name: '',
-  description: '',
-  targetSelector: null,
-  targetDescription: '',
-  type: 'note'
-};
-const MAX_SAVED_CHAT_MESSAGES = 50;
-
-const PANEL_STATE_KEY = 'webedit-panel-state';
-const PANEL_VISIBILITY_MESSAGE_TYPES = {
-  get: "WEBEDIT_GET_PANEL_OPEN_STATE",
-  set: "WEBEDIT_SET_PANEL_OPEN_STATE",
-  sync: "WEBEDIT_APPLY_PANEL_VISIBILITY"
-};
-const PANEL_WIDTH_STORAGE_KEY = 'webeditPanelWidth';
-const PANEL_WIDTH_OPTIONS = [320, 400, 520];
-const PANEL_WIDTH_LABELS = {
-  320: 'Narrow',
-  400: 'Default',
-  520: 'Wide'
-};
-const PANEL_WIDTH_DEFAULT = PANEL_WIDTH_OPTIONS[1];
-
-// UI state
-let currentTool = "remove";
-let hoverEl = null;
-let selectedEl = null;
-let floatingLabel = null;
-
-// Shadow DOM Host and Root
-let panelHost = null;
-let panelShadow = null;
-let chatPanel = null; // Still keeps ref to the inner panel div
-
-let isPanelOpen = false;
-let currentUser = null; // Store current authenticated user
-let activeInteractionMode = null; // Track which manual mode is currently active (pick/remove)
-const WEBEDIT_HISTORY_URL = "https://www.webeditai.com/#/history";
-let authUiUpdatePending = false;
-let authUiRetryTimeout = null;
-let panelCreationScheduled = false;
-let panelStateSaveTimeout = null;
-let isRestoringPanelState = false;
-let currentUserAudit = null;
-let lastAuthorizedUserId = null;
-let hasRestoredStateForUser = false;
-let authGuardElement = null;
-let hasAppliedInitialPanelPreference = false;
-let panelWidthPx = PANEL_WIDTH_DEFAULT;
-let panelLauncher = null;
-
-// Auth sync state
-
-// Selected element for editing (used by Pick mode)
-let currentEditTarget = {
-  element: null,
-  selector: null,
-  description: null,
-  pageKey: null
-};
-
-function resetCurrentEditTarget() {
-  currentEditTarget = {
-    element: null,
-    selector: null,
-    description: null,
-    pageKey: null
-  };
-  updateCustomizeUiForTarget();
-}
-
-// Chat messages
-let chatMessages = [];
-let referenceDismissTimeout = null;
-let activeHistoryRenameForm = null;
-let pendingAttachments = [];
-let currentAlignmentChoice = null;
-let isComposerBusy = false;
-
-const MAX_PENDING_ATTACHMENTS = 5;
-const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024; // 10MB per attachment
-const SUPABASE_ATTACHMENT_BUCKET = 'chat-attachments';
-
-const WEBEDIT_ATTR = "data-webedit-id";
-const AUTH_ACTIVITY_KEY = "webeditAuthAudit";
-
-/**
- * Trusted Types safe helper to set rich HTML content without relying on element.innerHTML.
- * Parses the markup in an isolated document and moves the nodes over.
- */
-function createHtmlFragment(html) {
-  const fragment = document.createDocumentFragment();
-  if (!html || typeof html !== "string") {
-    return fragment;
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "WEBEDIT_FROM_SIDEPANEL") {
+    console.log("[WebEdit] Message from side panel:", message, "sender:", sender);
+    sendResponse({ ok: true, received: true });
+    return true;
   }
-  try {
-    const parser = new DOMParser();
-    const parsedDoc = parser.parseFromString(html, "text/html");
-    const { body } = parsedDoc;
-    while (body.firstChild) {
-      fragment.appendChild(body.firstChild);
-    }
-  } catch (error) {
-    console.error("[WebEdit] Failed to parse HTML fragment:", error);
-  }
-  return fragment;
-}
-
-function setElementHTML(target, html) {
-  if (!target) return;
-  if (typeof target.replaceChildren === "function") {
-    target.replaceChildren();
-  } else {
-    while (target.firstChild) {
-      target.removeChild(target.firstChild);
-    }
-  }
-  if (!html) return;
-  target.appendChild(createHtmlFragment(html));
-}
-
-function cssEscape(value) {
-  if (!value) {
-    return '';
-  }
-  if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
-    return CSS.escape(value);
-  }
-  return String(value).replace(/[^a-zA-Z0-9_-]/g, (char) => {
-    const hex = char.codePointAt(0).toString(16).padStart(2, '0');
-    return `\\${hex} `;
-  });
-}
+});
 
 // ============================================
 // DOM Helpers for Shadow DOM
