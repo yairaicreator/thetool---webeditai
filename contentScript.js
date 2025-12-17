@@ -4212,6 +4212,90 @@ async function completeAddFeatureCreation() {
     return;
   }
 
+  // Prefer AI FeatureSpec execution (real DOM change) over the legacy feature-card template.
+  const supabaseClient = window.SupabaseClient;
+  const exec = window.FeatureSpecExecutor;
+  const parser = typeof window.parseFeatureSpec === "function" ? window.parseFeatureSpec : null;
+
+  const canUseFeatureSpec =
+    !!supabaseClient?.url &&
+    !!supabaseClient?.anonKey &&
+    !!exec &&
+    typeof exec.applyFeatureSpec === "function" &&
+    typeof exec.getPageContext === "function" &&
+    !!parser;
+
+  if (canUseFeatureSpec) {
+    try {
+      const endpoint = `${supabaseClient.url}/functions/v1/ai-generate-feature-spec`;
+      const baseContext = exec.getPageContext();
+      const context = {
+        ...baseContext,
+        targetSelector: selector,
+        targetDescription: addFeaturePrompt.targetDescription || currentEditTarget.description || "",
+        editName: name,
+        requestedAction: "add"
+      };
+
+      // Help the model stay deterministic: force "add" semantics and target.
+      const prompt = `Create an ADD feature near this target element.\n\nTarget selector: ${selector}\nEdit name: ${name}\nUser request: ${description}`;
+
+      const resp = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "apikey": supabaseClient.anonKey,
+          "Authorization": `Bearer ${supabaseClient.anonKey}`
+        },
+        body: JSON.stringify({ prompt, context })
+      });
+
+      const rawText = await resp.text();
+      let payload = null;
+      try {
+        payload = rawText ? JSON.parse(rawText) : null;
+      } catch {
+        payload = null;
+      }
+
+      if (!resp.ok || !payload?.ok) {
+        throw new Error(payload?.error || `AI request failed (${resp.status})`);
+      }
+
+      const rawSpec = typeof payload.spec === "string"
+        ? (() => { try { return JSON.parse(payload.spec); } catch { return null; } })()
+        : payload.spec;
+
+      const parsed = parser(rawSpec);
+      if (!parsed.ok) {
+        throw new Error(parsed.error);
+      }
+
+      // Enforce that Add tool executes an add action and targets the picked element.
+      const specToApply = {
+        ...parsed.spec,
+        action: "add",
+        targetSelector: parsed.spec.targetSelector || selector,
+        selector: parsed.spec.selector || parsed.spec.targetSelector || selector
+      };
+
+      const applied = await exec.applyFeatureSpec(specToApply);
+      if (!applied.ok) {
+        throw new Error(applied.error);
+      }
+
+      addChatMessage("system", `✅ "${name}" added successfully! It will reappear when you reload the page.`);
+      showNotification("Feature added successfully!", "success");
+      finalizeAddFeatureFlow();
+      schedulePanelStateSave();
+      return;
+    } catch (error) {
+      console.warn("[Add Feature] FeatureSpec execution failed, falling back to legacy template:", error);
+      // Fall through to legacy behavior below.
+    }
+  }
+
+  // Legacy fallback: inject the standard feature-card template and persist via added-features storage.
   const { html, css } = buildFeatureTemplate({ name, description, type });
 
   const featureSpec = {
@@ -4240,7 +4324,7 @@ async function completeAddFeatureCreation() {
   }
 
   try {
-    console.log("➕ Creating feature with prompts:", featureSpec);
+    console.log("➕ Creating feature with prompts (legacy):", featureSpec);
     await injectFeature(normalizedSpec);
 
     const saved = await saveAddedFeature(normalizedSpec);
