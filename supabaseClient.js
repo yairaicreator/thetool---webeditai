@@ -154,6 +154,47 @@ const SupabaseClient = {
   callPageChat,
   generateFeatureSpec,
 
+  async refreshSession(refreshToken) {
+    if (!refreshToken) {
+      return { data: { session: null }, error: 'Missing refresh token' };
+    }
+    try {
+      const response = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+        },
+        body: JSON.stringify({ refresh_token: refreshToken })
+      });
+
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload) {
+        const msg = payload?.msg || payload?.error_description || payload?.error || response.statusText;
+        return { data: { session: null }, error: `Refresh failed: ${msg}` };
+      }
+
+      const expiresIn = Number(payload.expires_in || 0);
+      const expiresAt = expiresIn ? Math.floor(Date.now() / 1000) + expiresIn : payload.expires_at;
+
+      const session = {
+        access_token: payload.access_token,
+        token_type: payload.token_type,
+        refresh_token: payload.refresh_token,
+        expires_in: payload.expires_in,
+        expires_at: expiresAt,
+        user: payload.user
+      };
+
+      await this.setSession(session);
+      return { data: { session }, error: null };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { data: { session: null }, error: message || 'Refresh failed' };
+    }
+  },
+
   /**
    * Get the current session from chrome.storage.local
    */
@@ -163,6 +204,16 @@ const SupabaseClient = {
         const session = result[SESSION_STORAGE_KEY] || null;
         const email = session?.user?.email;
         console.log(email ? `🔐 [SupabaseClient] Loaded session for ${email}` : "🔐 [SupabaseClient] No stored session");
+
+        // Auto-refresh expired sessions so SaveEdit can write to Supabase.
+        if (session && this.isSessionExpired(session) && session.refresh_token) {
+          console.log("🔄 [SupabaseClient] Session expired; attempting refresh...");
+          this.refreshSession(session.refresh_token).then((res) => {
+            resolve(res?.data?.session ? res : { data: { session: null }, error: res?.error || null });
+          });
+          return;
+        }
+
         resolve({ data: { session }, error: null });
       });
     });

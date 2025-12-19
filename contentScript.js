@@ -392,6 +392,15 @@ function resetStylesForSelector(selector) {
     return true;
 }
 
+function escapeHtml(value = "") {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function injectFeatureCard(payload = {}) {
   const selector = payload.selector || payload.targetSelector || null;
   const target = selector ? document.querySelector(selector) : null;
@@ -550,8 +559,16 @@ function getPagePlainText() {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "WEBEDIT_SESSION_UPDATED") {
-    applySavedEditsForUser();
-    return;
+    (async () => {
+      try {
+        await applySavedEditsForUser();
+        sendResponse({ ok: true });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        sendResponse({ ok: false, error: message || "Failed to apply saved edits" });
+      }
+    })();
+    return true;
   }
   if (message?.type === "WEBEDIT_SIDEPANEL_COMMAND") {
     const payload = message.payload || {};

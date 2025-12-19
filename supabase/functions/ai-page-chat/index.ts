@@ -183,6 +183,15 @@ if (typeof denoServe !== "function") {
       const attachments = sanitizeAttachments(body.attachments);
 
       const question = userMessage || DEFAULT_AUTO_PROMPT;
+      
+      // If message is missing and no attachments, return 400 as per API contract
+      if (!userMessage && attachments.length === 0) {
+        return jsonResponse(
+          { ok: false, error: "message must be a non-empty string" },
+          400,
+        );
+      }
+
       const prompt = buildPrompt(question, context, attachments);
 
       console.log("[ai-page-chat] prompt length:", prompt.length);

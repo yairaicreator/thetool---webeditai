@@ -39,6 +39,27 @@ console.log('📦 saveEdit.js: Loading...');
 /**
  * Get the Supabase client
  */
+let hasRequestedSupabaseClient = false;
+
+function requestSupabaseClientInjection() {
+  if (hasRequestedSupabaseClient) return;
+  hasRequestedSupabaseClient = true;
+  try {
+    if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.id) {
+      return;
+    }
+    chrome.runtime.sendMessage(
+      { type: "WEBEDIT_ENSURE_CONTENT_SCRIPTS", files: ["supabaseClient.js"] },
+      () => {
+        // Ignore errors; this is best-effort self-healing.
+        hasRequestedSupabaseClient = false;
+      }
+    );
+  } catch (_) {
+    hasRequestedSupabaseClient = false;
+  }
+}
+
 function getClient() {
   if (typeof window.SupabaseClient !== 'undefined') {
     return window.SupabaseClient;
@@ -47,7 +68,8 @@ function getClient() {
   if (typeof SupabaseClient !== 'undefined') {
     return SupabaseClient;
   }
-  console.warn('[SaveEdit] SupabaseClient not found. Make sure supabaseClient.js is loaded.');
+  requestSupabaseClientInjection();
+  console.warn('[SaveEdit] SupabaseClient not found. Attempting to re-inject supabaseClient.js...');
   return null;
 }
 

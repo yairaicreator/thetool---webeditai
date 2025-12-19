@@ -79,6 +79,31 @@ function getActiveTabId() {
 
 // Message relay: sidepanel.js -> background.js -> contentScript.js (active tab)
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "WEBEDIT_ENSURE_CONTENT_SCRIPTS") {
+    (async () => {
+      const tabId = sender?.tab?.id || null;
+      const files = Array.isArray(message.files) ? message.files.filter(Boolean) : [];
+      if (!tabId) {
+        sendResponse({ ok: false, error: "No sender tab" });
+        return;
+      }
+      if (!files.length) {
+        sendResponse({ ok: false, error: "No files requested" });
+        return;
+      }
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          files
+        });
+        sendResponse({ ok: true });
+      } catch (error) {
+        sendResponse({ ok: false, error: error?.message || String(error) });
+      }
+    })();
+    return true;
+  }
+
   if (message?.type === "WEBEDIT_SIDEPANEL_COMMAND") {
     (async () => {
       const tabIdFromSender = sender?.tab?.id || null;
