@@ -463,6 +463,10 @@ async function restoreAndReplay() {
 }
 
 function getPageContext() {
+  const getPagePlainText = () => {
+    const text = document.body?.innerText || "";
+    return text.slice(0, 5000).trim();
+  };
   const summarizeEl = (el) => {
     const rect = el.getBoundingClientRect();
     const classList = Array.from(el.classList || []).slice(0, 5);
@@ -516,6 +520,7 @@ function getPageContext() {
   return {
     url: window.location.href,
     title: document.title || "",
+    text: getPagePlainText(),
     outline: {
       regions,
       notable

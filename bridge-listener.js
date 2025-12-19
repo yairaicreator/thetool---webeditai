@@ -6,6 +6,16 @@
 const SESSION_MESSAGE_TYPE = "WEBEDIT_SUPABASE_SESSION";
 const SESSION_MESSAGE_SOURCE = "webedit-website";
 
+function isContextInvalidMessage(message) {
+  const text = String(message || "");
+  return (
+    text.includes("Extension context invalidated") ||
+    text.includes("Receiving end does not exist") ||
+    text.includes("No tab with id") ||
+    text.includes("Could not establish connection")
+  );
+}
+
 function normalizeSessionPayload(raw, context = "unknown") {
   if (raw === null) {
     return { session: null, valid: true, explicitSignOut: true };
@@ -42,6 +52,14 @@ function forwardSessionToBackground(session, source, attempt = 0) {
   console.log(`🔐 [Bridge:${prefix}] ${isSignedIn ? "SIGNED-IN" : "SIGNED-OUT"} session from ${source}`, isSignedIn ? email : "");
 
   const retry = (reason) => {
+    const isContextInvalid = isContextInvalidMessage(reason) || String(reason || "").includes("extension context unavailable");
+
+    // If the extension context is invalid/orphaned, retries can never succeed.
+    if (isContextInvalid) {
+      console.log("ℹ️ [Bridge] Extension context is stale/invalid; skipping retries. Refresh the page after reloading the extension.");
+      return;
+    }
+
     if (attempt + 1 >= BRIDGE_MAX_ATTEMPTS) {
       console.warn(`⚠️ [Bridge] Giving up forwarding session after ${BRIDGE_MAX_ATTEMPTS} attempts (${reason})`);
       return;
@@ -62,10 +80,8 @@ function forwardSessionToBackground(session, source, attempt = 0) {
       if (chrome.runtime.lastError) {
         const message = chrome.runtime.lastError.message || "unknown";
         const isContextInvalid =
-          message.includes("Extension context invalidated") ||
-          message.includes("Receiving end does not exist") ||
-          message.includes("No tab with id") ||
-          message.includes("Could not establish connection");
+          isContextInvalidMessage(message) ||
+          String(message || "").includes("extension context unavailable");
         if (isContextInvalid) {
           retry(message);
         } else {

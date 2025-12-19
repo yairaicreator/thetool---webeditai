@@ -184,7 +184,7 @@ function generateSelectorForElement(el) {
       const siblings = Array.from(current.parentElement.children);
       const index = siblings.indexOf(current);
       if (siblings.length > 1) selector += `:nth-child(${index + 1})`;
-    }
+      }
     path.unshift(selector);
     current = current.parentElement;
     depth++;
@@ -389,7 +389,7 @@ function resetStylesForSelector(selector) {
   el.style.removeProperty("margin-left");
   el.style.removeProperty("margin-right");
   deleteRulesForSelectorAction(selector, "style").catch(() => {});
-  return true;
+    return true;
 }
 
 function injectFeatureCard(payload = {}) {
@@ -430,7 +430,7 @@ function injectFeatureCard(payload = {}) {
     target.parentElement.insertBefore(container, target);
   } else if (position === "inside") {
     target.insertBefore(container, target.firstChild);
-  } else {
+          } else {
     target.parentElement.insertBefore(container, target.nextSibling);
   }
 
@@ -616,13 +616,75 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok });
       return true;
     }
+    if (type === "UNDO" || type === "UNDO_LAST") {
+      try {
+        const exec = window.FeatureSpecExecutor;
+        if (!exec || typeof exec.undoLast !== "function") {
+          sendResponse({ ok: false, error: "Undo is not available on this page yet." });
+          return true;
+        }
+        Promise.resolve(exec.undoLast())
+          .then((response) => sendResponse({ ok: true, response }))
+          .catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+            sendResponse({ ok: false, error: message || "Undo failed" });
+          });
+        return true;
+  } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        sendResponse({ ok: false, error: message || "Undo failed" });
+        return true;
+      }
+    }
+    if (type === "REDO" || type === "REDO_LAST") {
+      try {
+        const exec = window.FeatureSpecExecutor;
+        if (!exec || typeof exec.redoLast !== "function") {
+          sendResponse({ ok: false, error: "Redo is not available on this page yet." });
+          return true;
+        }
+        Promise.resolve(exec.redoLast())
+          .then((response) => sendResponse({ ok: true, response }))
+          .catch((error) => {
+            const message = error instanceof Error ? error.message : String(error);
+            sendResponse({ ok: false, error: message || "Redo failed" });
+          });
+        return true;
+  } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        sendResponse({ ok: false, error: message || "Redo failed" });
+        return true;
+      }
+    }
     if (type === "GET_PAGE_CONTEXT") {
+      // Prefer FeatureSpecExecutor page context when available (it provides a richer outline),
+      // but always include plain text for the AI endpoints.
+      const plainText = getPagePlainText();
+      const exec = window.FeatureSpecExecutor;
+      if (exec && typeof exec.getPageContext === "function") {
+        try {
+          const ctx = exec.getPageContext() || {};
+          sendResponse({
+            ok: true,
+            pageContext: {
+              url: ctx.url || location.href,
+              title: ctx.title || document.title || "",
+              text: typeof ctx.text === "string" && ctx.text.trim() ? ctx.text : plainText,
+              outline: ctx.outline ?? null
+            }
+          });
+          return true;
+    } catch (error) {
+          // Fall through to basic context below.
+        }
+      }
       sendResponse({
         ok: true,
         pageContext: {
           url: location.href,
           title: document.title || "",
-          text: getPagePlainText()
+          text: plainText,
+          outline: null
         }
       });
       return true;

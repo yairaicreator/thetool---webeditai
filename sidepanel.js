@@ -807,8 +807,8 @@
         addFeatureName = text;
         pendingAddFeatureStep = "description";
         addChatMessage("system", "Describe the edit:");
-        return;
-      }
+      return;
+    }
 
       if (pendingAddFeatureStep === "description") {
         addFeatureDescription = text;
@@ -1066,7 +1066,7 @@
   els.sendBtn?.addEventListener("click", handleSend);
   els.chatInput?.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
+    e.preventDefault();
       handleSend();
     }
   });
