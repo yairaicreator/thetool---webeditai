@@ -586,7 +586,7 @@
     els.signinBtn.appendChild(menu);
 
     avatar.addEventListener("click", (e) => {
-      e.preventDefault();
+            e.preventDefault();
       e.stopPropagation();
       menu.classList.toggle("visible");
     });
@@ -599,9 +599,9 @@
       menu.classList.remove("visible");
       if (action === "signout") {
         chrome.runtime.sendMessage({ type: "WEBEDIT_SIGN_OUT" });
-      }
+        }
     });
-  }
+}
 
   function toggleHistorySidebar(forceState = null) {
     if (!els.historySidebar) return;

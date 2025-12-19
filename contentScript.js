@@ -273,7 +273,7 @@ function stopRemoveMode() {
 
 function handlePickMouseMove(event) {
   if (!isPickMode) return;
-  const el = (event.target instanceof Element) ? event.target : (event.target?.parentElement || null);
+  const el = event.target;
   if (!el || el === document.body || el === document.documentElement) return;
   if (isEventInsideExtensionUI(el)) return;
   setHover(el);
@@ -281,7 +281,7 @@ function handlePickMouseMove(event) {
 
 function handleRemoveMouseMove(event) {
   if (!isRemoveMode) return;
-  const el = (event.target instanceof Element) ? event.target : (event.target?.parentElement || null);
+  const el = event.target;
   if (!el || el === document.body || el === document.documentElement) return;
   if (isEventInsideExtensionUI(el)) return;
   setHover(el);
@@ -289,7 +289,7 @@ function handleRemoveMouseMove(event) {
 
 function handlePickClick(event) {
   if (!isPickMode) return;
-  const el = (event.target instanceof Element) ? event.target : (event.target?.parentElement || null);
+  const el = event.target;
   if (!el || el === document.body || el === document.documentElement) return;
   if (isEventInsideExtensionUI(el)) return;
   event.preventDefault();
@@ -313,7 +313,7 @@ function handlePickClick(event) {
 
 function handleRemoveClick(event) {
   if (!isRemoveMode) return;
-  const el = (event.target instanceof Element) ? event.target : (event.target?.parentElement || null);
+  const el = event.target;
   if (!el || el === document.body || el === document.documentElement) return;
   if (isEventInsideExtensionUI(el)) return;
   event.preventDefault();

@@ -79,17 +79,6 @@ function getActiveTabId() {
 
 // Message relay: sidepanel.js -> background.js -> contentScript.js (active tab)
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  function safeBroadcastToExtensionViews(payload) {
-    try {
-      chrome.runtime.sendMessage(payload, () => {
-        // Ignore errors if no listeners (e.g., side panel closed)
-        void chrome.runtime.lastError;
-      });
-    } catch {
-      // ignore
-    }
-  }
-
   // =========================================================
   // Tab -> Side Panel event relay (pick/remove/customize, etc.)
   //
@@ -110,7 +99,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     ]);
     if (relayTypes.has(message.type)) {
       // Best-effort broadcast to extension UIs (sidepanel, etc.)
-      safeBroadcastToExtensionViews(message);
+      chrome.runtime.sendMessage(message).catch(() => {});
     }
   }
 
@@ -194,17 +183,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const session = message.session || null;
 
     const broadcast = () => {
-      try {
-        chrome.runtime.sendMessage({ type: "WEBEDIT_SESSION_UPDATED", session }, () => void chrome.runtime.lastError);
-      } catch {
-        // ignore
-      }
+      chrome.runtime.sendMessage({ type: "WEBEDIT_SESSION_UPDATED", session }).catch(() => {});
       chrome.tabs.query({}, (tabs) => {
         tabs.forEach((tab) => {
           if (!tab.id) return;
-          chrome.tabs.sendMessage(tab.id, { type: "WEBEDIT_SESSION_UPDATED", session }, () => {
-            void chrome.runtime.lastError;
-          });
+          chrome.tabs.sendMessage(tab.id, { type: "WEBEDIT_SESSION_UPDATED", session }).catch(() => {});
         });
       });
     };
@@ -246,17 +229,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "WEBEDIT_SIGN_OUT") {
     chrome.storage.local.remove(["webeditSupabaseSession", "webeditSessionTimestamp"], () => {
       const session = null;
-      try {
-        chrome.runtime.sendMessage({ type: "WEBEDIT_SESSION_UPDATED", session }, () => void chrome.runtime.lastError);
-      } catch {
-        // ignore
-      }
+      chrome.runtime.sendMessage({ type: "WEBEDIT_SESSION_UPDATED", session }).catch(() => {});
       chrome.tabs.query({}, (tabs) => {
         tabs.forEach((tab) => {
           if (!tab.id) return;
-          chrome.tabs.sendMessage(tab.id, { type: "WEBEDIT_SESSION_UPDATED", session }, () => {
-            void chrome.runtime.lastError;
-          });
+          chrome.tabs.sendMessage(tab.id, { type: "WEBEDIT_SESSION_UPDATED", session }).catch(() => {});
         });
       });
 
@@ -266,7 +243,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       chrome.tabs.create({ url: WEBEDIT_SIGNOUT_URL, active: false }, (hiddenTab) => {
         setTimeout(() => {
           if (hiddenTab?.id) {
-            chrome.tabs.remove(hiddenTab.id, () => void chrome.runtime.lastError);
+            chrome.tabs.remove(hiddenTab.id).catch(() => {});
           }
           chrome.tabs.create({ url: WEBEDIT_LANDING_URL, active: true }, () => {});
         }, 1000);
