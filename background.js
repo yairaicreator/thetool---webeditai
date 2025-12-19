@@ -79,6 +79,30 @@ function getActiveTabId() {
 
 // Message relay: sidepanel.js -> background.js -> contentScript.js (active tab)
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // =========================================================
+  // Tab -> Side Panel event relay (pick/remove/customize, etc.)
+  //
+  // Content scripts can only message the service worker directly.
+  // The side panel UI listens on chrome.runtime.onMessage, so we
+  // re-broadcast these events from the SW.
+  //
+  // IMPORTANT: Guard with sender.tab so we don't echo messages
+  // originating from extension pages (sidepanel, options, etc.)
+  // back into ourselves and create loops.
+  // =========================================================
+  if (sender?.tab?.id && typeof message?.type === "string") {
+    const relayTypes = new Set([
+      "WEBEDIT_ELEMENT_PICKED",
+      "WEBEDIT_MODE_EXITED",
+      "WEBEDIT_EDIT_COMMITTED",
+      "WEBEDIT_SESSION_UPDATED"
+    ]);
+    if (relayTypes.has(message.type)) {
+      // Best-effort broadcast to extension UIs (sidepanel, etc.)
+      chrome.runtime.sendMessage(message).catch(() => {});
+    }
+  }
+
   if (message?.type === "WEBEDIT_ENSURE_CONTENT_SCRIPTS") {
     (async () => {
       const tabId = sender?.tab?.id || null;
