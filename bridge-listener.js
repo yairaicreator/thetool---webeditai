@@ -22,13 +22,23 @@ function normalizeSessionPayload(raw, context = "unknown") {
 }
 
 // Helper to send session (including sign-out) to background
-const BRIDGE_MAX_ATTEMPTS = 6;
-const BRIDGE_BASE_DELAY_MS = 200;
+const BRIDGE_MAX_ATTEMPTS = 15;
+const BRIDGE_BASE_DELAY_MS = 500;
 
 function forwardSessionToBackground(session, source, attempt = 0) {
   const isSignedIn = !!(session && session.user);
   const email = session?.user?.email || "anonymous";
   const prefix = attempt > 0 ? `retry ${attempt}/${BRIDGE_MAX_ATTEMPTS}` : "forward";
+
+  // Check for orphaned script - if chrome.runtime.id is missing, this script instance
+  // is dead (likely extension was reloaded) and can never talk to background again.
+  if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.id) {
+    if (attempt === 0) {
+      console.log("⚠️ [Bridge] Extension context invalidated (script orphaned). Please refresh the page to sync session.");
+    }
+    return;
+  }
+
   console.log(`🔐 [Bridge:${prefix}] ${isSignedIn ? "SIGNED-IN" : "SIGNED-OUT"} session from ${source}`, isSignedIn ? email : "");
 
   const retry = (reason) => {
@@ -37,15 +47,11 @@ function forwardSessionToBackground(session, source, attempt = 0) {
       return;
     }
     const nextAttempt = attempt + 1;
-    const delay = BRIDGE_BASE_DELAY_MS * nextAttempt;
-    console.log(`⌛ [Bridge] Retrying session forward in ${delay}ms (attempt ${nextAttempt}/${BRIDGE_MAX_ATTEMPTS})…`);
+    // Exponential-ish backoff
+    const delay = Math.min(10000, BRIDGE_BASE_DELAY_MS * Math.pow(1.5, nextAttempt));
+    console.log(`⌛ [Bridge] Retrying session forward in ${Math.round(delay)}ms (attempt ${nextAttempt}/${BRIDGE_MAX_ATTEMPTS})…`);
     setTimeout(() => forwardSessionToBackground(session, source, nextAttempt), delay);
   };
-
-  if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.id) {
-    retry("extension context unavailable");
-    return;
-  }
 
   chrome.runtime.sendMessage(
     {
