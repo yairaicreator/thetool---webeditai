@@ -221,8 +221,12 @@ const SupabaseClient = {
   }
 };
 
-// Export for use in other extension files
+// Export IMMEDIATELY to avoid race conditions with other scripts
 if (typeof window !== 'undefined') {
   window.SupabaseClient = SupabaseClient;
   window.callPageChat = callPageChat;
+  window.generateFeatureSpec = generateFeatureSpec;
+  console.log('✅ SupabaseClient exported to window');
 }
+
+

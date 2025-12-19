@@ -40,11 +40,15 @@ console.log('📦 saveEdit.js: Loading...');
  * Get the Supabase client
  */
 function getClient() {
-  if (typeof window.SupabaseClient === 'undefined') {
-    console.warn('[SaveEdit] SupabaseClient not found. Make sure supabaseClient.js is loaded.');
-    return null;
+  if (typeof window.SupabaseClient !== 'undefined') {
+    return window.SupabaseClient;
   }
-  return window.SupabaseClient;
+  // Try to find it in the global scope if window is not ready
+  if (typeof SupabaseClient !== 'undefined') {
+    return SupabaseClient;
+  }
+  console.warn('[SaveEdit] SupabaseClient not found. Make sure supabaseClient.js is loaded.');
+  return null;
 }
 
 /**
@@ -530,8 +534,12 @@ async function saveEditToSupabase(params) {
     const description = generatedMetadata.description;
 
     // 3. INSERT into edits table
+    const editId = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+
     const editRow = {
-      id: crypto.randomUUID(),
+      id: editId,
       website_id: website.id,
       user_id: auth.userId,
       edit_type: params.type || 'add',
@@ -629,7 +637,7 @@ async function saveCustomizeEdit(el, rule) {
   });
 }
 
-// Export
+// Export IMMEDIATELY to avoid race conditions
 if (typeof window !== 'undefined') {
   window.SaveEdit = {
     saveEditToSupabase,
@@ -637,5 +645,5 @@ if (typeof window !== 'undefined') {
     saveRemoveEdit,
     saveCustomizeEdit
   };
-  console.log('✅ SaveEdit module ready');
+  console.log('✅ SaveEdit module ready and exported to window');
 }
