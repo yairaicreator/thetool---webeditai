@@ -224,11 +224,22 @@
   }
 
   async function sendToActiveTab(payload) {
-    const resp = await chrome.runtime.sendMessage({
-      type: "WEBEDIT_SIDEPANEL_COMMAND",
-      payload
-    });
-    return resp;
+    try {
+      const resp = await chrome.runtime.sendMessage({
+        type: "WEBEDIT_SIDEPANEL_COMMAND",
+        payload
+      });
+      if (!resp?.ok) {
+        showNotificationInChat(`Error talking to page: ${resp?.error || "unknown"}`);
+      }
+      if (resp?.ok && resp?.response && resp.response.ok === false) {
+        showNotificationInChat(`Page error: ${resp.response.error || "unknown"}`);
+      }
+      return resp;
+    } catch (error) {
+      showNotificationInChat(`Error talking to page: ${error?.message || String(error)}`);
+      return { ok: false, error: error?.message || String(error) };
+    }
   }
 
   function showNotificationInChat(text) {
@@ -708,14 +719,20 @@
       isAddFeatureMode = false;
       els.customizePanel?.classList.remove("visible");
       showModeIndicator("Remove mode active - Click an element to hide it");
-      await sendToActiveTab({ type: "START_REMOVE_MODE" });
+      const resp = await sendToActiveTab({ type: "START_REMOVE_MODE" });
+      if (!resp?.ok) {
+        hideModeIndicator();
+      }
       return;
     }
     if (tool === "customize") {
       isAddFeatureMode = false;
       els.customizePanel?.classList.add("visible");
       showNotificationInChat("Pick an element to customize, or use Pick element.");
-      await sendToActiveTab({ type: "START_PICK_MODE", reason: "customize" });
+      const resp = await sendToActiveTab({ type: "START_PICK_MODE", reason: "customize" });
+      if (!resp?.ok) {
+        hideModeIndicator();
+      }
       return;
     }
     if (tool === "add") {
@@ -725,14 +742,21 @@
       addFeatureDescription = "";
       els.customizePanel?.classList.remove("visible");
       showNotificationInChat("Pick an element to add content near it.");
-      await sendToActiveTab({ type: "START_PICK_MODE", reason: "add" });
+      const resp = await sendToActiveTab({ type: "START_PICK_MODE", reason: "add" });
+      if (!resp?.ok) {
+        hideModeIndicator();
+      }
       return;
     }
   }
 
   async function handlePickClick() {
     if (!requireAuth("pick elements")) return;
-    await sendToActiveTab({ type: "START_PICK_MODE", reason: "manual-pick" });
+    const resp = await sendToActiveTab({ type: "START_PICK_MODE", reason: "manual-pick" });
+    if (!resp?.ok) {
+      hideModeIndicator();
+      return;
+    }
     showModeIndicator("Pick mode active - Click an element to select it");
   }
 
@@ -957,6 +981,15 @@
     }
     if (message?.type === "WEBEDIT_MODE_EXITED") {
       hideModeIndicator();
+      return;
+    }
+    if (message?.type === "WEBEDIT_MODE_STARTED") {
+      const mode = message.payload?.mode;
+      if (mode === "pick") {
+        showModeIndicator("Pick mode active - Click an element to select it");
+      } else if (mode === "remove") {
+        showModeIndicator("Remove mode active - Click an element to hide it");
+      }
       return;
     }
     if (message?.type === "WEBEDIT_EDIT_COMMITTED") {

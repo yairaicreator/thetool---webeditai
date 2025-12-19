@@ -576,11 +576,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (type === "START_PICK_MODE") {
       startPickMode();
+      chrome.runtime.sendMessage({
+        type: "WEBEDIT_MODE_STARTED",
+        payload: { mode: "pick", reason: payload.reason || null }
+      }).catch(() => {});
       sendResponse({ ok: true });
       return true;
     }
     if (type === "START_REMOVE_MODE") {
       startRemoveMode();
+      chrome.runtime.sendMessage({
+        type: "WEBEDIT_MODE_STARTED",
+        payload: { mode: "remove", reason: payload.reason || null }
+      }).catch(() => {});
       sendResponse({ ok: true });
       return true;
     }

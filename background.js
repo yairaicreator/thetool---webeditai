@@ -77,6 +77,54 @@ function getActiveTabId() {
   });
 }
 
+async function pingTab(tabId) {
+  return new Promise((resolve) => {
+    try {
+      chrome.tabs.sendMessage(tabId, { type: "PING" }, (resp) => {
+        if (chrome.runtime.lastError) {
+          resolve({ ok: false, error: chrome.runtime.lastError.message });
+          return;
+        }
+        resolve({ ok: true, response: resp || null });
+      });
+    } catch (error) {
+      resolve({ ok: false, error: error?.message || String(error) });
+    }
+  });
+}
+
+async function injectPageRuntime(tabId) {
+  // NOTE: We only inject when the content script is missing (ping fails).
+  // This avoids double-injecting scripts and causing duplicate listeners.
+  const jsFiles = [
+    "supabaseClient.js",
+    "editRules.js",
+    "saveEdit.js",
+    "featureSpec.js",
+    "featureSpecExecutor.js",
+    "messages.js",
+    "contentScript.js"
+  ];
+  const cssFiles = ["contentStyles.css"];
+
+  try {
+    await chrome.scripting.insertCSS({
+      target: { tabId },
+      files: cssFiles
+    });
+  } catch (error) {
+    // Some pages may block CSS injection; continue anyway.
+    console.warn("[WebEdit] Failed to inject CSS:", error);
+  }
+
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: jsFiles
+  });
+
+  return { ok: true };
+}
+
 // Message relay: sidepanel.js -> background.js -> contentScript.js (active tab)
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // =========================================================
@@ -93,6 +141,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (sender?.tab?.id && typeof message?.type === "string") {
     const relayTypes = new Set([
       "WEBEDIT_ELEMENT_PICKED",
+      "WEBEDIT_MODE_STARTED",
       "WEBEDIT_MODE_EXITED",
       "WEBEDIT_EDIT_COMMITTED",
       "WEBEDIT_SESSION_UPDATED"
@@ -136,13 +185,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ ok: false, error: "No active tab found" });
         return;
       }
-      chrome.tabs.sendMessage(tabId, { type: "WEBEDIT_SIDEPANEL_COMMAND", payload: message.payload || {} }, (resp) => {
-        if (chrome.runtime.lastError) {
-          sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+
+      // PING first; inject runtime if missing; then retry command once.
+      const ping = await pingTab(tabId);
+      if (!ping.ok && typeof ping.error === "string" && ping.error.includes("Receiving end does not exist")) {
+        try {
+          await injectPageRuntime(tabId);
+        } catch (error) {
+          sendResponse({ ok: false, error: error?.message || String(error) });
           return;
         }
-        sendResponse({ ok: true, response: resp || null });
-      });
+      }
+
+      chrome.tabs.sendMessage(
+        tabId,
+        { type: "WEBEDIT_SIDEPANEL_COMMAND", payload: message.payload || {} },
+        (resp) => {
+          if (chrome.runtime.lastError) {
+            sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+            return;
+          }
+          sendResponse({ ok: true, response: resp || null });
+        }
+      );
     })();
     return true;
   }
