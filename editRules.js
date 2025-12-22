@@ -6,6 +6,10 @@ console.log('📦 editRules.js: Starting to load...');
 // Track which authenticated user is allowed to read/write local rules
 let activeUserId = null;
 
+// Avoid spamming the console for transient selectors on dynamic sites (e.g., Canva).
+// Keyed by `${pageKey}::${selector}`.
+const missingSelectorLogCache = new Set();
+
 function cssEscape(value) {
   if (!value) {
     return '';
@@ -503,7 +507,12 @@ const RuleApplier = {
       const elements = document.querySelectorAll(rule.selector);
 
       if (elements.length === 0) {
-        console.warn(`⚠️ No elements found for selector: ${rule.selector}`);
+        const key = `${rule.pageKey || getPageKey()}::${rule.selector}`;
+        if (!missingSelectorLogCache.has(key)) {
+          missingSelectorLogCache.add(key);
+          // Use debug instead of warn so it doesn't show up in the browser's "Errors" panel.
+          console.debug(`[WebEdit] No elements found for selector (suppressed on repeats): ${rule.selector}`);
+        }
         return 0;
       }
 

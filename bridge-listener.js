@@ -71,13 +71,13 @@ function forwardSessionToBackground(session, source, attempt = 0) {
     setTimeout(() => forwardSessionToBackground(session, source, nextAttempt), delay);
   };
 
-  chrome.runtime.sendMessage(
-    {
-      type: "WEBEDIT_STORE_SUPABASE_SESSION",
-      session
-    },
-    (response) => {
-      if (chrome.runtime.lastError) {
+    chrome.runtime.sendMessage(
+      {
+        type: "WEBEDIT_STORE_SUPABASE_SESSION",
+        session
+      },
+      (response) => {
+        if (chrome.runtime.lastError) {
         const message = chrome.runtime.lastError.message || "unknown";
         const isContextInvalid =
           isContextInvalidMessage(message) ||
@@ -87,19 +87,19 @@ function forwardSessionToBackground(session, source, attempt = 0) {
         } else {
           console.warn("⚠️ [Bridge] Background unavailable while forwarding session:", message);
         }
-        return;
+          return;
+        }
+        if (response?.ignored) {
+          console.log("⚠️ [Bridge] Session ignored by background:", response.reason || "unknown reason");
+          return;
+        }
+        if (response?.unchanged) {
+          console.log("ℹ️ [Bridge] Session already up to date, no broadcast needed");
+          return;
+        }
+        console.log("✅ [Bridge] Session forwarded to background:", response);
       }
-      if (response?.ignored) {
-        console.log("⚠️ [Bridge] Session ignored by background:", response.reason || "unknown reason");
-        return;
-      }
-      if (response?.unchanged) {
-        console.log("ℹ️ [Bridge] Session already up to date, no broadcast needed");
-        return;
-      }
-      console.log("✅ [Bridge] Session forwarded to background:", response);
-    }
-  );
+    );
 }
 
 /**
