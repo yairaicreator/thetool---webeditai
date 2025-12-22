@@ -11,6 +11,523 @@ let selectedEl = null;
 let lastPicked = null; // { selector, description }
 let currentUser = null; // { id, email, ... }
 
+// ============================================================
+// Supabase "edits" (cloud) live application + Undo/Redo sync
+// ============================================================
+
+const WEBEDIT_CLOUD_EDIT_ATTR = "data-webedit-edit-id";
+const WEBEDIT_MANAGED_ATTR = "data-webedit-managed";
+const WEBEDIT_ORIG_DISPLAY_ATTR = "data-webedit-orig-display";
+const WEBEDIT_ORIG_DISPLAY_PRIO_ATTR = "data-webedit-orig-display-priority";
+const WEBEDIT_STYLE_ID_PREFIX = "webedit-style-";
+const WEBEDIT_HIDDEN_CLASS_PREFIX = "webedit-hidden-";
+
+let cloudWebsiteId = null;
+let cloudRealtime = null; // { close() }
+let cloudRealtimeKey = null; // `${userId}:${websiteId}`
+let cloudRebuildTimer = null;
+let cloudRebuildInFlight = null;
+let cloudRuntimeStarted = false;
+let cloudPollTimer = null;
+
+function isProbablyWebEditAppPage() {
+  try {
+    const host = (location.hostname || "").toLowerCase();
+    return host === "webeditai.com" || host === "www.webeditai.com";
+  } catch (_) {
+    return false;
+  }
+}
+
+async function getSupabaseAuth() {
+  try {
+    const client = window.SupabaseClient;
+    if (!client) return null;
+    const { data: { session } } = await client.getSession();
+    const token = session?.access_token || null;
+    const userId = session?.user?.id || null;
+    if (!token || !userId) return null;
+    if (typeof client.isSessionExpired === "function" && client.isSessionExpired(session)) return null;
+    return { token, userId, url: client.url, anonKey: client.anonKey };
+  } catch (_) {
+    return null;
+  }
+}
+
+async function supabaseJsonGet(fullUrl, token, anonKey) {
+  const response = await fetch(fullUrl, {
+    method: "GET",
+    headers: {
+      apikey: anonKey,
+      Authorization: `Bearer ${token}`
+    }
+  });
+  const text = await response.text();
+  let json = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch (_) {}
+  if (!response.ok) {
+    const msg = (json && (json.message || json.error)) ? (json.message || json.error) : text;
+    const error = new Error(`Supabase GET failed (${response.status}): ${msg}`);
+    error.status = response.status;
+    error.payload = json;
+    throw error;
+  }
+  return json;
+}
+
+async function fetchWebsiteIdForCurrentUrl() {
+  const auth = await getSupabaseAuth();
+  if (!auth) return null;
+  const fullUrl = location.href;
+  const qs = new URLSearchParams({
+    select: "id",
+    full_url: `eq.${fullUrl}`
+  });
+  const url = `${auth.url}/rest/v1/websites?${qs.toString()}`;
+  const data = await supabaseJsonGet(url, auth.token, auth.anonKey);
+  if (!Array.isArray(data) || data.length === 0) return null;
+  return data[0]?.id || null;
+}
+
+function normalizeEditType(row) {
+  const t = row?.edit_type || row?.type || row?.editType || row?.editType;
+  return typeof t === "string" ? t.toLowerCase() : null;
+}
+
+function pickSelectorFromPayload(payload) {
+  if (!payload || typeof payload !== "object") return null;
+  return payload.selector || payload.targetSelector || payload.target_selector || payload?.metadata?.selector || null;
+}
+
+function pickStylesFromPayload(payload) {
+  if (!payload || typeof payload !== "object") return null;
+  const styles =
+    payload.styles ||
+    payload?.metadata?.styles ||
+    payload?.metadata?.style ||
+    payload?.metadata?.cssVars ||
+    null;
+  return styles && typeof styles === "object" ? styles : null;
+}
+
+function pickCssFromPayload(payload) {
+  if (!payload || typeof payload !== "object") return null;
+  const css = payload.css || payload?.metadata?.css || null;
+  return typeof css === "string" ? css : null;
+}
+
+async function fetchActiveEditsForWebsite(websiteId) {
+  const auth = await getSupabaseAuth();
+  if (!auth || !websiteId) return [];
+
+  const baseQs = new URLSearchParams({
+    website_id: `eq.${websiteId}`,
+    status: "eq.active",
+    order: "created_at.asc"
+  });
+
+  // Column name drift: some deployments used `type` vs `edit_type`.
+  // We'll fetch with `select=*` to avoid unknown-column errors and normalize in JS.
+  baseQs.set("select", "*");
+
+  const url = `${auth.url}/rest/v1/edits?${baseQs.toString()}`;
+  const data = await supabaseJsonGet(url, auth.token, auth.anonKey).catch((e) => {
+    // Graceful degradation: if schema differs or table missing, skip.
+    console.warn("[WebEdit] Supabase fetchActiveEdits failed:", e?.message || e);
+    return [];
+  });
+  if (!Array.isArray(data)) return [];
+
+  // Extra safety: enforce user_id match client-side if present.
+  return data
+    .filter((row) => !row?.user_id || row.user_id === auth.userId)
+    .filter((row) => (row?.status || "active") === "active");
+}
+
+function clearAppliedCloudEdits() {
+  // 1) Remove injected "Add" features (cloud-managed only)
+  try {
+    const injected = Array.from(document.querySelectorAll(`[${WEBEDIT_CLOUD_EDIT_ATTR}]`));
+    injected.forEach((node) => {
+      try { node.remove(); } catch (_) {}
+    });
+  } catch (_) {}
+
+  // Back-compat cleanup: older injected features used data-webedit-feature-id.
+  // Only remove those that look like extension artifacts.
+  try {
+    const legacy = Array.from(document.querySelectorAll(`.webedit-added-feature[data-webedit-feature-id]`));
+    legacy.forEach((node) => {
+      // If it doesn't have the new attr, it might be local-only (featureSpec undo stack).
+      // Keep it to avoid breaking local Undo/Redo.
+      if (!node.hasAttribute(WEBEDIT_CLOUD_EDIT_ATTR)) return;
+      try { node.remove(); } catch (_) {}
+    });
+  } catch (_) {}
+
+  // 2) Remove injected style tags for Customize edits
+  try {
+    const styleEls = Array.from(document.querySelectorAll(`style[id^="${WEBEDIT_STYLE_ID_PREFIX}"]`));
+    styleEls.forEach((el) => {
+      try { el.remove(); } catch (_) {}
+    });
+  } catch (_) {}
+
+  // 3) Unhide elements affected by cloud Hide/Remove edits
+  try {
+    const managed = Array.from(document.querySelectorAll(`[${WEBEDIT_MANAGED_ATTR}="1"]`));
+    managed.forEach((el) => {
+      try {
+        // Remove any webedit-hidden-* classes
+        const classes = Array.from(el.classList || []);
+        classes.forEach((c) => {
+          if (c && c.startsWith(WEBEDIT_HIDDEN_CLASS_PREFIX)) {
+            el.classList.remove(c);
+          }
+        });
+
+        // Restore original inline display (best-effort)
+        const prevDisplay = el.getAttribute(WEBEDIT_ORIG_DISPLAY_ATTR);
+        const prevPrio = el.getAttribute(WEBEDIT_ORIG_DISPLAY_PRIO_ATTR);
+        if (prevDisplay === null) {
+          // nothing to restore
+        } else if (!prevDisplay) {
+          el.style.removeProperty("display");
+        } else {
+          el.style.setProperty("display", prevDisplay, prevPrio || "");
+        }
+      } catch (_) {
+        // ignore element-level failures
+      } finally {
+        try { el.removeAttribute(WEBEDIT_ORIG_DISPLAY_ATTR); } catch (_) {}
+        try { el.removeAttribute(WEBEDIT_ORIG_DISPLAY_PRIO_ATTR); } catch (_) {}
+        try { el.removeAttribute(WEBEDIT_MANAGED_ATTR); } catch (_) {}
+      }
+    });
+  } catch (_) {}
+}
+
+function cssPropToKebab(prop) {
+  if (!prop) return "";
+  const s = String(prop).trim();
+  if (!s) return "";
+  // If already kebab-case, keep.
+  if (s.includes("-")) return s.toLowerCase();
+  return s.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
+}
+
+function buildCssFromStyles(selector, styles) {
+  const pairs = [];
+  for (const [k, v] of Object.entries(styles || {})) {
+    if (v === undefined || v === null || v === "") continue;
+    const prop = cssPropToKebab(k);
+    if (!prop) continue;
+    pairs.push(`${prop}: ${String(v)} !important;`);
+  }
+  if (!selector || pairs.length === 0) return "";
+  return `${selector} { ${pairs.join(" ")} }`;
+}
+
+function applyCustomizeEdit(editId, payload) {
+  const selector = pickSelectorFromPayload(payload);
+  if (!selector || !editId) return false;
+  const styleId = `${WEBEDIT_STYLE_ID_PREFIX}${editId}`;
+
+  const explicitCss = pickCssFromPayload(payload);
+  const styles = pickStylesFromPayload(payload);
+  const css = (explicitCss && explicitCss.trim())
+    ? explicitCss
+    : buildCssFromStyles(selector, styles || {});
+
+  if (!css || !css.trim()) return false;
+
+  const head = document.head || document.documentElement;
+  if (!head) return false;
+
+  let styleEl = document.getElementById(styleId);
+  if (!styleEl) {
+    styleEl = document.createElement("style");
+    styleEl.id = styleId;
+    head.appendChild(styleEl);
+  }
+  styleEl.textContent = `/* WebEdit cloud customize: ${editId} */\n${css}\n`;
+  return true;
+}
+
+function applyHideEdit(editId, payload) {
+  const selector = pickSelectorFromPayload(payload);
+  if (!selector || !editId) return 0;
+  let count = 0;
+  let nodes = [];
+  try {
+    nodes = Array.from(document.querySelectorAll(selector));
+  } catch (_) {
+    return 0;
+  }
+  nodes.forEach((el) => {
+    // Skip extension injected nodes (avoid hiding the feature UI itself)
+    if (el.closest && (el.closest(`[${WEBEDIT_CLOUD_EDIT_ATTR}]`) || el.closest("[data-webedit-feature-id]"))) return;
+
+    try {
+      // Save original inline display only once
+      if (!el.hasAttribute(WEBEDIT_ORIG_DISPLAY_ATTR)) {
+        el.setAttribute(WEBEDIT_ORIG_DISPLAY_ATTR, el.style.getPropertyValue("display") || "");
+        el.setAttribute(WEBEDIT_ORIG_DISPLAY_PRIO_ATTR, el.style.getPropertyPriority("display") || "");
+      }
+
+      el.classList.add(`${WEBEDIT_HIDDEN_CLASS_PREFIX}${editId}`);
+      el.setAttribute(WEBEDIT_MANAGED_ATTR, "1");
+      el.style.setProperty("display", "none", "important");
+      count += 1;
+    } catch (_) {}
+  });
+  return count;
+}
+
+function applyAddEdit(editId, payload) {
+  if (!editId || !payload || typeof payload !== "object") return false;
+  // Ensure we always wrap the inserted feature so cleanup is reliable.
+  const result = injectFeatureCard({ ...(payload || {}), editId });
+  return !!result?.ok;
+}
+
+function applyActiveEditsInOrder(edits) {
+  if (!Array.isArray(edits) || edits.length === 0) return { applied: 0 };
+  let applied = 0;
+  for (const row of edits) {
+    const editId = row?.id || row?.edit_id || row?.editId;
+    const type = normalizeEditType(row);
+    const payload = row?.payload || row?.metadata?.payload || row?.data || {};
+    if (!editId || !type) continue;
+
+    try {
+      if (type === "add") {
+        if (applyAddEdit(editId, payload)) applied += 1;
+      } else if (type === "remove" || type === "hide") {
+        const n = applyHideEdit(editId, payload);
+        if (n > 0) applied += 1;
+      } else if (type === "customize" || type === "style") {
+        if (applyCustomizeEdit(editId, payload)) applied += 1;
+      } else {
+        // Ignore unknown edit types for now (future-proof).
+      }
+    } catch (e) {
+      console.warn("[WebEdit] Failed to apply cloud edit", editId, e);
+    }
+  }
+  return { applied };
+}
+
+async function rebuildCloudEdits(reason = "unknown") {
+  if (cloudRebuildInFlight) return cloudRebuildInFlight;
+  cloudRebuildInFlight = (async () => {
+    try {
+      const auth = await getSupabaseAuth();
+      if (!auth?.userId) return { ok: false, skipped: true, reason: "no-auth" };
+      if (isProbablyWebEditAppPage()) return { ok: false, skipped: true, reason: "webedit-app" };
+
+      const websiteId = cloudWebsiteId || await fetchWebsiteIdForCurrentUrl();
+      cloudWebsiteId = websiteId;
+      if (!websiteId) return { ok: false, skipped: true, reason: "no-website-id" };
+
+      // Deterministic correctness: clear everything we manage, then reapply ACTIVE edits in order.
+      clearAppliedCloudEdits();
+      const edits = await fetchActiveEditsForWebsite(websiteId);
+      // stable order (server orders by created_at asc, but keep client-side fallback)
+      edits.sort((a, b) => String(a?.created_at || "").localeCompare(String(b?.created_at || "")));
+      const result = applyActiveEditsInOrder(edits);
+      return { ok: true, ...result, reason };
+    } catch (e) {
+      console.warn("[WebEdit] Cloud rebuild failed:", e?.message || e);
+      return { ok: false, error: e?.message || String(e) };
+    } finally {
+      // allow next rebuild
+      cloudRebuildInFlight = null;
+    }
+  })();
+  return cloudRebuildInFlight;
+}
+
+function scheduleCloudRebuild(reason = "update", delayMs = 150) {
+  try {
+    if (cloudRebuildTimer) clearTimeout(cloudRebuildTimer);
+  } catch (_) {}
+  cloudRebuildTimer = setTimeout(() => {
+    rebuildCloudEdits(reason).catch(() => {});
+  }, Math.max(0, delayMs));
+}
+
+function startCloudRealtimeSubscription(userId, websiteId) {
+  const authPromise = getSupabaseAuth();
+  const key = `${userId}:${websiteId}`;
+  if (cloudRealtimeKey === key && cloudRealtime) return;
+
+  // Tear down old subscription if any.
+  try { cloudRealtime?.close?.(); } catch (_) {}
+  cloudRealtime = null;
+  cloudRealtimeKey = key;
+
+  const createPhoenixRealtime = async () => {
+    const auth = await authPromise;
+    if (!auth || !auth.url || !auth.anonKey || !auth.token) return null;
+
+    const supabaseWsUrl = (() => {
+      try {
+        const u = new URL(auth.url);
+        u.protocol = u.protocol === "http:" ? "ws:" : "wss:";
+        u.pathname = "/realtime/v1/websocket";
+        u.search = new URLSearchParams({ apikey: auth.anonKey, vsn: "1.0.0" }).toString();
+        return u.toString();
+      } catch (_) {
+        return null;
+      }
+    })();
+    if (!supabaseWsUrl) return null;
+
+    let ws = null;
+    let closed = false;
+    let joinRef = 0;
+    let ref = 0;
+    let heartbeatTimer = null;
+    let reconnectTimer = null;
+
+    const nextRef = () => String(++ref);
+    const topic = `realtime:webedit-edits-${websiteId}`;
+
+    const send = (msg) => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      try { ws.send(JSON.stringify(msg)); } catch (_) {}
+    };
+
+    const join = () => {
+      joinRef += 1;
+      const jr = String(joinRef);
+      const config = {
+        broadcast: { ack: false, self: false },
+        presence: { key: "" },
+        postgres_changes: [
+          { event: "UPDATE", schema: "public", table: "edits", filter: `website_id=eq.${websiteId}` },
+          { event: "INSERT", schema: "public", table: "edits", filter: `website_id=eq.${websiteId}` },
+          { event: "DELETE", schema: "public", table: "edits", filter: `website_id=eq.${websiteId}` }
+        ]
+      };
+      send({
+        topic,
+        event: "phx_join",
+        payload: { config, access_token: auth.token },
+        ref: nextRef(),
+        join_ref: jr
+      });
+    };
+
+    const startHeartbeat = () => {
+      try { if (heartbeatTimer) clearInterval(heartbeatTimer); } catch (_) {}
+      heartbeatTimer = setInterval(() => {
+        send({ topic: "phoenix", event: "heartbeat", payload: {}, ref: nextRef() });
+      }, 25000);
+    };
+
+    const scheduleReconnect = () => {
+      if (closed) return;
+      try { if (reconnectTimer) clearTimeout(reconnectTimer); } catch (_) {}
+      reconnectTimer = setTimeout(() => {
+        if (closed) return;
+        try { ws?.close?.(); } catch (_) {}
+        connect();
+      }, 1000);
+    };
+
+    const connect = () => {
+      if (closed) return;
+      try { ws?.close?.(); } catch (_) {}
+      ws = new WebSocket(supabaseWsUrl);
+
+      ws.addEventListener("open", () => {
+        join();
+        startHeartbeat();
+      });
+
+      ws.addEventListener("message", (ev) => {
+        let msg = null;
+        try { msg = JSON.parse(ev.data); } catch (_) {}
+        if (!msg || typeof msg !== "object") return;
+        if (msg.event === "postgres_changes") {
+          // Always rebuild for correctness (status changes, inserts, deletes, edits)
+          scheduleCloudRebuild("realtime:postgres_changes", 50);
+        }
+      });
+
+      ws.addEventListener("close", () => {
+        scheduleReconnect();
+      });
+
+      ws.addEventListener("error", () => {
+        scheduleReconnect();
+      });
+    };
+
+    connect();
+
+    return {
+      close() {
+        closed = true;
+        try { if (heartbeatTimer) clearInterval(heartbeatTimer); } catch (_) {}
+        try { if (reconnectTimer) clearTimeout(reconnectTimer); } catch (_) {}
+        try { ws?.close?.(); } catch (_) {}
+      }
+    };
+  };
+
+  createPhoenixRealtime()
+    .then((rt) => {
+      cloudRealtime = rt;
+      if (cloudRealtime) {
+        // Initial rebuild shortly after connecting (also covers pages that already have edits).
+        scheduleCloudRebuild("realtime:init", 50);
+      }
+    })
+    .catch((e) => {
+      console.warn("[WebEdit] Failed to start realtime subscription:", e?.message || e);
+    });
+}
+
+async function initCloudEditsRuntime() {
+  try {
+    if (cloudRuntimeStarted) return;
+    const auth = await getSupabaseAuth();
+    if (!auth?.userId) return;
+    if (isProbablyWebEditAppPage()) return;
+
+    cloudWebsiteId = await fetchWebsiteIdForCurrentUrl();
+    if (!cloudWebsiteId) return;
+
+    cloudRuntimeStarted = true;
+    startCloudRealtimeSubscription(auth.userId, cloudWebsiteId);
+    scheduleCloudRebuild("init", 50);
+
+    // Polling fallback (covers cases where websockets are blocked)
+    cloudPollTimer = setInterval(() => {
+      // Only poll if we still have auth and website context.
+      getSupabaseAuth().then((a) => {
+        if (!a?.userId || !cloudWebsiteId) return;
+        scheduleCloudRebuild("poll", 0);
+      }).catch(() => {});
+    }, 5000);
+  } catch (_) {
+    // ignore init failures
+  }
+}
+
+// Best-effort cleanup on navigation/unload (avoid dangling sockets / timers)
+try {
+  window.addEventListener("beforeunload", () => {
+    try { cloudRealtime?.close?.(); } catch (_) {}
+    try { if (cloudPollTimer) clearInterval(cloudPollTimer); } catch (_) {}
+  });
+} catch (_) {}
+
 async function refreshCurrentUser() {
   try {
     const resp = await chrome.runtime.sendMessage({ type: "WEBEDIT_GET_SESSION" });
@@ -36,6 +553,11 @@ async function applySavedEditsForUser() {
   if (!currentUser?.id) {
     return;
   }
+
+  // Cloud edits (Supabase `edits` table) apply + realtime undo/redo sync
+  // This is separate from EditRules and is driven only by Supabase (Realtime + polling).
+  initCloudEditsRuntime().catch(() => {});
+
   if (!window.EditRules) {
     return;
   }
@@ -236,7 +758,10 @@ function generateDescriptionForElement(el) {
 function isEventInsideExtensionUI(target) {
   if (!target || target === document.body || target === document.documentElement) return true;
   // Side panel UI is separate; we only exclude injected WebEdit nodes from selection/removal.
-  return !!(target.closest && target.closest('[data-webedit-feature-id]'));
+  return !!(target.closest && (
+    target.closest(`[${WEBEDIT_CLOUD_EDIT_ATTR}]`) ||
+    target.closest('[data-webedit-feature-id]')
+  ));
 }
 
 function startPickMode() {
@@ -403,10 +928,16 @@ function escapeHtml(value = "") {
 
 function injectFeatureCard(payload = {}) {
   const selector = payload.selector || payload.targetSelector || null;
-  const target = selector ? document.querySelector(selector) : null;
+  let target = null;
+  try {
+    target = selector ? document.querySelector(selector) : null;
+  } catch (_) {
+    target = null;
+  }
   if (!target || !target.parentElement) return false;
 
   const id = payload.featureId || payload.id || `feature-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const editId = payload.editId || payload.edit_id || payload.webeditEditId || null;
   const position = payload.position || "after";
   const name = payload.name || "WebEdit feature";
   const description = payload.description || payload.content || "";
@@ -415,6 +946,9 @@ function injectFeatureCard(payload = {}) {
 
   const container = document.createElement("div");
   container.className = "webedit-added-feature";
+  if (editId) {
+    container.setAttribute(WEBEDIT_CLOUD_EDIT_ATTR, String(editId));
+  }
   container.setAttribute("data-webedit-feature-id", id);
   container.setAttribute("data-webedit-selector", selector);
 
