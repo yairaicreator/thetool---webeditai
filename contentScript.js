@@ -867,17 +867,6 @@ function handleRemoveClick(event) {
   stopRemoveMode();
   chrome.runtime.sendMessage({ type: "WEBEDIT_MODE_EXITED" }).catch(() => {});
 
-  // Notify side panel so it can show Undo/Redo
-  chrome.runtime.sendMessage({
-    type: "WEBEDIT_EDIT_COMMITTED",
-    payload: {
-      kind: "remove",
-      selector,
-      description,
-      prevDisplayValue,
-      prevDisplayPriority
-    }
-  }).catch(() => {});
 }
 
 function applyStylesToSelector(selector, styles) {
@@ -1174,46 +1163,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const ok = alignElement(payload.selector, payload.align);
       sendResponse({ ok });
       return true;
-    }
-    if (type === "UNDO" || type === "UNDO_LAST") {
-      try {
-        const exec = window.FeatureSpecExecutor;
-        if (!exec || typeof exec.undoLast !== "function") {
-          sendResponse({ ok: false, error: "Undo is not available on this page yet." });
-          return true;
-        }
-        Promise.resolve(exec.undoLast())
-          .then((response) => sendResponse({ ok: true, response }))
-          .catch((error) => {
-    const message = error instanceof Error ? error.message : String(error);
-            sendResponse({ ok: false, error: message || "Undo failed" });
-          });
-        return true;
-  } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        sendResponse({ ok: false, error: message || "Undo failed" });
-        return true;
-      }
-    }
-    if (type === "REDO" || type === "REDO_LAST") {
-      try {
-        const exec = window.FeatureSpecExecutor;
-        if (!exec || typeof exec.redoLast !== "function") {
-          sendResponse({ ok: false, error: "Redo is not available on this page yet." });
-          return true;
-        }
-        Promise.resolve(exec.redoLast())
-          .then((response) => sendResponse({ ok: true, response }))
-          .catch((error) => {
-            const message = error instanceof Error ? error.message : String(error);
-            sendResponse({ ok: false, error: message || "Redo failed" });
-          });
-        return true;
-  } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        sendResponse({ ok: false, error: message || "Redo failed" });
-        return true;
-      }
     }
     if (type === "GET_PAGE_CONTEXT") {
       // Prefer FeatureSpecExecutor page context when available (it provides a richer outline),

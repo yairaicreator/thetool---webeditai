@@ -725,51 +725,6 @@
   flex-shrink: 0;
 }
 
-.webedit-undo-redo-bar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 32px 0;
-  background: #d7fbff;
-  flex-shrink: 0;
-}
-
-.webedit-undo-redo-bar.hidden {
-  display: none;
-}
-
-.webedit-undo-btn,
-.webedit-redo-btn {
-  border: 2px solid #0f172a;
-  background: #ffffff;
-  color: #0f172a;
-  border-radius: 999px;
-  padding: 8px 14px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.15s ease, opacity 0.15s ease, transform 0.15s ease;
-}
-
-.webedit-undo-btn:disabled,
-.webedit-redo-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-  transform: none;
-}
-
-.webedit-undo-btn:not(:disabled):hover,
-.webedit-redo-btn:not(:disabled):hover {
-  background: #f1f5f9;
-}
-
-.webedit-undo-redo-meta {
-  margin-left: auto;
-  font-size: 11px;
-  color: #475569;
-  white-space: nowrap;
-}
-
 .webedit-mode-indicator {
   display: flex;
   align-items: center;

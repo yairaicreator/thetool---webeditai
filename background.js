@@ -143,7 +143,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       "WEBEDIT_ELEMENT_PICKED",
       "WEBEDIT_MODE_STARTED",
       "WEBEDIT_MODE_EXITED",
-      "WEBEDIT_EDIT_COMMITTED",
       "WEBEDIT_SESSION_UPDATED"
     ]);
     if (relayTypes.has(message.type)) {
