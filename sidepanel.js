@@ -112,8 +112,8 @@
   }
 
   async function sendToActiveTab(payload) {
-    try {
-      const resp = await chrome.runtime.sendMessage({
+  try {
+    const resp = await chrome.runtime.sendMessage({
         type: "WEBEDIT_SIDEPANEL_COMMAND",
         payload
       });
@@ -208,7 +208,13 @@
 
   function closeActiveHistoryRenameForm() {
     if (activeHistoryRenameForm && activeHistoryRenameForm.parentNode) {
-      activeHistoryRenameForm.parentNode.removeChild(activeHistoryRenameForm);
+      try {
+        if (activeHistoryRenameForm.parentNode.contains(activeHistoryRenameForm)) {
+          activeHistoryRenameForm.parentNode.removeChild(activeHistoryRenameForm);
+        }
+      } catch (e) {
+        // ignore removal errors (e.g. node already removed)
+      }
     }
     activeHistoryRenameForm = null;
   }
@@ -722,8 +728,8 @@
         addFeatureName = text;
         pendingAddFeatureStep = "description";
         addChatMessage("system", "Describe the edit:");
-        return;
-      }
+      return;
+    }
 
       if (pendingAddFeatureStep === "description") {
         addFeatureDescription = text;
@@ -771,7 +777,7 @@
         } catch (e) {
           // If AI spec generation fails, fall back to a minimal "real feature" (HTML/CSS)
           // rather than the legacy name/description card UI.
-          console.warn("[Add Feature] AI Spec failed; falling back to basic HTML/CSS add:", e);
+          console.log("ℹ️ [Add Feature] AI Spec generation failed (using fallback):", e.message || e);
 
           const safeTitle = String(addFeatureName || "New feature");
           const safeBody = String(addFeatureDescription || "Added by WebEdit AI.");
