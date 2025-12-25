@@ -14,7 +14,7 @@ const COHERE_CHAT_URL = "https://api.cohere.com/v1/chat";
 const COHERE_MODEL = "command-a-vision-07-2025";
 
 interface FeatureSpec {
-  action: "hide" | "customize" | "add" | "text" | "chat" | "undo";
+  action: "hide" | "customize" | "add" | "text" | "chat" | "undo" | "reveal";
   selector?: string;
   targetSelector?: string;
   targetId?: string;
@@ -49,7 +49,7 @@ const SYSTEM_PROMPT = `You are an AI assistant that generates structured feature
 Given a user prompt and page context, you must return ONLY valid JSON matching this exact schema:
 
 {
-  "action": "hide" | "customize" | "add" | "text" | "chat" | "undo",
+  "action": "hide" | "customize" | "add" | "text" | "chat" | "undo" | "reveal",
   "selector": "CSS selector for target element (required if action is hide/customize/text)",
   "targetId": "ID of a previously applied FeatureSpec to undo (required if action is undo)",
   "description": "Human-readable description of the element",
@@ -73,6 +73,7 @@ Action types:
 - "text": Change text content (needs selector and content)
 - "chat": General conversation or answer about the page (needs content). Use this for non-edit requests.
 - "undo": Revert a previously applied edit (needs targetId from activeSpecs in context).
+- "reveal": Force unhide of elements (headers/navs) that might be hidden by mistake.
 
 Rules:
 1. Return ONLY valid JSON, no markdown, no explanations.
@@ -83,6 +84,7 @@ Rules:
 6. Classes inside the HTML must start with "webedit-ai-" to avoid conflicts.
 7. If the user wants to "return", "restore", or "un-hide" something, look at "activeSpecs" in the context, find the relevant spec ID, and return {"action": "undo", "targetId": "..."}.
 8. If the prompt is a general question about the page text, return {"action": "chat", "content": "..."}.
+9. If the user asks to "restore header", "bring back header", "unhide nav", or if the user complains about missing UI elements and no specific undo target is found, return {"action": "reveal"}.
 
 Example responses:
 {"action":"hide","selector":"#cookie-banner"}

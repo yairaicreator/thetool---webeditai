@@ -338,6 +338,12 @@ async function rebuildCloudEdits(reason = "unknown") {
       // stable order (server orders by created_at asc, but keep client-side fallback)
       edits.sort((a, b) => String(a?.created_at || "").localeCompare(String(b?.created_at || "")));
       const result = applyActiveEditsInOrder(edits);
+      
+      // Check for discrepancies (e.g. edits applied by legacy system but missing from Cloud)
+      try {
+        scanForOrphanedEdits(edits);
+      } catch (_) {}
+
       return { ok: true, ...result, reason };
     } catch (e) {
       console.warn("[WebEdit] Cloud rebuild failed:", e?.message || e);
@@ -1080,6 +1086,71 @@ function getPagePlainText() {
   return text.slice(0, 5000).trim();
 }
 
+function revealLikelyHeader() {
+  const candidates = Array.from(document.querySelectorAll("header, nav, [role='banner'], .header, .nav, .top-bar, .navbar"));
+  let revealed = 0;
+  candidates.forEach(el => {
+    // 1. Remove WebEdit specific hiding classes
+    const classes = Array.from(el.classList);
+    let changed = false;
+    classes.forEach(c => {
+      if (c.startsWith(WEBEDIT_HIDDEN_CLASS_PREFIX)) {
+        el.classList.remove(c);
+        changed = true;
+      }
+    });
+
+    // 2. Remove WebEdit managed attributes
+    if (el.hasAttribute(WEBEDIT_MANAGED_ATTR)) {
+      el.removeAttribute(WEBEDIT_MANAGED_ATTR);
+      changed = true;
+    }
+
+    // 3. Force visibility if hidden
+    const style = window.getComputedStyle(el);
+    if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+       // Restore original if known
+       const orig = el.getAttribute(WEBEDIT_ORIG_DISPLAY_ATTR);
+       if (orig) {
+         el.style.setProperty("display", orig, el.getAttribute(WEBEDIT_ORIG_DISPLAY_PRIO_ATTR) || "");
+       } else {
+         el.style.removeProperty("display");
+         el.style.removeProperty("visibility");
+         el.style.removeProperty("opacity");
+       }
+       changed = true;
+    }
+    if (changed) revealed++;
+  });
+  return revealed;
+}
+
+function scanForOrphanedEdits(activeEdits = []) {
+   const activeIds = new Set(activeEdits.map(e => e.id));
+   const managed = document.querySelectorAll(`[${WEBEDIT_MANAGED_ATTR}], [${WEBEDIT_CLOUD_EDIT_ATTR}]`);
+   let orphans = 0;
+   managed.forEach(el => {
+      const editIdAttr = el.getAttribute(WEBEDIT_CLOUD_EDIT_ATTR);
+      if (editIdAttr && !activeIds.has(editIdAttr)) {
+         console.warn("[WebEdit] Orphaned ADD edit detected:", editIdAttr, el);
+         orphans++;
+      }
+      el.classList.forEach(c => {
+        if (c.startsWith(WEBEDIT_HIDDEN_CLASS_PREFIX)) {
+           const id = c.replace(WEBEDIT_HIDDEN_CLASS_PREFIX, "");
+           if (!activeIds.has(id)) {
+             console.warn("[WebEdit] Orphaned HIDE edit detected:", id, el);
+             orphans++;
+           }
+        }
+      });
+   });
+   if (orphans > 0) {
+     console.log(`[WebEdit] Found ${orphans} orphaned edits on this page.`);
+   }
+   return orphans;
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "WEBEDIT_SESSION_UPDATED") {
     (async () => {
@@ -1226,6 +1297,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({ ok: false, error: error.message });
         }
       })();
+      return true;
+    }
+    if (type === "REVEAL_HEADER") {
+      const count = revealLikelyHeader();
+      sendResponse({ ok: true, count });
       return true;
     }
     if (type === "GET_PAGE_CONTEXT") {

@@ -775,56 +775,8 @@
             throw new Error(aiResp?.error || "AI spec unavailable");
           }
         } catch (e) {
-          // If AI spec generation fails, fall back to a minimal "real feature" (HTML/CSS)
-          // rather than the legacy name/description card UI.
-          console.log("ℹ️ [Add Feature] AI Spec generation failed (using fallback):", e.message || e);
-
-          const safeTitle = String(addFeatureName || "New feature");
-          const safeBody = String(addFeatureDescription || "Added by WebEdit AI.");
-
-          const fallbackSpec = {
-            action: "add",
-            targetSelector: lastPickedTarget.selector,
-            position: "after",
-            description: safeTitle,
-            content: safeBody,
-            html: `
-<section class="webedit-ai-card" role="region" aria-label="${safeTitle.replace(/"/g, "&quot;")}">
-  <h3 class="webedit-ai-card__title">${safeTitle.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</h3>
-  <p class="webedit-ai-card__body">${safeBody.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>
-</section>
-            `.trim(),
-            css: `
-.webedit-ai-card{
-  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-  background: #f8fafc;
-  border: 1px solid rgba(15,23,42,0.14);
-  border-radius: 12px;
-  padding: 12px 14px;
-  box-shadow: 0 10px 24px rgba(15,23,42,0.08);
-  max-width: 420px;
-}
-.webedit-ai-card__title{
-  margin: 0 0 6px 0;
-  font-size: 14px;
-  font-weight: 700;
-  color: #0f172a;
-}
-.webedit-ai-card__body{
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.5;
-  color: rgba(15,23,42,0.82);
-}
-            `.trim()
-          };
-
-          const applyResp = await sendToActiveTab({ type: "APPLY_FEATURE_SPEC", spec: fallbackSpec });
-          if (applyResp?.response?.ok) {
-            thinking.content = `✅ "${addFeatureName}" added successfully!`;
-          } else {
-            throw new Error(applyResp?.response?.error || "Failed to apply fallback feature");
-          }
+          console.error("[Add Feature] AI Spec failed:", e);
+          thinking.content = `❌ I couldn't generate that feature.\nReason: ${e.message || "Unknown error"}`;
         }
 
         addFeatureName = "";
