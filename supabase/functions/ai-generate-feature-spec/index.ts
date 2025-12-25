@@ -19,6 +19,17 @@ interface FeatureSpec {
   targetSelector?: string;
   targetId?: string;
   description?: string;
+  behavior?: {
+    type: "toggleClass" | "toggleStyles";
+    triggerAttr?: string;
+    triggerValue?: string;
+    targetSelector: string;
+    className?: string;
+    stylesOn?: Record<string, string>;
+    stylesOff?: Record<string, string>;
+    expandedLabel?: string;
+    collapsedLabel?: string;
+  };
   styles?: {
     backgroundColor?: string;
     color?: string;
@@ -68,7 +79,8 @@ Given a user prompt and page context, you must return ONLY valid JSON matching t
   "position": "before" | "after" | "inside" | "replace",
   "targetSelector": "CSS selector for reference element (required if action is add with position)",
   "html": "For add actions ONLY: HTML snippet to insert. Use semantic markup and prefix custom classes with 'webedit-ai-'. Omit this field for other actions.",
-  "css": "For add actions ONLY: CSS rules targeting classes used in html. No <style> tags. Omit this field for other actions."
+  "css": "For add actions ONLY: CSS rules targeting classes used in html. No <style> tags. Omit this field for other actions.",
+  "behavior": "Optional for add: safe interactivity descriptor. Use this for click-to-expand/collapse etc. Do NOT output JavaScript."
 }
 
 Action types:
@@ -87,7 +99,7 @@ Rules:
 4. If context is provided, use it to generate more accurate selectors or to answer questions about the page content.
 5. For add actions, the HTML should represent the requested feature (buttons, cards, links, etc.) using accessible markup.
 6. Classes inside the HTML must start with "webedit-ai-" to avoid conflicts.
-7. INTERACTIVITY: For "toggles", "expands", or "accordions", use CSS-only techniques (e.g., the checkbox hack with <input type="checkbox"> + <label> and the :checked pseudo-class in the "css" field). You cannot use Javascript.
+7. INTERACTIVITY: If the user requests interactive behavior (toggle/expand/collapse), you MUST NOT output JavaScript. Instead:\n   - Provide HTML/CSS for the control.\n   - Provide a \"behavior\" object describing a safe, whitelisted action. The extension will bind the click handler.\n   - Preferred: behavior.type=\"toggleClass\" where the click toggles className on behavior.targetSelector.\n   - Use triggerAttr \"data-webedit-ai-action\" and triggerValue \"toggle\" on the clickable element.\n   - Make selectors stable: prefer [data-testid], [role], aria-label, IDs. Avoid long class chains.\n   - Provide CSS rules that implement both states via the toggled class.
 8. If the user wants to "return", "restore", or "un-hide" something, look at "activeSpecs" in the context, find the relevant spec ID, and return {"action": "undo", "targetId": "..."}.
 9. If the prompt is a general question about the page text, return {"action": "chat", "content": "..."}.
 10. If the user asks to "restore header", "bring back header", "unhide nav", or if the user complains about missing UI elements and no specific undo target is found, return {"action": "reveal"}.

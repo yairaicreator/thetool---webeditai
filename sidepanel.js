@@ -56,6 +56,7 @@
   let addFeatureName = "";
   let addFeatureDescription = "";
   let lastPickedTarget = null; // { selector, description }
+  let pendingAiAnchorRequest = null; // { text } waiting for Pick Element anchor
 
   // References shown after picking an element should be ephemeral.
   const PICK_REFERENCE_TTL_MS = 8000;
@@ -690,10 +691,10 @@
     showNotificationInChat("Styles reset.");
   }
 
-  async function handleSend() {
-    const text = (els.chatInput?.value || "").trim();
+  async function handleSend(textOverride = null) {
+    const text = (typeof textOverride === "string" ? textOverride : (els.chatInput?.value || "")).trim();
     if (!text) return;
-    els.chatInput.value = "";
+    if (typeof textOverride !== "string") els.chatInput.value = "";
 
     const lower = text.toLowerCase();
     if (lower === "undo" || lower === "/undo") {
@@ -793,7 +794,12 @@
 
     try {
       const pageContextResp = await sendToActiveTab({ type: "GET_PAGE_CONTEXT" });
-      const pageContext = pageContextResp?.response?.pageContext || null;
+      const pageContext = pageContextResp?.response?.pageContext || {};
+
+      // Inject user-picked anchor if available (crucial for "Pick element" retry flow)
+      if (lastPickedTarget && lastPickedTarget.selector) {
+        pageContext.anchorElement = lastPickedTarget;
+      }
 
       // Use generateFeatureSpec for everything - it handles both edits and chat now.
       const aiResp = window.SupabaseClient?.generateFeatureSpec
@@ -811,6 +817,12 @@
           thinking.content = "Reverting that change for you...";
           const undoResp = await sendToActiveTab({ type: "UNDO_BY_ID", targetId: spec.targetId });
           thinking.content = undoResp?.response?.ok ? "✅ Done! I've restored that element." : `❌ Sorry, I couldn't undo that: ${undoResp?.response?.error || "unknown error"}`;
+        } else if (spec.action === "reveal") {
+          thinking.content = "Trying to reveal hidden UI elements...";
+          const revealResp = await sendToActiveTab({ type: "REVEAL_HEADER" });
+          thinking.content = revealResp?.response?.ok
+            ? `✅ Done. Revealed ${revealResp.response.count || 0} element(s).`
+            : `❌ ${revealResp?.response?.error || "Reveal failed"}`;
         } else {
           // It's an edit command (hide, customize, add, text)
           thinking.content = "Processing your request...";
@@ -818,7 +830,13 @@
           if (applyResp?.response?.ok) {
             thinking.content = `✅ Done! I've ${spec.action === 'hide' ? 'hidden' : 'updated'} that for you.`;
           } else {
-            thinking.content = `❌ I tried to do that, but: ${applyResp?.response?.error || "it didn't work"}`;
+            const err = applyResp?.response?.error || "it didn't work";
+            if (typeof err === "string" && err.includes("Could not find target for selector")) {
+              thinking.content = "❌ I couldn't find the exact element. Click **Pick element**, select the area, then re-send your request.";
+              pendingAiAnchorRequest = { text };
+            } else {
+              thinking.content = `❌ I tried to do that, but: ${err}`;
+            }
           }
         }
       }
@@ -846,6 +864,19 @@
         showPickReference(lastPickedTarget.description);
       }
       hideModeIndicator();
+      if (pendingAiAnchorRequest && lastPickedTarget?.selector) {
+        addChatMessage("system", `Anchor selected: ${lastPickedTarget.description || lastPickedTarget.selector}`);
+        
+        const textToRetry = pendingAiAnchorRequest.text;
+        if (textToRetry && typeof textToRetry === "string") {
+          addChatMessage("system", "Retrying request with new anchor...");
+          pendingAiAnchorRequest = null;
+          handleSend(textToRetry);
+        } else {
+          addChatMessage("system", "Now re-send your last request and I will apply it to this selected area.");
+          pendingAiAnchorRequest = null;
+        }
+      }
       if (isAddFeatureMode) {
         pendingAddFeatureStep = "name";
         addChatMessage("system", "Name of edit:");

@@ -5,6 +5,7 @@ const FEATURE_SPEC_STORAGE_KEY = "webeditFeatureSpecs";
 const INSERT_MARKER_ATTR = "data-webedit-ai-insert-id";
 const HIDE_MARKER_ATTR = "data-webedit-ai-hidden-id";
 const STYLE_MARKER_ATTR = "data-webedit-ai-style-id";
+const BOUND_MARKER_ATTR = "data-webedit-ai-bound";
 
 function isExtensionContextValid() {
   try {
@@ -152,6 +153,119 @@ function insertNodes(target, nodes, position) {
     nodes.forEach((n) => parent.insertBefore(n, target));
     parent.removeChild(target);
   }
+}
+
+function bindBehaviorForMarker(spec, markerId) {
+  const behavior = spec && spec.behavior ? spec.behavior : null;
+  if (!behavior || !markerId) return;
+
+  const triggerAttr = behavior.triggerAttr || "data-webedit-ai-action";
+  const triggerValue = behavior.triggerValue || "toggle";
+
+  // Find triggers inside inserted nodes only.
+  const containers = safeQueryAll(`[${INSERT_MARKER_ATTR}="${CSS.escape(markerId)}"]`);
+  const triggers = [];
+  containers.forEach((root) => {
+    if (!(root instanceof Element)) return;
+    // Use strict equality to match CSS selector behavior below (no trimming)
+    if (root.hasAttribute(triggerAttr) && (root.getAttribute(triggerAttr) || "") === triggerValue) {
+      triggers.push(root);
+    }
+    triggers.push(...Array.from(root.querySelectorAll(`[${CSS.escape(triggerAttr)}="${CSS.escape(triggerValue)}"]`)));
+  });
+
+  if (triggers.length === 0) return;
+
+  const updateTriggerLabel = (trigger, isExpanded) => {
+    const expandedLabel = (behavior.expandedLabel || "").trim();
+    const collapsedLabel = (behavior.collapsedLabel || "").trim();
+    const label = isExpanded ? expandedLabel : collapsedLabel;
+    if (label) {
+      trigger.setAttribute("title", label);
+      trigger.setAttribute("aria-label", label);
+    }
+    trigger.setAttribute("aria-pressed", String(!!isExpanded));
+  };
+
+  const resolveTarget = () => {
+    const nodes = safeQueryAll(behavior.targetSelector);
+    return pickBestElement(nodes);
+  };
+
+  const toggleClass = (trigger) => {
+    const target = resolveTarget();
+    if (!target) return { ok: false, error: `Could not find target for selector: ${behavior.targetSelector}` };
+    const className = behavior.className;
+    if (!className) return { ok: false, error: "Missing behavior.className" };
+    const next = !target.classList.contains(className);
+    target.classList.toggle(className, next);
+    updateTriggerLabel(trigger, next);
+    return { ok: true };
+  };
+
+  const toggleStyles = (trigger) => {
+    const target = resolveTarget();
+    if (!target) return { ok: false, error: `Could not find target for selector: ${behavior.targetSelector}` };
+    const stylesOn = behavior.stylesOn || {};
+    const stylesOff = behavior.stylesOff || {};
+    const isOn = target.getAttribute("data-webedit-ai-style-state") === "on";
+    const nextOn = !isOn;
+    const chosen = nextOn ? stylesOn : stylesOff;
+
+    for (const [k, v] of Object.entries(chosen)) {
+      const prop = String(k || "").trim();
+      if (!prop) continue;
+      if (v) {
+        target.style.setProperty(prop, String(v), "important");
+      } else {
+        target.style.removeProperty(prop);
+      }
+    }
+    target.setAttribute("data-webedit-ai-style-state", nextOn ? "on" : "off");
+    updateTriggerLabel(trigger, nextOn);
+    return { ok: true };
+  };
+
+  const handlerFor = (trigger) => () => {
+    if (behavior.type === "toggleClass") {
+      const r = toggleClass(trigger);
+      if (!r.ok) console.warn("[WebEdit AI] behavior toggleClass failed:", r.error);
+      return;
+    }
+    if (behavior.type === "toggleStyles") {
+      const r = toggleStyles(trigger);
+      if (!r.ok) console.warn("[WebEdit AI] behavior toggleStyles failed:", r.error);
+    }
+  };
+
+  triggers.forEach((trigger) => {
+    if (!(trigger instanceof Element)) return;
+    if (trigger.getAttribute(BOUND_MARKER_ATTR) === "1") return;
+    trigger.setAttribute(BOUND_MARKER_ATTR, "1");
+
+    if (!trigger.hasAttribute("tabindex")) {
+      trigger.setAttribute("tabindex", "0");
+    }
+    if (!trigger.hasAttribute("role")) {
+      trigger.setAttribute("role", "button");
+    }
+
+    const clickHandler = handlerFor(trigger);
+    trigger.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      clickHandler();
+    });
+    trigger.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        e.stopPropagation();
+        clickHandler();
+      }
+    });
+
+    updateTriggerLabel(trigger, false);
+  });
 }
 
 function summarizeSpec(spec) {
@@ -322,6 +436,13 @@ async function applyFeatureSpec(spec, options = {}) {
       const injectedStyle = injectCss(css, id);
       insertNodes(el, nodesToInsert, position);
 
+      // Bind safe behavior triggers inside inserted content (click handlers implemented by the extension).
+      try {
+        bindBehaviorForMarker(spec, id);
+      } catch (e) {
+        console.warn("[WebEdit AI] Failed to bind behavior:", e?.message || e);
+      }
+
       const applied = {
         id,
         spec,
@@ -332,7 +453,14 @@ async function applyFeatureSpec(spec, options = {}) {
           replacedOuterHTML,
           targetSelector: targetSel,
           position,
-          hadStyle: !!injectedStyle
+          hadStyle: !!injectedStyle,
+          behaviorCleanup: spec.behavior ? (
+            spec.behavior.type === "toggleClass"
+              ? { type: "toggleClass", targetSelector: spec.behavior.targetSelector, className: spec.behavior.className }
+              : spec.behavior.type === "toggleStyles"
+                ? { type: "toggleStyles", targetSelector: spec.behavior.targetSelector, stylesOn: spec.behavior.stylesOn, stylesOff: spec.behavior.stylesOff }
+                : null
+          ) : null
         }
       };
       if (!replay) {
@@ -423,6 +551,34 @@ async function undoEntry(change) {
         styleEls.forEach((el) => el.remove());
       }
 
+      if (u.action === "add" && u.behaviorCleanup) {
+        if (u.behaviorCleanup.type === "toggleClass") {
+          const sel = u.behaviorCleanup.targetSelector;
+          const cls = u.behaviorCleanup.className;
+          if (sel && cls) {
+            const targets = safeQueryAll(sel);
+            targets.forEach((t) => {
+              try { t.classList.remove(cls); } catch (_) {}
+            });
+          }
+        } else if (u.behaviorCleanup.type === "toggleStyles") {
+          const sel = u.behaviorCleanup.targetSelector;
+          const keys = new Set([
+            ...Object.keys(u.behaviorCleanup.stylesOn || {}),
+            ...Object.keys(u.behaviorCleanup.stylesOff || {})
+          ]);
+          if (sel && keys.size > 0) {
+            const targets = safeQueryAll(sel);
+            targets.forEach((t) => {
+              try {
+                keys.forEach(k => t.style.removeProperty(k));
+                t.removeAttribute("data-webedit-ai-style-state");
+              } catch (_) {}
+            });
+          }
+        }
+      }
+
       if (u.action === "add" && u.position === "replace" && typeof u.replacedOuterHTML === "string") {
         const targets = safeQueryAll(u.targetSelector);
         const target = pickBestElement(targets);
@@ -486,10 +642,20 @@ function getPageContext() {
     const rect = el.getBoundingClientRect();
     const classList = Array.from(el.classList || []).slice(0, 5);
     const text = (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 80);
+    const role = el.getAttribute ? (el.getAttribute("role") || "") : "";
+    const ariaLabel = el.getAttribute ? (el.getAttribute("aria-label") || "") : "";
+    const testId = el.getAttribute ? (el.getAttribute("data-testid") || el.getAttribute("data-test") || "") : "";
+    const name = el.getAttribute ? (el.getAttribute("name") || "") : "";
+    const placeholder = el.getAttribute ? (el.getAttribute("placeholder") || "") : "";
     return {
       tag: el.tagName.toLowerCase(),
       id: el.id || "",
       classes: classList,
+      role,
+      ariaLabel,
+      testId,
+      name,
+      placeholder,
       text,
       box: { w: Math.round(rect.width), h: Math.round(rect.height), x: Math.round(rect.x), y: Math.round(rect.y) }
     };
