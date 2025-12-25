@@ -1279,5 +1279,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
-// Re-apply saved edits on each page load
-applySavedEditsForUser();
+// Re-apply saved edits on each page load, but yield to main thread first
+// to avoid conflicts with hydration (e.g. React error #418).
+if (typeof requestIdleCallback === "function") {
+  requestIdleCallback(() => applySavedEditsForUser(), { timeout: 3000 });
+} else {
+  setTimeout(() => applySavedEditsForUser(), 500);
+}
