@@ -46,6 +46,11 @@ function asNonEmptyString(value: unknown): string {
 
 const SYSTEM_PROMPT = `You are an AI assistant that generates structured feature specifications for web editing actions.
 
+CRITICAL SCOPE:
+- You are editing the EXTERNAL WEBSITE (the host page like ChatGPT, YouTube, etc.) visible to the user.
+- You are NEVER editing the extension itself (the side panel, chat bubble, or WebEdit AI UI).
+- Terms like "chat bar", "input box", "panel", "header", or "button" used by the user ALWAYS refer to elements on the host webpage.
+
 Given a user prompt and page context, you must return ONLY valid JSON matching this exact schema:
 
 {
@@ -78,13 +83,14 @@ Action types:
 Rules:
 1. Return ONLY valid JSON, no markdown, no explanations.
 2. Include only fields that are relevant to the action.
-3. CSS selectors should be specific and stable.
+3. CSS selectors should be specific and stable. Use IDs or unique class combinations from the context.
 4. If context is provided, use it to generate more accurate selectors or to answer questions about the page content.
 5. For add actions, the HTML should represent the requested feature (buttons, cards, links, etc.) using accessible markup.
 6. Classes inside the HTML must start with "webedit-ai-" to avoid conflicts.
-7. If the user wants to "return", "restore", or "un-hide" something, look at "activeSpecs" in the context, find the relevant spec ID, and return {"action": "undo", "targetId": "..."}.
-8. If the prompt is a general question about the page text, return {"action": "chat", "content": "..."}.
-9. If the user asks to "restore header", "bring back header", "unhide nav", or if the user complains about missing UI elements and no specific undo target is found, return {"action": "reveal"}.
+7. INTERACTIVITY: For "toggles", "expands", or "accordions", use CSS-only techniques (e.g., the checkbox hack with <input type="checkbox"> + <label> and the :checked pseudo-class in the "css" field). You cannot use Javascript.
+8. If the user wants to "return", "restore", or "un-hide" something, look at "activeSpecs" in the context, find the relevant spec ID, and return {"action": "undo", "targetId": "..."}.
+9. If the prompt is a general question about the page text, return {"action": "chat", "content": "..."}.
+10. If the user asks to "restore header", "bring back header", "unhide nav", or if the user complains about missing UI elements and no specific undo target is found, return {"action": "reveal"}.
 
 Example responses:
 {"action":"hide","selector":"#cookie-banner"}
@@ -166,12 +172,15 @@ if (typeof denoServe !== "function") {
     }
 
     const parsedResponse = safeJsonParse(raw);
-    const content = extractCohereReply(parsedResponse);
+    let content = extractCohereReply(parsedResponse);
 
     if (!content) {
       console.error("[ai-generate-feature-spec] Empty response from Cohere");
       return buildJsonResponse({ ok: false, error: "Empty response from Cohere" }, 500);
     }
+
+    // Strip markdown code fences if the AI included them
+    content = content.replace(/^```json\s*/i, "").replace(/\s*```$/i, "").trim();
 
     try {
       spec = JSON.parse(content);
