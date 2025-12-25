@@ -1164,6 +1164,70 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok });
       return true;
     }
+    if (type === "APPLY_FEATURE_SPEC") {
+      (async () => {
+        try {
+          const exec = window.FeatureSpecExecutor;
+          if (!exec || typeof exec.applyFeatureSpec !== "function") {
+            sendResponse({ ok: false, error: "FeatureSpec executor not found" });
+            return;
+          }
+          const result = await exec.applyFeatureSpec(payload.spec);
+          sendResponse(result);
+        } catch (error) {
+          sendResponse({ ok: false, error: error.message });
+        }
+      })();
+      return true;
+    }
+    if (type === "UNDO_LAST") {
+      (async () => {
+        try {
+          const exec = window.FeatureSpecExecutor;
+          if (!exec || typeof exec.undoLast !== "function") {
+            sendResponse({ ok: false, error: "Undo not available" });
+            return;
+          }
+          const result = await exec.undoLast();
+          sendResponse(result);
+        } catch (error) {
+          sendResponse({ ok: false, error: error.message });
+        }
+      })();
+      return true;
+    }
+    if (type === "REDO_LAST") {
+      (async () => {
+        try {
+          const exec = window.FeatureSpecExecutor;
+          if (!exec || typeof exec.redoLast !== "function") {
+            sendResponse({ ok: false, error: "Redo not available" });
+            return;
+          }
+          const result = await exec.redoLast();
+          sendResponse(result);
+        } catch (error) {
+          sendResponse({ ok: false, error: error.message });
+        }
+      })();
+      return true;
+    }
+    if (type === "UNDO_BY_ID") {
+      (async () => {
+        try {
+          const exec = window.FeatureSpecExecutor;
+          if (!exec || typeof exec.undoById !== "function") {
+            sendResponse({ ok: false, error: "UndoById not available" });
+            return;
+          }
+          const result = await exec.undoById(payload.targetId);
+          sendResponse(result);
+        } catch (error) {
+          sendResponse({ ok: false, error: error.message });
+        }
+      })();
+      return true;
+    }
     if (type === "GET_PAGE_CONTEXT") {
       // Prefer FeatureSpecExecutor page context when available (it provides a richer outline),
       // but always include plain text for the AI endpoints.

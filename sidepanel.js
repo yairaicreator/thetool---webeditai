@@ -57,6 +57,37 @@
   let addFeatureDescription = "";
   let lastPickedTarget = null; // { selector, description }
 
+  // References shown after picking an element should be ephemeral.
+  const PICK_REFERENCE_TTL_MS = 8000;
+  let pickReferenceDismissTimeout = null;
+
+  function clearPickReferences(options = {}) {
+    const shouldPersist = options.persist === true;
+    if (pickReferenceDismissTimeout) {
+      clearTimeout(pickReferenceDismissTimeout);
+      pickReferenceDismissTimeout = null;
+    }
+    const beforeCount = chatMessages.length;
+    chatMessages = chatMessages.filter((m) => m.type !== "reference");
+    if (chatMessages.length !== beforeCount) {
+      renderChatMessages();
+      if (shouldPersist) {
+        saveChatHistory();
+      }
+    }
+  }
+
+  function showPickReference(description) {
+    if (!description) return;
+    // Remove old references immediately so only one shows at a time.
+    clearPickReferences({ persist: false });
+    addChatMessage("reference", `Reference: ${description}`);
+    // Auto-dismiss so reference never lingers.
+    pickReferenceDismissTimeout = setTimeout(() => {
+      clearPickReferences({ persist: true });
+    }, PICK_REFERENCE_TTL_MS);
+  }
+
   function escapeHtml(str = "") {
     return String(str)
       .replace(/&/g, "&amp;")
@@ -378,6 +409,7 @@
   function loadSession(sessionId) {
     if (!currentUser?.id) return;
     closeActiveHistoryRenameForm();
+    clearPickReferences({ persist: false });
     const historyKey = getHistoryStorageKey();
     const sessionKey = getSessionStorageKey();
     if (!historyKey || !sessionKey) return;
@@ -398,6 +430,7 @@
     if (!currentUser?.id) return;
     currentSessionId = Date.now().toString();
     chatMessages = [];
+    clearPickReferences({ persist: false });
     renderChatMessages();
     saveChatHistory();
   }
@@ -656,7 +689,28 @@
     if (!text) return;
     els.chatInput.value = "";
 
-    // Add Feature flow in side panel
+    const lower = text.toLowerCase();
+    if (lower === "undo" || lower === "/undo") {
+      addChatMessage("user", text);
+      const thinking = addChatMessage("assistant", "Undoing last change...");
+      const resp = await sendToActiveTab({ type: "UNDO_LAST" });
+      thinking.content = resp?.response?.ok ? "✅ Undid the last change." : `❌ ${resp?.response?.error || "Undo failed"}`;
+      renderChatMessages();
+      saveChatHistory();
+      return;
+    }
+
+    if (lower === "redo" || lower === "/redo") {
+      addChatMessage("user", text);
+      const thinking = addChatMessage("assistant", "Redoing last change...");
+      const resp = await sendToActiveTab({ type: "REDO_LAST" });
+      thinking.content = resp?.response?.ok ? "✅ Redid the last change." : `❌ ${resp?.response?.error || "Redo failed"}`;
+      renderChatMessages();
+      saveChatHistory();
+      return;
+    }
+
+    // Add Feature flow step handling
     if (isAddFeatureMode) {
       if (!lastPickedTarget?.selector) {
         addChatMessage("system", "Pick an element first.");
@@ -664,30 +718,29 @@
       }
 
       addChatMessage("user", text);
-      if (pendingAddFeatureStep === "idle") {
-        pendingAddFeatureStep = "name";
-      }
-
-      if (pendingAddFeatureStep === "name") {
+      if (pendingAddFeatureStep === "idle" || pendingAddFeatureStep === "name") {
         addFeatureName = text;
         pendingAddFeatureStep = "description";
         addChatMessage("system", "Describe the edit:");
-      return;
-    }
+        return;
+      }
 
       if (pendingAddFeatureStep === "description") {
         addFeatureDescription = text;
         pendingAddFeatureStep = "idle";
+        isAddFeatureMode = false; // Reset mode before AI call
 
         const thinking = addChatMessage("assistant", "Generating your feature...");
         try {
           const pageContextResp = await sendToActiveTab({ type: "GET_PAGE_CONTEXT" });
           const pageContext = pageContextResp?.response?.pageContext || null;
 
-          const prompt = `${addFeatureName}\n\n${addFeatureDescription}`;
+          const prompt = `Create an ADD feature near this target element.\n\nTarget selector: ${lastPickedTarget.selector}\nEdit name: ${addFeatureName}\nUser request: ${addFeatureDescription}`;
           const context = {
-            pageContext,
-            target: lastPickedTarget
+            ...pageContext,
+            target: lastPickedTarget,
+            editName: addFeatureName,
+            requestedAction: "add"
           };
 
           const aiResp = window.SupabaseClient?.generateFeatureSpec
@@ -695,65 +748,124 @@
             : null;
 
           const spec = aiResp?.ok ? aiResp.spec : null;
-          if (spec?.action === "add" && typeof spec.html === "string" && spec.html.trim()) {
-            const addResp = await sendToActiveTab({
-              type: "ADD_FEATURE_CARD",
-              selector: spec.targetSelector || lastPickedTarget.selector,
-              position: spec.position || "after",
-              name: addFeatureName,
-              description: addFeatureDescription,
-              html: spec.html,
-              css: spec.css || ""
+          if (spec) {
+            // Apply via FeatureSpecExecutor
+            const applyResp = await sendToActiveTab({
+              type: "APPLY_FEATURE_SPEC",
+              spec: {
+                ...spec,
+                action: "add",
+                targetSelector: spec.targetSelector || lastPickedTarget.selector,
+                selector: spec.selector || spec.targetSelector || lastPickedTarget.selector
+              }
             });
-            thinking.content = "✅ Feature generated and added.";
+
+            if (applyResp?.response?.ok) {
+              thinking.content = `✅ "${addFeatureName}" added successfully!`;
+            } else {
+              throw new Error(applyResp?.response?.error || "Failed to apply spec");
+            }
           } else {
-            const addResp = await sendToActiveTab({
-              type: "ADD_FEATURE_CARD",
-              selector: lastPickedTarget.selector,
-              name: addFeatureName,
-              description: addFeatureDescription
-            });
-            thinking.content = aiResp?.error
-              ? `✅ Added a basic feature card (AI error: ${aiResp.error}).`
-              : "✅ Added a basic feature card (AI spec unavailable).";
+            throw new Error(aiResp?.error || "AI spec unavailable");
           }
         } catch (e) {
-          const addResp = await sendToActiveTab({
-            type: "ADD_FEATURE_CARD",
-            selector: lastPickedTarget.selector,
-            name: addFeatureName,
-            description: addFeatureDescription
-          });
-          thinking.content = `✅ Added a basic feature card (AI error: ${e?.message || String(e)}).`;
+          // If AI spec generation fails, fall back to a minimal "real feature" (HTML/CSS)
+          // rather than the legacy name/description card UI.
+          console.warn("[Add Feature] AI Spec failed; falling back to basic HTML/CSS add:", e);
+
+          const safeTitle = String(addFeatureName || "New feature");
+          const safeBody = String(addFeatureDescription || "Added by WebEdit AI.");
+
+          const fallbackSpec = {
+            action: "add",
+            targetSelector: lastPickedTarget.selector,
+            position: "after",
+            description: safeTitle,
+            content: safeBody,
+            html: `
+<section class="webedit-ai-card" role="region" aria-label="${safeTitle.replace(/"/g, "&quot;")}">
+  <h3 class="webedit-ai-card__title">${safeTitle.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</h3>
+  <p class="webedit-ai-card__body">${safeBody.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>
+</section>
+            `.trim(),
+            css: `
+.webedit-ai-card{
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  background: #f8fafc;
+  border: 1px solid rgba(15,23,42,0.14);
+  border-radius: 12px;
+  padding: 12px 14px;
+  box-shadow: 0 10px 24px rgba(15,23,42,0.08);
+  max-width: 420px;
+}
+.webedit-ai-card__title{
+  margin: 0 0 6px 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.webedit-ai-card__body{
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: rgba(15,23,42,0.82);
+}
+            `.trim()
+          };
+
+          const applyResp = await sendToActiveTab({ type: "APPLY_FEATURE_SPEC", spec: fallbackSpec });
+          if (applyResp?.response?.ok) {
+            thinking.content = `✅ "${addFeatureName}" added successfully!`;
+          } else {
+            throw new Error(applyResp?.response?.error || "Failed to apply fallback feature");
+          }
         }
 
-        addChatMessage("system", `✅ "${addFeatureName}" added.`);
-        isAddFeatureMode = false;
         addFeatureName = "";
         addFeatureDescription = "";
+        renderChatMessages();
+        saveChatHistory();
         return;
       }
     }
 
-    // General chat → Supabase Edge Function
+    // General chat / Conversation / Edit Commands
     addChatMessage("user", text);
-    const thinking = addChatMessage("assistant", "Assistant is thinking...");
+    const thinking = addChatMessage("assistant", "🤖 Thinking...");
 
     try {
-      const pageContext = await sendToActiveTab({ type: "GET_PAGE_CONTEXT" });
-      const result = await (window.SupabaseClient?.callPageChat
-        ? window.SupabaseClient.callPageChat(text, pageContext?.pageContext || null, [])
-        : window.callPageChat?.(text, pageContext?.pageContext || null, []));
+      const pageContextResp = await sendToActiveTab({ type: "GET_PAGE_CONTEXT" });
+      const pageContext = pageContextResp?.response?.pageContext || null;
 
-      if (result?.ok && typeof result.reply === "string" && result.reply.trim()) {
-        thinking.content = result.reply.trim();
-      } else if (result?.error) {
-        thinking.content = `There was a problem talking to the AI: ${result.error}`;
+      // Use generateFeatureSpec for everything - it handles both edits and chat now.
+      const aiResp = window.SupabaseClient?.generateFeatureSpec
+        ? await window.SupabaseClient.generateFeatureSpec(text, pageContext)
+        : null;
+
+      if (!aiResp?.ok) {
+        thinking.content = `❌ ${aiResp?.error || "AI is not available right now."}`;
       } else {
-        thinking.content = "AI chat is not available right now.";
+        const spec = aiResp.spec;
+        
+        if (spec.action === "chat") {
+          thinking.content = spec.content || "I couldn't generate a response.";
+        } else if (spec.action === "undo") {
+          thinking.content = "Reverting that change for you...";
+          const undoResp = await sendToActiveTab({ type: "UNDO_BY_ID", targetId: spec.targetId });
+          thinking.content = undoResp?.response?.ok ? "✅ Done! I've restored that element." : `❌ Sorry, I couldn't undo that: ${undoResp?.response?.error || "unknown error"}`;
+        } else {
+          // It's an edit command (hide, customize, add, text)
+          thinking.content = "Processing your request...";
+          const applyResp = await sendToActiveTab({ type: "APPLY_FEATURE_SPEC", spec });
+          if (applyResp?.response?.ok) {
+            thinking.content = `✅ Done! I've ${spec.action === 'hide' ? 'hidden' : 'updated'} that for you.`;
+          } else {
+            thinking.content = `❌ I tried to do that, but: ${applyResp?.response?.error || "it didn't work"}`;
+          }
+        }
       }
     } catch (e) {
-      thinking.content = `There was a problem talking to the AI: ${e?.message || String(e)}`;
+      thinking.content = `❌ Something went wrong: ${e?.message || String(e)}`;
     }
 
     renderChatMessages();
@@ -773,7 +885,7 @@
     if (message?.type === "WEBEDIT_ELEMENT_PICKED") {
       lastPickedTarget = message.payload || null;
       if (lastPickedTarget?.description) {
-        addChatMessage("reference", `Reference: ${lastPickedTarget.description}`);
+        showPickReference(lastPickedTarget.description);
       }
       hideModeIndicator();
       if (isAddFeatureMode) {

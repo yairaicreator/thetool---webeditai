@@ -368,7 +368,17 @@ async function persistPopLast() {
 async function undoLast() {
   const change = undoStack.pop();
   if (!change) return { ok: false, error: "Nothing to undo" };
+  return undoEntry(change);
+}
 
+async function undoById(id) {
+  const index = undoStack.findIndex((c) => c.id === id);
+  if (index === -1) return { ok: false, error: `Change not found: ${id}` };
+  const [change] = undoStack.splice(index, 1);
+  return undoEntry(change);
+}
+
+async function undoEntry(change) {
   try {
     const u = change.undo || {};
     if (u.action === "hide") {
@@ -429,7 +439,12 @@ async function undoLast() {
     }
 
     redoStack.push(change);
-    await persistPopLast();
+    // Remove from persistent storage too
+    const scopeKey = getScopeKey();
+    const list = await loadPersistedSpecs(scopeKey);
+    const newList = list.filter((item) => item.spec?.id !== change.spec?.id && item.id !== change.id);
+    await savePersistedSpecs(scopeKey, newList);
+
     return { ok: true, undone: change };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -521,6 +536,11 @@ function getPageContext() {
     url: window.location.href,
     title: document.title || "",
     text: getPagePlainText(),
+    activeSpecs: undoStack.map(c => ({
+      id: c.id,
+      spec: c.spec,
+      timestamp: c.timestamp
+    })),
     outline: {
       regions,
       notable
@@ -532,6 +552,7 @@ if (typeof window !== "undefined") {
   window.FeatureSpecExecutor = {
     applyFeatureSpec,
     undoLast,
+    undoById,
     redoLast,
     restoreAndReplay,
     getPageContext,

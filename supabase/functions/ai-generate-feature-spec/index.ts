@@ -14,9 +14,10 @@ const COHERE_CHAT_URL = "https://api.cohere.com/v1/chat";
 const COHERE_MODEL = "command-a-vision-07-2025";
 
 interface FeatureSpec {
-  action: "hide" | "customize" | "add" | "text";
+  action: "hide" | "customize" | "add" | "text" | "chat" | "undo";
   selector?: string;
   targetSelector?: string;
+  targetId?: string;
   description?: string;
   styles?: {
     backgroundColor?: string;
@@ -30,13 +31,27 @@ interface FeatureSpec {
   css?: string;
 }
 
+function escapeHtml(value: unknown): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function asNonEmptyString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
 const SYSTEM_PROMPT = `You are an AI assistant that generates structured feature specifications for web editing actions.
 
 Given a user prompt and page context, you must return ONLY valid JSON matching this exact schema:
 
 {
-  "action": "hide" | "customize" | "add" | "text",
+  "action": "hide" | "customize" | "add" | "text" | "chat" | "undo",
   "selector": "CSS selector for target element (required if action is hide/customize/text)",
+  "targetId": "ID of a previously applied FeatureSpec to undo (required if action is undo)",
   "description": "Human-readable description of the element",
   "styles": {
     "backgroundColor": "CSS color value (hex, rgb, or named)",
@@ -44,7 +59,7 @@ Given a user prompt and page context, you must return ONLY valid JSON matching t
     "fontSize": "CSS font size with unit (e.g., '16px', '1.2em')",
     ...other CSS properties as key-value pairs
   },
-  "content": "Text content to add/replace (required if action is add/text)",
+  "content": "Text content to add/replace/chat (required if action is add/text/chat)",
   "position": "before" | "after" | "inside" | "replace",
   "targetSelector": "CSS selector for reference element (required if action is add with position)",
   "html": "For add actions ONLY: HTML snippet to insert. Use semantic markup and prefix custom classes with 'webedit-ai-'. Omit this field for other actions.",
@@ -52,24 +67,27 @@ Given a user prompt and page context, you must return ONLY valid JSON matching t
 }
 
 Action types:
-- "hide": Hide/remove an element (only needs selector)
+- "hide": Hide/remove an element (needs selector)
 - "customize": Modify styles of an element (needs selector and styles)
 - "add": Insert new content (needs content, position, and optionally targetSelector)
 - "text": Change text content (needs selector and content)
+- "chat": General conversation or answer about the page (needs content). Use this for non-edit requests.
+- "undo": Revert a previously applied edit (needs targetId from activeSpecs in context).
 
 Rules:
-1. Return ONLY valid JSON, no markdown, no explanations
-2. Include only fields that are relevant to the action
-3. CSS selectors should be specific and stable
-4. If context is provided, use it to generate more accurate selectors
+1. Return ONLY valid JSON, no markdown, no explanations.
+2. Include only fields that are relevant to the action.
+3. CSS selectors should be specific and stable.
+4. If context is provided, use it to generate more accurate selectors or to answer questions about the page content.
 5. For add actions, the HTML should represent the requested feature (buttons, cards, links, etc.) using accessible markup.
 6. Classes inside the HTML must start with "webedit-ai-" to avoid conflicts.
-7. If the prompt is unclear, return a minimal spec with the most likely action
+7. If the user wants to "return", "restore", or "un-hide" something, look at "activeSpecs" in the context, find the relevant spec ID, and return {"action": "undo", "targetId": "..."}.
+8. If the prompt is a general question about the page text, return {"action": "chat", "content": "..."}.
 
 Example responses:
 {"action":"hide","selector":"#cookie-banner"}
-{"action":"customize","selector":".header","styles":{"backgroundColor":"#ff0000","color":"#ffffff"}}
-{"action":"add","content":"New paragraph text","position":"after","targetSelector":".main-content","html":"<div class=\\"webedit-ai-note\\">New paragraph text</div>","css":".webedit-ai-note{padding:12px;border-radius:8px;background:#f1f5f9;}"}`
+{"action":"chat","content":"The main article on this page discusses the impact of AI on web development."}
+{"action":"undo","targetId":"chg-1735182000000-abc12345"}`;
 
 const denoServe = (globalThis as DenoLikeGlobal).Deno?.serve;
 
@@ -164,23 +182,82 @@ if (typeof denoServe !== "function") {
     }
 
     // Validate spec structure
-    if (!spec.action || !["hide", "customize", "add", "text"].includes(spec.action)) {
+    const validActions = ["hide", "customize", "add", "text", "chat", "undo"];
+    if (!spec.action || !validActions.includes(spec.action)) {
       return buildJsonResponse(
         {
           ok: false,
-          error: `Invalid action: ${spec.action}. Must be one of: hide, customize, add, text`,
+          error: `Invalid action: ${spec.action}. Must be one of: ${validActions.join(", ")}`,
         },
         500,
       );
     }
 
     if (spec.action === "add") {
+      // Ensure html/css exist so the client can render something useful.
+      // If the model omitted them, synthesize a minimal card instead of failing.
+      const ctx = (context && typeof context === "object")
+        ? (context as Record<string, unknown>)
+        : {};
+
+      const title =
+        asNonEmptyString(spec.description) ||
+        asNonEmptyString(ctx.editName) ||
+        "New feature";
+
+      // Prefer spec.content; fall back to a user-provided request when present; then prompt.
+      const body =
+        asNonEmptyString(spec.content) ||
+        asNonEmptyString(ctx.userRequest) ||
+        asNonEmptyString(ctx.requestedAction) ||
+        asNonEmptyString(prompt);
+
       if (typeof spec.html !== "string" || !spec.html.trim()) {
-        return buildJsonResponse({ ok: false, error: "Invalid spec: missing html" }, 500);
+        spec.html = `
+<section class="webedit-ai-card" role="region" aria-label="${escapeHtml(title)}">
+  <h3 class="webedit-ai-card__title">${escapeHtml(title)}</h3>
+  <p class="webedit-ai-card__body">${escapeHtml(body || "Added by WebEdit AI.")}</p>
+</section>
+        `.trim();
       }
+
       if (typeof spec.css !== "string") {
-        return buildJsonResponse({ ok: false, error: "Invalid spec: missing css" }, 500);
+        spec.css = "";
       }
+
+      if (!spec.css.trim()) {
+        spec.css = `
+.webedit-ai-card{
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  background: #f8fafc;
+  border: 1px solid rgba(15,23,42,0.14);
+  border-radius: 12px;
+  padding: 12px 14px;
+  box-shadow: 0 10px 24px rgba(15,23,42,0.08);
+  max-width: 420px;
+}
+.webedit-ai-card__title{
+  margin: 0 0 6px 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.webedit-ai-card__body{
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: rgba(15,23,42,0.82);
+}
+        `.trim();
+      }
+    }
+
+    if (spec.action === "undo" && !spec.targetId) {
+      return buildJsonResponse({ ok: false, error: "Invalid spec: undo requires targetId" }, 500);
+    }
+
+    if (spec.action === "chat" && !spec.content) {
+      return buildJsonResponse({ ok: false, error: "Invalid spec: chat requires content" }, 500);
     }
 
     // Return success response
@@ -250,4 +327,3 @@ function buildJsonResponse(body: unknown, status = 200) {
     },
   });
 }
-
