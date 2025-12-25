@@ -640,7 +640,9 @@ function getPageContext() {
   };
   const summarizeEl = (el) => {
     const rect = el.getBoundingClientRect();
-    const classList = Array.from(el.classList || []).slice(0, 5);
+    const classList = Array.from(el.classList || [])
+      .filter(c => c.length < 50) // Filter out massive Tailwind/utility chains
+      .slice(0, 5);
     const text = (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 80);
     const role = el.getAttribute ? (el.getAttribute("role") || "") : "";
     const ariaLabel = el.getAttribute ? (el.getAttribute("aria-label") || "") : "";

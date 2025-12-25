@@ -126,6 +126,7 @@ async function generateFeatureSpec(prompt, context = null) {
       json = text ? JSON.parse(text) : null;
     } catch (parseError) {
       console.error('[SupabaseClient] Failed to parse ai-generate-feature-spec response:', parseError);
+      console.log('[SupabaseClient] Raw invalid response:', text.slice(0, 1000));
     }
 
     if (!json) {

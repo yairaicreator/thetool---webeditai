@@ -191,8 +191,24 @@ if (typeof denoServe !== "function") {
       return buildJsonResponse({ ok: false, error: "Empty response from Cohere" }, 500);
     }
 
-    // Strip markdown code fences if the AI included them
-    content = content.replace(/^```json\s*/i, "").replace(/\s*```$/i, "").trim();
+    // Extract JSON from markdown code fences if present
+    // Matches 3+ backticks, captures length in group 1, matches content, matches closing group 1.
+    const codeBlockMatch = content.match(/(`{3,})(?:json)?\s*([\s\S]*?)\s*\1/i);
+    if (codeBlockMatch) {
+      content = codeBlockMatch[2].trim();
+    } else {
+      // Fallback: just strip leading/trailing fences if they exist loosely
+      content = content.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+    }
+
+    // Fallback: If content doesn't look like JSON (e.g. chatty preamble), extract from first '{' to last '}'
+    if (!content.startsWith("{") && content.includes("{")) {
+      const start = content.indexOf("{");
+      const end = content.lastIndexOf("}");
+      if (end > start) {
+        content = content.substring(start, end + 1);
+      }
+    }
 
     try {
       spec = JSON.parse(content);
@@ -205,7 +221,7 @@ if (typeof denoServe !== "function") {
     }
 
     // Validate spec structure
-    const validActions = ["hide", "customize", "add", "text", "chat", "undo"];
+    const validActions = ["hide", "customize", "add", "text", "chat", "undo", "reveal"];
     if (!spec.action || !validActions.includes(spec.action)) {
       return buildJsonResponse(
         {
