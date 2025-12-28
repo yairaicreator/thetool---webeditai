@@ -103,6 +103,11 @@ async function dbRequest(endpoint, method, body = null) {
   const auth = await getAuth();
   if (!client || !auth) throw new Error('Not authenticated');
 
+  const safePreview = body
+    ? { keys: Object.keys(body), bytes: (() => { try { return JSON.stringify(body).length; } catch (_) { return -1; } })() }
+    : null;
+  console.log('[SaveEdit] DB request', { method, endpoint, body: safePreview });
+
   const headers = {
     'Content-Type': 'application/json',
     'apikey': client.anonKey,
@@ -118,10 +123,12 @@ async function dbRequest(endpoint, method, body = null) {
 
   if (!response.ok) {
     const text = await response.text();
+    console.error('[SaveEdit] DB request failed', { endpoint, status: response.status, body: text });
     throw new Error(`Supabase error ${response.status}: ${text}`);
   }
 
   const json = await response.json();
+  console.log('[SaveEdit] DB response', { endpoint, ok: true });
   return json && json.length > 0 ? json[0] : null;
 }
 
@@ -471,16 +478,20 @@ function buildEditMetadata(options = {}) {
  * Uses full_url as the unique key (conceptually)
  */
 async function getOrCreateWebsite() {
+  // Normalize URL to improve SPA persistence:
+  // - ignore hash by default (Skool uses /academy# which should map to /academy)
+  // - ignore search for now (can be added back if needed)
   const fullUrl = window.location.href;
   const title = document.title || 'Untitled Page';
   let origin = window.location.origin || '';
   let path = window.location.pathname || '/';
+  let normalizedFullUrl = `${origin}${path}`;
 
   try {
     const urlObj = new URL(fullUrl);
     origin = urlObj.origin || origin;
-    const pathPart = `${urlObj.pathname || '/'}${urlObj.search || ''}${urlObj.hash || ''}`;
-    path = pathPart || '/';
+    path = (urlObj.pathname || '/') || '/';
+    normalizedFullUrl = `${origin}${path}`;
   } catch (error) {
     console.warn('[SaveEdit] Failed to parse URL, falling back to location parts:', error);
   }
@@ -489,24 +500,35 @@ async function getOrCreateWebsite() {
   if (!auth) return null;
 
   try {
-    // 1. Try to SELECT existing website by full_url
-    // Note: In a real app, we'd likely use origin or normalized URL. 
-    // For MVP, we query exact match on full_url for this user.
-    const query = new URLSearchParams({
-      full_url: `eq.${fullUrl}`,
-      select: 'id'
-    });
+    console.log('[SaveEdit] Website key:', { origin, path, normalizedFullUrl, fullUrl });
 
-    const existing = await dbRequest(`/rest/v1/websites?${query.toString()}`, 'GET');
+    // 1) Prefer SELECT by origin+path (stable across hash changes)
+    const byOriginPath = new URLSearchParams({
+      origin: `eq.${origin}`,
+      path: `eq.${path}`,
+      select: 'id,full_url,origin,path'
+    });
+    const existingByOriginPath = await dbRequest(`/rest/v1/websites?${byOriginPath.toString()}`, 'GET').catch(() => null);
+    if (existingByOriginPath) {
+      console.log('[SaveEdit] ✅ Found existing website (origin+path):', existingByOriginPath.id);
+      return existingByOriginPath;
+    }
+
+    // 2) Back-compat: try SELECT existing website by full_url (older rows)
+    const byFullUrl = new URLSearchParams({
+      full_url: `eq.${fullUrl}`,
+      select: 'id,full_url,origin,path'
+    });
+    const existing = await dbRequest(`/rest/v1/websites?${byFullUrl.toString()}`, 'GET').catch(() => null);
     if (existing) {
       console.log('[SaveEdit] ✅ Found existing website:', existing.id);
       return existing;
     }
 
-    // 2. INSERT if not found
+    // 3. INSERT if not found
     console.log('[SaveEdit] Creating new website row...');
     const newSite = await dbRequest('/rest/v1/websites', 'POST', {
-      full_url: fullUrl,
+      full_url: normalizedFullUrl,
       origin,
       path,
       title,
@@ -577,10 +599,11 @@ async function saveEditToSupabase(params) {
     const savedEdit = await dbRequest('/rest/v1/edits', 'POST', editRow);
 
     console.log('[SaveEdit] ✅ Edit saved to Supabase:', savedEdit);
+    return { ok: true, edit: savedEdit };
 
   } catch (error) {
     console.error('[SaveEdit] Failed to save edit:', error);
-    // Optional: Show non-intrusive UI message here if desired
+    return { ok: false, error: error?.message || String(error) };
   }
 }
 

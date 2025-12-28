@@ -6,6 +6,9 @@ const INSERT_MARKER_ATTR = "data-webedit-ai-insert-id";
 const HIDE_MARKER_ATTR = "data-webedit-ai-hidden-id";
 const STYLE_MARKER_ATTR = "data-webedit-ai-style-id";
 const BOUND_MARKER_ATTR = "data-webedit-ai-bound";
+const TOGGLE_STATE_PREFIX = "webeditAiToggleState::";
+const behaviorRegistry = new Map(); // markerId -> behavior
+let delegatedBehaviorHandlerInstalled = false;
 
 function isExtensionContextValid() {
   try {
@@ -25,6 +28,10 @@ function getPageKey() {
 
 function uuid() {
   return `chg-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function getToggleStateKey(scopeKey, markerId) {
+  return `${TOGGLE_STATE_PREFIX}${scopeKey}::${markerId}`;
 }
 
 function safeQueryAll(selector) {
@@ -159,8 +166,14 @@ function bindBehaviorForMarker(spec, markerId) {
   const behavior = spec && spec.behavior ? spec.behavior : null;
   if (!behavior || !markerId) return;
 
+  // Register behavior for delegated handlers (survives trigger remounts).
+  behaviorRegistry.set(String(markerId), behavior);
+  ensureDelegatedBehaviorHandlers();
+
   const triggerAttr = behavior.triggerAttr || "data-webedit-ai-action";
   const triggerValue = behavior.triggerValue || "toggle";
+  const scopeKey = getScopeKey();
+  const stateKey = getToggleStateKey(scopeKey, markerId);
 
   // Find triggers inside inserted nodes only.
   const containers = safeQueryAll(`[${INSERT_MARKER_ATTR}="${CSS.escape(markerId)}"]`);
@@ -175,6 +188,37 @@ function bindBehaviorForMarker(spec, markerId) {
   });
 
   if (triggers.length === 0) return;
+
+  // Basic layout constraint: if we inserted into a header/nav, pin the trigger to top-right.
+  // This avoids overlap with chat inputs on some SPAs where the header is a flex row.
+  try {
+    const headerish = safeQueryAll("header, nav, [role='banner'], [role='navigation']");
+    const isInHeader = containers.some((c) => headerish.some((h) => h.contains && h.contains(c)));
+    if (isInHeader) {
+      triggers.forEach((t) => {
+        if (!(t instanceof Element)) return;
+        // Only apply if not already positioned by AI CSS.
+        const cs = window.getComputedStyle(t);
+        if (cs.position === "static") {
+          t.style.setProperty("position", "absolute", "important");
+          t.style.setProperty("top", "8px", "important");
+          t.style.setProperty("right", "8px", "important");
+          t.style.setProperty("z-index", "2147483647", "important");
+        }
+      });
+      // Ensure a positioning context exists.
+      containers.forEach((c) => {
+        if (!(c instanceof Element)) return;
+        const parent = c.parentElement;
+        if (!parent) return;
+        const ps = window.getComputedStyle(parent);
+        if (ps.position === "static") {
+          parent.style.setProperty("position", "relative", "important");
+        }
+      });
+      console.log("[WebEdit AI] Applied header layout constraints for behavior trigger", { markerId });
+    }
+  } catch (_) {}
 
   const updateTriggerLabel = (trigger, isExpanded) => {
     const expandedLabel = (behavior.expandedLabel || "").trim();
@@ -192,52 +236,6 @@ function bindBehaviorForMarker(spec, markerId) {
     return pickBestElement(nodes);
   };
 
-  const toggleClass = (trigger) => {
-    const target = resolveTarget();
-    if (!target) return { ok: false, error: `Could not find target for selector: ${behavior.targetSelector}` };
-    const className = behavior.className;
-    if (!className) return { ok: false, error: "Missing behavior.className" };
-    const next = !target.classList.contains(className);
-    target.classList.toggle(className, next);
-    updateTriggerLabel(trigger, next);
-    return { ok: true };
-  };
-
-  const toggleStyles = (trigger) => {
-    const target = resolveTarget();
-    if (!target) return { ok: false, error: `Could not find target for selector: ${behavior.targetSelector}` };
-    const stylesOn = behavior.stylesOn || {};
-    const stylesOff = behavior.stylesOff || {};
-    const isOn = target.getAttribute("data-webedit-ai-style-state") === "on";
-    const nextOn = !isOn;
-    const chosen = nextOn ? stylesOn : stylesOff;
-
-    for (const [k, v] of Object.entries(chosen)) {
-      const prop = String(k || "").trim();
-      if (!prop) continue;
-      if (v) {
-        target.style.setProperty(prop, String(v), "important");
-      } else {
-        target.style.removeProperty(prop);
-      }
-    }
-    target.setAttribute("data-webedit-ai-style-state", nextOn ? "on" : "off");
-    updateTriggerLabel(trigger, nextOn);
-    return { ok: true };
-  };
-
-  const handlerFor = (trigger) => () => {
-    if (behavior.type === "toggleClass") {
-      const r = toggleClass(trigger);
-      if (!r.ok) console.warn("[WebEdit AI] behavior toggleClass failed:", r.error);
-      return;
-    }
-    if (behavior.type === "toggleStyles") {
-      const r = toggleStyles(trigger);
-      if (!r.ok) console.warn("[WebEdit AI] behavior toggleStyles failed:", r.error);
-    }
-  };
-
   triggers.forEach((trigger) => {
     if (!(trigger instanceof Element)) return;
     if (trigger.getAttribute(BOUND_MARKER_ATTR) === "1") return;
@@ -250,22 +248,120 @@ function bindBehaviorForMarker(spec, markerId) {
       trigger.setAttribute("role", "button");
     }
 
-    const clickHandler = handlerFor(trigger);
-    trigger.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      clickHandler();
-    });
-    trigger.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        e.stopPropagation();
-        clickHandler();
-      }
-    });
+    // Restore state on reload (best-effort)
+    let stored = null;
+    try { stored = localStorage.getItem(stateKey); } catch (_) {}
+    const wantExpanded = stored === "1";
 
-    updateTriggerLabel(trigger, false);
+    if (wantExpanded) {
+      try {
+        if (behavior.type === "toggleClass" && behavior.className) {
+          const target = resolveTarget();
+          if (target) target.classList.add(behavior.className);
+        } else if (behavior.type === "toggleStyles") {
+          const target = resolveTarget();
+          if (target) {
+            target.setAttribute("data-webedit-ai-style-state", "on");
+            const stylesOn = behavior.stylesOn || {};
+            for (const [k, v] of Object.entries(stylesOn)) {
+              const prop = String(k || "").trim();
+              if (!prop) continue;
+              if (v) target.style.setProperty(prop, String(v), "important");
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    updateTriggerLabel(trigger, wantExpanded);
   });
+}
+
+function ensureDelegatedBehaviorHandlers() {
+  if (delegatedBehaviorHandlerInstalled) return;
+  delegatedBehaviorHandlerInstalled = true;
+
+  const handleTrigger = (triggerEl) => {
+    const container = triggerEl.closest(`[${INSERT_MARKER_ATTR}]`);
+    const markerId = container ? container.getAttribute(INSERT_MARKER_ATTR) : null;
+    if (!markerId) return;
+    const behavior = behaviorRegistry.get(String(markerId));
+    if (!behavior) return;
+
+    const scopeKey = getScopeKey();
+    const stateKey = getToggleStateKey(scopeKey, markerId);
+    const expandedLabel = (behavior.expandedLabel || "").trim();
+    const collapsedLabel = (behavior.collapsedLabel || "").trim();
+
+    const updateLabel = (isExpanded) => {
+      const label = isExpanded ? expandedLabel : collapsedLabel;
+      if (label) {
+        triggerEl.setAttribute("title", label);
+        triggerEl.setAttribute("aria-label", label);
+      }
+      triggerEl.setAttribute("aria-pressed", String(!!isExpanded));
+    };
+
+    const resolveTarget = () => {
+      const nodes = safeQueryAll(behavior.targetSelector);
+      return pickBestElement(nodes);
+    };
+
+    if (behavior.type === "toggleClass") {
+      const target = resolveTarget();
+      if (!target) return;
+      const className = behavior.className;
+      if (!className) return;
+      const next = !target.classList.contains(className);
+      target.classList.toggle(className, next);
+      updateLabel(next);
+      try { localStorage.setItem(stateKey, next ? "1" : "0"); } catch (_) {}
+      return;
+    }
+
+    if (behavior.type === "toggleStyles") {
+      const target = resolveTarget();
+      if (!target) return;
+      const stylesOn = behavior.stylesOn || {};
+      const stylesOff = behavior.stylesOff || {};
+      const isOn = target.getAttribute("data-webedit-ai-style-state") === "on";
+      const nextOn = !isOn;
+      const chosen = nextOn ? stylesOn : stylesOff;
+      for (const [k, v] of Object.entries(chosen)) {
+        const prop = String(k || "").trim();
+        if (!prop) continue;
+        if (v) {
+          target.style.setProperty(prop, String(v), "important");
+        } else {
+          target.style.removeProperty(prop);
+        }
+      }
+      target.setAttribute("data-webedit-ai-style-state", nextOn ? "on" : "off");
+      updateLabel(nextOn);
+      try { localStorage.setItem(stateKey, nextOn ? "1" : "0"); } catch (_) {}
+    }
+  };
+
+  document.addEventListener("click", (e) => {
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+    const trigger = target.closest('[data-webedit-ai-action="toggle"]');
+    if (!trigger) return;
+    e.preventDefault();
+    e.stopPropagation();
+    handleTrigger(trigger);
+  }, true);
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+    const trigger = target.closest('[data-webedit-ai-action="toggle"]');
+    if (!trigger) return;
+    e.preventDefault();
+    e.stopPropagation();
+    handleTrigger(trigger);
+  }, true);
 }
 
 function summarizeSpec(spec) {
@@ -312,7 +408,8 @@ const redoStack = [];
 
 async function applyFeatureSpec(spec, options = {}) {
   const replay = !!options.replay;
-  const id = uuid();
+  const skipPersist = !!options.skipPersist;
+  const id = options.id || spec._webeditId || spec.id || uuid();
   const timestamp = Date.now();
 
   try {
@@ -329,7 +426,7 @@ async function applyFeatureSpec(spec, options = {}) {
       el.setAttribute(HIDE_MARKER_ATTR, id);
 
       const applied = { id, spec, timestamp, undo: { action: "hide", selector: spec.selector, previousDisplay, previousPriority, previousAttr } };
-      if (!replay) {
+      if (!replay && !skipPersist) {
         undoStack.push(applied);
         redoStack.length = 0;
         await persistAppend(spec);
@@ -355,7 +452,7 @@ async function applyFeatureSpec(spec, options = {}) {
       }
 
       const applied = { id, spec, timestamp, undo: { action: "customize", selector: spec.selector, previous, previousPriority } };
-      if (!replay) {
+      if (!replay && !skipPersist) {
         undoStack.push(applied);
         redoStack.length = 0;
         await persistAppend(spec);
@@ -376,7 +473,7 @@ async function applyFeatureSpec(spec, options = {}) {
         const previousText = el.textContent;
         el.textContent = content;
         const applied = { id, spec, timestamp, undo: { action: "text-replace", selector: spec.selector, previousText } };
-        if (!replay) {
+        if (!replay && !skipPersist) {
           undoStack.push(applied);
           redoStack.length = 0;
           await persistAppend(spec);
@@ -400,7 +497,7 @@ async function applyFeatureSpec(spec, options = {}) {
       }
 
       const applied = { id, spec, timestamp, undo: { action: "text-insert", markerId: id } };
-      if (!replay) {
+      if (!replay && !skipPersist) {
         undoStack.push(applied);
         redoStack.length = 0;
         await persistAppend(spec);
@@ -413,6 +510,13 @@ async function applyFeatureSpec(spec, options = {}) {
       const nodes = safeQueryAll(targetSel);
       const el = pickBestElement(nodes);
       if (!el) return { ok: false, error: `Could not find target for selector: ${targetSel}` };
+
+      // Idempotency: if this spec has already inserted nodes for this id, do not insert again.
+      const already = safeQueryAll(`[${INSERT_MARKER_ATTR}="${CSS.escape(id)}"]`);
+      if (already.length > 0) {
+        try { bindBehaviorForMarker(spec, id); } catch (_) {}
+        return { ok: true, applied: { id, spec, timestamp, replayed: true } };
+      }
 
       const position = spec.position || "inside";
       const html = (spec.html || "").trim();
@@ -464,9 +568,11 @@ async function applyFeatureSpec(spec, options = {}) {
         }
       };
       if (!replay) {
-        undoStack.push(applied);
-        redoStack.length = 0;
-        await persistAppend(spec);
+        if (!skipPersist) {
+          undoStack.push(applied);
+          redoStack.length = 0;
+          await persistAppend(spec);
+        }
       }
       return { ok: true, applied };
     }
@@ -481,7 +587,8 @@ async function applyFeatureSpec(spec, options = {}) {
 async function persistAppend(spec) {
   const scopeKey = getScopeKey();
   const list = await loadPersistedSpecs(scopeKey);
-  list.push({ spec, timestamp: Date.now() });
+  const entryId = spec._webeditId || spec.id || uuid();
+  list.push({ id: entryId, spec: { ...spec, _webeditId: entryId }, timestamp: Date.now() });
   await savePersistedSpecs(scopeKey, list);
 }
 

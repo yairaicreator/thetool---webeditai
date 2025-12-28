@@ -29,6 +29,44 @@ let cloudRebuildTimer = null;
 let cloudRebuildInFlight = null;
 let cloudRuntimeStarted = false;
 let cloudPollTimer = null;
+let lastSpaKey = null; // origin+pathname
+let spaReapplyTimer = null;
+
+function getSpaKey() {
+  return `${location.origin}${location.pathname || "/"}`;
+}
+
+function scheduleSpaReapply(reason = "spa") {
+  try { if (spaReapplyTimer) clearTimeout(spaReapplyTimer); } catch (_) {}
+  spaReapplyTimer = setTimeout(() => {
+    console.log("[WebEdit] SPA reapply triggered:", reason);
+    // Re-run both cloud and local rehydration
+    rebuildCloudEdits(`spa:${reason}`).catch(() => {});
+    applySavedEditsForUser().catch(() => {});
+  }, 250);
+}
+
+function handleSpaUrlChange(reason = "url-change") {
+  const nextKey = getSpaKey();
+  if (nextKey === lastSpaKey) {
+    // Hash-only changes are ignored by default for persistence, but UI may remount.
+    scheduleSpaReapply(`hash-or-same-path:${reason}`);
+    return;
+  }
+
+  console.log("[WebEdit] SPA URL changed:", { from: lastSpaKey, to: nextKey, href: location.href, reason });
+  lastSpaKey = nextKey;
+
+  // Reset cached website context so the next rebuild uses the correct website row.
+  cloudWebsiteId = null;
+  cloudRealtimeKey = null;
+  try { cloudRealtime?.close?.(); } catch (_) {}
+  cloudRealtime = null;
+
+  // Re-init cloud runtime for the new route and reapply.
+  initCloudEditsRuntime().catch(() => {});
+  scheduleSpaReapply(reason);
+}
 
 function isProbablyWebEditAppPage() {
   try {
@@ -80,13 +118,32 @@ async function supabaseJsonGet(fullUrl, token, anonKey) {
 async function fetchWebsiteIdForCurrentUrl() {
   const auth = await getSupabaseAuth();
   if (!auth) return null;
-  const fullUrl = location.href;
-  const qs = new URLSearchParams({
-    select: "id",
-    full_url: `eq.${fullUrl}`
+
+  const origin = location.origin;
+  const path = location.pathname || "/";
+  const normalizedFullUrl = `${origin}${path}`;
+
+  // Prefer origin+path so SPA hash changes don't create new website rows.
+  const byOriginPath = new URLSearchParams({
+    select: "id,full_url,origin,path",
+    origin: `eq.${origin}`,
+    path: `eq.${path}`
   });
-  const url = `${auth.url}/rest/v1/websites?${qs.toString()}`;
-  const data = await supabaseJsonGet(url, auth.token, auth.anonKey);
+  const urlOriginPath = `${auth.url}/rest/v1/websites?${byOriginPath.toString()}`;
+  let data = await supabaseJsonGet(urlOriginPath, auth.token, auth.anonKey).catch(() => []);
+
+  // Back-compat fallback: older rows may have been keyed by full_url (including hash).
+  if (!Array.isArray(data) || data.length === 0) {
+    const fullUrl = location.href;
+    const qs = new URLSearchParams({
+      select: "id,full_url,origin,path",
+      full_url: `eq.${fullUrl}`
+    });
+    const urlFull = `${auth.url}/rest/v1/websites?${qs.toString()}`;
+    data = await supabaseJsonGet(urlFull, auth.token, auth.anonKey).catch(() => []);
+  }
+
+  console.log("[WebEdit] Website lookup:", { normalizedFullUrl, origin, path, found: Array.isArray(data) ? data.length : 0 });
   if (!Array.isArray(data) || data.length === 0) return null;
   return data[0]?.id || null;
 }
@@ -139,6 +196,8 @@ async function fetchActiveEditsForWebsite(websiteId) {
     return [];
   });
   if (!Array.isArray(data)) return [];
+
+  console.log("[WebEdit] Loaded active edits", { websiteId, count: data.length });
 
   // Extra safety: enforce user_id match client-side if present.
   return data
@@ -286,14 +345,37 @@ function applyHideEdit(editId, payload) {
   return count;
 }
 
-function applyAddEdit(editId, payload) {
+function cssEscapeSafe(value) {
+  try {
+    if (typeof CSS !== "undefined" && typeof CSS.escape === "function") return CSS.escape(value);
+  } catch (_) {}
+  return String(value || "").replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`);
+}
+
+async function applyAddEdit(editId, payload) {
   if (!editId || !payload || typeof payload !== "object") return false;
-  // Ensure we always wrap the inserted feature so cleanup is reliable.
+
+  // If this is a FeatureSpec-style add (html/css/behavior), apply via FeatureSpecExecutor so interactivity persists.
+  if (payload.action === "add" && window.FeatureSpecExecutor && typeof window.FeatureSpecExecutor.applyFeatureSpec === "function") {
+    const res = await window.FeatureSpecExecutor.applyFeatureSpec(payload, { replay: true, id: editId, skipPersist: true });
+    if (res?.ok) {
+      try {
+        const nodes = document.querySelectorAll(`[data-webedit-ai-insert-id="${cssEscapeSafe(editId)}"]`);
+        nodes.forEach((el) => {
+          try { el.setAttribute(WEBEDIT_CLOUD_EDIT_ATTR, editId); } catch (_) {}
+        });
+      } catch (_) {}
+      return true;
+    }
+    return false;
+  }
+
+  // Legacy: Ensure we always wrap the inserted feature so cleanup is reliable.
   const result = injectFeatureCard({ ...(payload || {}), editId });
   return !!result?.ok;
 }
 
-function applyActiveEditsInOrder(edits) {
+async function applyActiveEditsInOrder(edits) {
   if (!Array.isArray(edits) || edits.length === 0) return { applied: 0 };
   let applied = 0;
   for (const row of edits) {
@@ -304,7 +386,7 @@ function applyActiveEditsInOrder(edits) {
 
     try {
       if (type === "add") {
-        if (applyAddEdit(editId, payload)) applied += 1;
+        if (await applyAddEdit(editId, payload)) applied += 1;
       } else if (type === "remove" || type === "hide") {
         const n = applyHideEdit(editId, payload);
         if (n > 0) applied += 1;
@@ -337,7 +419,7 @@ async function rebuildCloudEdits(reason = "unknown") {
       const edits = await fetchActiveEditsForWebsite(websiteId);
       // stable order (server orders by created_at asc, but keep client-side fallback)
       edits.sort((a, b) => String(a?.created_at || "").localeCompare(String(b?.created_at || "")));
-      const result = applyActiveEditsInOrder(edits);
+      const result = await applyActiveEditsInOrder(edits);
       
       // Check for discrepancies (e.g. edits applied by legacy system but missing from Cloud)
       try {
@@ -534,6 +616,37 @@ try {
   });
 } catch (_) {}
 
+// ============================================================
+// SPA support: URL + DOM remount reapply
+// ============================================================
+try {
+  lastSpaKey = getSpaKey();
+
+  window.addEventListener("popstate", () => handleSpaUrlChange("popstate"));
+  window.addEventListener("hashchange", () => handleSpaUrlChange("hashchange"));
+
+  const originalPushState = history.pushState;
+  const originalReplaceState = history.replaceState;
+  history.pushState = function (...args) {
+    const ret = originalPushState.apply(history, args);
+    handleSpaUrlChange("pushState");
+    return ret;
+  };
+  history.replaceState = function (...args) {
+    const ret = originalReplaceState.apply(history, args);
+    handleSpaUrlChange("replaceState");
+    return ret;
+  };
+
+  // DOM remount watcher: on heavy SPA remounts, reapply edits after a short debounce.
+  const observer = new MutationObserver(() => {
+    scheduleSpaReapply("mutation");
+  });
+  observer.observe(document.documentElement, { subtree: true, childList: true });
+} catch (e) {
+  console.warn("[WebEdit] SPA hooks setup failed:", e?.message || e);
+}
+
 async function refreshCurrentUser() {
   try {
     const resp = await chrome.runtime.sendMessage({ type: "WEBEDIT_GET_SESSION" });
@@ -560,6 +673,12 @@ async function applySavedEditsForUser() {
     return;
   }
 
+  console.log("[WebEdit] applySavedEditsForUser start", {
+    origin: location.origin,
+    pathname: location.pathname,
+    href: location.href
+  });
+
   // Cloud edits (Supabase `edits` table) apply + realtime undo/redo sync
   // This is separate from EditRules and is driven only by Supabase (Realtime + polling).
   initCloudEditsRuntime().catch(() => {});
@@ -579,6 +698,19 @@ async function applySavedEditsForUser() {
     console.log("[WebEdit] Re-applied saved edits for", currentUser.id);
   } catch (e) {
     console.warn("[WebEdit] Failed to re-apply saved edits:", e);
+  }
+
+  // Local FeatureSpecs (AI-generated, with interactive behaviors) rehydrate here too.
+  try {
+    const exec = window.FeatureSpecExecutor;
+    if (exec && typeof exec.restoreAndReplay === "function") {
+      const res = await exec.restoreAndReplay();
+      console.log("[WebEdit] FeatureSpec restoreAndReplay:", res);
+    } else {
+      console.log("[WebEdit] FeatureSpecExecutor not available; skipping local FeatureSpec rehydrate");
+    }
+  } catch (e) {
+    console.warn("[WebEdit] FeatureSpec restoreAndReplay failed:", e?.message || e);
   }
 }
 
@@ -1243,8 +1375,69 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             sendResponse({ ok: false, error: "FeatureSpec executor not found" });
             return;
           }
-          const result = await exec.applyFeatureSpec(payload.spec);
-          sendResponse(result);
+
+          // Retry a few times on SPA remounts where the target selector may not exist yet.
+          const spec = payload.spec;
+          let result = null;
+          let lastErr = null;
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            result = await exec.applyFeatureSpec(spec, { skipPersist: true });
+            if (result?.ok) break;
+            lastErr = result?.error || "apply failed";
+            if (typeof lastErr === "string" && lastErr.includes("Could not find target")) {
+              await new Promise(r => setTimeout(r, 250 * attempt));
+              continue;
+            }
+            break;
+          }
+          if (!result?.ok) {
+            sendResponse({ ok: false, error: lastErr || "Failed to apply spec" });
+            return;
+          }
+
+          // Confirm persistence to Supabase for add features; if it fails, undo to avoid lying.
+          if (spec?.action === "add") {
+            const saver = window.SaveEdit?.saveAddFeature;
+            if (typeof saver !== "function") {
+              await exec.undoById?.(result.applied?.id);
+              sendResponse({ ok: false, error: "SaveEdit module not available; cannot persist feature" });
+              return;
+            }
+            const saveResp = await saver({
+              ...spec,
+              selector: spec.selector || spec.targetSelector,
+              name: spec.name || "AI Feature",
+              purpose: spec.purpose || spec.description || "AI generated feature"
+            });
+            if (!saveResp?.ok) {
+              try { await exec.undoById?.(result.applied?.id); } catch (_) {}
+              sendResponse({ ok: false, error: `Failed to persist to Supabase: ${saveResp?.error || "unknown error"}` });
+              return;
+            }
+
+            // Replace the local (temporary) insertion with a cloud-managed insertion keyed by the Supabase edit id.
+            const persistedEditId = saveResp?.edit?.id;
+            if (persistedEditId) {
+              try { await exec.undoById?.(result.applied?.id); } catch (_) {}
+              const replayed = await exec.applyFeatureSpec(spec, { replay: true, id: persistedEditId, skipPersist: true });
+              if (replayed?.ok) {
+                try {
+                  const nodes = document.querySelectorAll(`[data-webedit-ai-insert-id="${cssEscapeSafe(persistedEditId)}"]`);
+                  nodes.forEach((el) => {
+                    try { el.setAttribute(WEBEDIT_CLOUD_EDIT_ATTR, persistedEditId); } catch (_) {}
+                  });
+                } catch (_) {}
+              }
+              sendResponse({ ok: true, applied: replayed?.applied || result.applied, persisted: true, edit: saveResp.edit || null });
+              return;
+            }
+
+            sendResponse({ ok: true, applied: result.applied, persisted: true, edit: saveResp.edit || null });
+            return;
+          }
+
+          // Non-add actions are applied but not persisted via SaveEdit yet.
+          sendResponse({ ok: true, applied: result.applied, persisted: false });
         } catch (error) {
           sendResponse({ ok: false, error: error.message });
         }
