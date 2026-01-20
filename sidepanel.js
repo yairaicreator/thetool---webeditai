@@ -7,6 +7,8 @@
     homeBtn: document.getElementById("webedit-home-btn"),
     signinBtn: document.getElementById("webedit-signin-btn"),
     authGuard: document.getElementById("webedit-auth-guard"),
+    authGuardTitle: document.getElementById("webedit-auth-guard-title"),
+    authGuardMessage: document.getElementById("webedit-auth-guard-message"),
     authGuardSignin: document.getElementById("webedit-auth-guard-signin"),
     historySidebar: document.getElementById("webedit-history-sidebar"),
     historyList: document.getElementById("webedit-history-list"),
@@ -45,6 +47,15 @@
   const MAX_SESSIONS = 50;
   const MAX_MESSAGES = 200;
 
+  const AUTH_STATES = {
+    UNAUTHENTICATED: "unauthenticated",
+    NOT_TESTER: "authenticated_not_tester",
+    TESTER: "authenticated_tester"
+  };
+
+  let authState = AUTH_STATES.UNAUTHENTICATED;
+  let isPublicLaunch = false;
+  let signedInUser = null;
   let currentUser = null;
   let lastUserId = null;
   let currentSessionId = null;
@@ -113,8 +124,11 @@
   }
 
   async function sendToActiveTab(payload) {
-  try {
-    const resp = await chrome.runtime.sendMessage({
+    if (!isTesterAuthorized()) {
+      return { ok: false, error: "Not authorized" };
+    }
+    try {
+      const resp = await chrome.runtime.sendMessage({
         type: "WEBEDIT_SIDEPANEL_COMMAND",
         payload
       });
@@ -301,7 +315,10 @@
   function renderHistoryList(historyData = null) {
     if (!els.historyList) return;
     if (!currentUser?.id) {
-      els.historyList.innerHTML = '<div style="padding:10px; color:#9ca3af; font-size:12px; text-align:center">Sign in to view history</div>';
+      const msg = authState === AUTH_STATES.NOT_TESTER
+        ? "Private alpha – access restricted"
+        : "Sign in to view history";
+      els.historyList.innerHTML = `<div style="padding:10px; color:#9ca3af; font-size:12px; text-align:center">${msg}</div>`;
       return;
     }
 
@@ -442,19 +459,91 @@
     saveChatHistory();
   }
 
-  function requireAuth(actionName) {
-    if (!currentUser) {
+  function isTesterAuthorized() {
+    return authState === AUTH_STATES.TESTER;
+  }
+
+  function requireTesterAccess(actionName) {
+    if (isTesterAuthorized()) return true;
+    if (authState === AUTH_STATES.UNAUTHENTICATED) {
       showNotificationInChat(`Please sign in to ${actionName}`);
-      return false;
+    } else {
+      showNotificationInChat("Access restricted. Private alpha is limited to allowlisted testers.");
     }
-    return true;
+    return false;
   }
 
   function updateAuthGuardUI() {
-    const signedIn = !!currentUser;
-    if (els.authGuard) {
-      els.authGuard.classList.toggle("hidden", signedIn);
+    if (!els.authGuard) return;
+    const showGuard = authState !== AUTH_STATES.TESTER;
+    els.authGuard.classList.toggle("hidden", !showGuard);
+
+    if (authState === AUTH_STATES.UNAUTHENTICATED) {
+      if (els.authGuardTitle) els.authGuardTitle.textContent = "Launching soon – sign up on the website";
+      if (els.authGuardMessage) els.authGuardMessage.textContent = "";
+      if (els.authGuardSignin) {
+        els.authGuardSignin.textContent = "Sign up";
+        els.authGuardSignin.hidden = false;
+      }
+      return;
     }
+
+    if (authState === AUTH_STATES.NOT_TESTER) {
+      if (els.authGuardTitle) els.authGuardTitle.textContent = "Private alpha – access restricted";
+      if (els.authGuardMessage) els.authGuardMessage.textContent = "";
+      if (els.authGuardSignin) {
+        els.authGuardSignin.textContent = "Sign up";
+        els.authGuardSignin.hidden = true;
+      }
+      return;
+    }
+  }
+
+  function setFeatureControlsEnabled(enabled) {
+    const controls = [
+      els.newChatBtn,
+      els.burgerBtn,
+      els.pickBtn,
+      els.applyBtn,
+      els.resetBtn,
+      els.moveUpBtn,
+      els.moveDownBtn,
+      els.sendBtn,
+      els.chatInput,
+      ...els.toolButtons,
+      ...els.alignBtns
+    ].filter(Boolean);
+
+    controls.forEach((el) => {
+      if ("disabled" in el) {
+        el.disabled = !enabled;
+      }
+      el.setAttribute("aria-disabled", enabled ? "false" : "true");
+    });
+
+    if (!enabled) {
+      els.toolsMenu?.classList.remove("visible");
+      els.customizePanel?.classList.remove("visible");
+      hideModeIndicator();
+      isAddFeatureMode = false;
+      pendingAddFeatureStep = "idle";
+      addFeatureName = "";
+      addFeatureDescription = "";
+      pendingAiAnchorRequest = null;
+      lastPickedTarget = null;
+    }
+  }
+
+  function applyAuthStateUI() {
+    updateAuthGuardUI();
+    setFeatureControlsEnabled(isTesterAuthorized());
+    if (isTesterAuthorized()) {
+      renderHistoryList();
+      return;
+    }
+    chatMessages = [];
+    renderChatMessages();
+    renderHistoryList([]);
   }
 
   function renderSignInButton() {
@@ -555,16 +644,55 @@
     });
   }
 
-  async function refreshAuth() {
+  async function refreshAuthorization() {
+    const client = window.SupabaseClient;
+    let session = null;
+    let user = null;
+    let allowlisted = false;
+
     try {
-      const resp = await chrome.runtime.sendMessage({ type: "WEBEDIT_GET_SESSION" });
-      const session = resp?.session || null;
-      currentUser = session?.user || null;
-    } catch (e) {
-      currentUser = null;
+      if (client?.fetchLaunchFlag) {
+        const launchResp = await client.fetchLaunchFlag();
+        isPublicLaunch = !!launchResp?.isPublicLaunch;
+      }
+    } catch (_) {
+      isPublicLaunch = false;
     }
 
-    const nextUserId = currentUser?.id || null;
+    try {
+      if (client?.getSession) {
+        const sessionResp = await client.getSession();
+        session = sessionResp?.data?.session || null;
+      }
+    } catch (_) {
+      session = null;
+    }
+
+    try {
+      if (client?.fetchAuthUser) {
+        const authResp = await client.fetchAuthUser();
+        user = authResp?.ok ? authResp.user : null;
+      }
+    } catch (_) {
+      user = null;
+    }
+
+    if (user?.email && client?.isTesterAllowlisted) {
+      try {
+        const allowResp = await client.isTesterAllowlisted(user.email, session?.access_token || null);
+        allowlisted = !!allowResp?.allowlisted;
+      } catch (_) {
+        allowlisted = false;
+      }
+    }
+
+    signedInUser = user || null;
+    currentUser = allowlisted ? user : null;
+    authState = !user
+      ? AUTH_STATES.UNAUTHENTICATED
+      : (allowlisted ? AUTH_STATES.TESTER : AUTH_STATES.NOT_TESTER);
+
+    const nextUserId = signedInUser?.id || null;
     if (nextUserId !== lastUserId) {
       console.log(`[SidePanel Auth] user changed: ${lastUserId || "none"} -> ${nextUserId || "none"}`);
       lastUserId = nextUserId;
@@ -572,16 +700,12 @@
       chatMessages = [];
     }
 
-    updateAuthGuardUI();
-    if (currentUser) {
-      renderSignedInButton(currentUser);
-      renderHistoryList();
+    if (signedInUser) {
+      renderSignedInButton(signedInUser);
     } else {
       renderSignInButton();
-      renderHistoryList([]);
-      chatMessages = [];
-      renderChatMessages();
     }
+    applyAuthStateUI();
   }
 
   function setActiveTool(tool) {
@@ -603,9 +727,9 @@
   }
 
   async function handleToolClick(tool) {
-    if (tool === "remove" && !requireAuth("remove elements")) return;
-    if (tool === "customize" && !requireAuth("customize elements")) return;
-    if (tool === "add" && !requireAuth("add features")) return;
+    if (tool === "remove" && !requireTesterAccess("remove elements")) return;
+    if (tool === "customize" && !requireTesterAccess("customize elements")) return;
+    if (tool === "add" && !requireTesterAccess("add features")) return;
 
     setActiveTool(tool);
     if (els.toolsMenu) els.toolsMenu.classList.remove("visible");
@@ -646,7 +770,7 @@
   }
 
   async function handlePickClick() {
-    if (!requireAuth("pick elements")) return;
+    if (!requireTesterAccess("pick elements")) return;
     const resp = await sendToActiveTab({ type: "START_PICK_MODE", reason: "manual-pick" });
     if (!resp?.ok) {
       hideModeIndicator();
@@ -656,7 +780,7 @@
   }
 
   async function applyCustomize() {
-    if (!requireAuth("apply customizations")) return;
+    if (!requireTesterAccess("apply customizations")) return;
     if (!lastPickedTarget?.selector) {
       showNotificationInChat("Pick an element first.");
       return;
@@ -682,6 +806,7 @@
   }
 
   async function resetCustomize() {
+    if (!requireTesterAccess("reset customizations")) return;
     if (!lastPickedTarget?.selector) return;
     await sendToActiveTab({ type: "RESET_STYLES", selector: lastPickedTarget.selector });
     if (els.widthValueInput) els.widthValueInput.value = "";
@@ -694,6 +819,7 @@
   async function handleSend(textOverride = null) {
     const text = (typeof textOverride === "string" ? textOverride : (els.chatInput?.value || "")).trim();
     if (!text) return;
+    if (!requireTesterAccess("use WebEdit")) return;
     if (typeof textOverride !== "string") els.chatInput.value = "";
 
     const lower = text.toLowerCase();
@@ -851,7 +977,7 @@
   // Listen to messages from background/content scripts
   chrome.runtime.onMessage.addListener((message) => {
     if (message?.type === "WEBEDIT_SESSION_UPDATED") {
-      refreshAuth();
+      refreshAuthorization();
       return;
     }
     if (message?.type === "WEBEDIT_TAB_EVENT") {
@@ -898,76 +1024,81 @@
     }
   });
 
+  function initializeFeatureHandlers() {
+    els.newChatBtn?.addEventListener("click", () => {
+      if (!requireTesterAccess("create a chat")) return;
+      startNewChat();
+    });
+
+    els.burgerBtn?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      els.toolsMenu?.classList.toggle("visible");
+    });
+
+    els.toolButtons.forEach((btn) => {
+      btn.addEventListener("click", () => handleToolClick(btn.dataset.tool));
+    });
+
+    els.pickBtn?.addEventListener("click", handlePickClick);
+    els.modeCloseBtn?.addEventListener("click", async () => {
+      hideModeIndicator();
+      await sendToActiveTab({ type: "EXIT_FEATURES" });
+    });
+
+    els.customizeCloseBtn?.addEventListener("click", () => {
+      els.customizePanel?.classList.remove("visible");
+    });
+    els.applyBtn?.addEventListener("click", applyCustomize);
+    els.resetBtn?.addEventListener("click", resetCustomize);
+
+    els.scaleInput?.addEventListener("input", () => {
+      if (els.scaleValue) {
+        els.scaleValue.textContent = `${els.scaleInput.value}%`;
+      }
+    });
+
+    els.moveUpBtn?.addEventListener("click", async () => {
+      if (!requireTesterAccess("move elements")) return;
+      if (!lastPickedTarget?.selector) return;
+      await sendToActiveTab({ type: "MOVE_ELEMENT", selector: lastPickedTarget.selector, direction: "up" });
+      showNotificationInChat("Moved up.");
+    });
+
+    els.moveDownBtn?.addEventListener("click", async () => {
+      if (!requireTesterAccess("move elements")) return;
+      if (!lastPickedTarget?.selector) return;
+      await sendToActiveTab({ type: "MOVE_ELEMENT", selector: lastPickedTarget.selector, direction: "down" });
+      showNotificationInChat("Moved down.");
+    });
+
+    els.alignBtns.forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!requireTesterAccess("align elements")) return;
+        if (!lastPickedTarget?.selector) return;
+        const align = btn.dataset.align;
+        await sendToActiveTab({ type: "ALIGN_ELEMENT", selector: lastPickedTarget.selector, align });
+        showNotificationInChat(`Aligned ${align}.`);
+      });
+    });
+
+    els.sendBtn?.addEventListener("click", handleSend);
+    els.chatInput?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        handleSend();
+      }
+    });
+  }
+
   // Wire UI
   attachHeaderEventListeners();
-  els.newChatBtn?.addEventListener("click", () => {
-    if (!requireAuth("create a chat")) return;
-    startNewChat();
-  });
-
-  els.burgerBtn?.addEventListener("click", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    els.toolsMenu?.classList.toggle("visible");
-  });
-
-  els.toolButtons.forEach((btn) => {
-    btn.addEventListener("click", () => handleToolClick(btn.dataset.tool));
-  });
-
-  els.pickBtn?.addEventListener("click", handlePickClick);
-  els.modeCloseBtn?.addEventListener("click", async () => {
-    hideModeIndicator();
-    await sendToActiveTab({ type: "EXIT_FEATURES" });
-  });
-
-  els.customizeCloseBtn?.addEventListener("click", () => {
-    els.customizePanel?.classList.remove("visible");
-  });
-  els.applyBtn?.addEventListener("click", applyCustomize);
-  els.resetBtn?.addEventListener("click", resetCustomize);
-
-  els.scaleInput?.addEventListener("input", () => {
-    if (els.scaleValue) {
-      els.scaleValue.textContent = `${els.scaleInput.value}%`;
-    }
-  });
-
-  els.moveUpBtn?.addEventListener("click", async () => {
-    if (!requireAuth("move elements")) return;
-    if (!lastPickedTarget?.selector) return;
-    await sendToActiveTab({ type: "MOVE_ELEMENT", selector: lastPickedTarget.selector, direction: "up" });
-    showNotificationInChat("Moved up.");
-  });
-
-  els.moveDownBtn?.addEventListener("click", async () => {
-    if (!requireAuth("move elements")) return;
-    if (!lastPickedTarget?.selector) return;
-    await sendToActiveTab({ type: "MOVE_ELEMENT", selector: lastPickedTarget.selector, direction: "down" });
-    showNotificationInChat("Moved down.");
-  });
-
-  els.alignBtns.forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      if (!requireAuth("align elements")) return;
-      if (!lastPickedTarget?.selector) return;
-      const align = btn.dataset.align;
-      await sendToActiveTab({ type: "ALIGN_ELEMENT", selector: lastPickedTarget.selector, align });
-      showNotificationInChat(`Aligned ${align}.`);
-    });
-  });
-
-  els.sendBtn?.addEventListener("click", handleSend);
-  els.chatInput?.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-      handleSend();
-    }
-  });
-
   els.authGuardSignin?.addEventListener("click", () => chrome.runtime.sendMessage({ type: "WEBEDIT_OPEN_LOGIN_TAB" }));
 
   // Init
-  refreshAuth();
-  renderChatMessages();
+  (async () => {
+    await refreshAuthorization();
+    initializeFeatureHandlers();
+    renderChatMessages();
+  })();
 })();

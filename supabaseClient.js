@@ -149,11 +149,116 @@ async function generateFeatureSpec(prompt, context = null) {
   }
 }
 
+async function fetchLaunchFlag() {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || SUPABASE_URL.includes("YOUR_SUPABASE_URL")) {
+    return { ok: false, error: "Supabase not configured" };
+  }
+  try {
+    const qs = new URLSearchParams({
+      select: "is_public_launch",
+      limit: "1"
+    });
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/app_config?${qs.toString()}`, {
+      method: "GET",
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`
+      }
+    });
+    const text = await response.text();
+    let json = null;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch (_) {}
+    if (!response.ok) {
+      const msg = (json && (json.message || json.error)) ? (json.message || json.error) : text;
+      return { ok: false, error: msg || `Supabase error ${response.status}` };
+    }
+    const flag = Array.isArray(json) ? !!json[0]?.is_public_launch : !!json?.is_public_launch;
+    return { ok: true, isPublicLaunch: flag };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, error: message || "Launch flag fetch failed" };
+  }
+}
+
+async function fetchAuthUser() {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || SUPABASE_URL.includes("YOUR_SUPABASE_URL")) {
+    return { ok: false, error: "Supabase not configured", user: null };
+  }
+  try {
+    const { data: { session } } = await SupabaseClient.getSession();
+    const accessToken = session?.access_token;
+    if (!accessToken) {
+      return { ok: true, user: null };
+    }
+    const response = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      method: "GET",
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${accessToken}`
+      }
+    });
+    if (response.status === 401 || response.status === 403) {
+      return { ok: true, user: null };
+    }
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload) {
+      const msg = payload?.msg || payload?.error_description || payload?.error || response.statusText;
+      return { ok: false, error: msg || `Auth user fetch failed (${response.status})`, user: null };
+    }
+    return { ok: true, user: payload };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, error: message || "Auth user fetch failed", user: null };
+  }
+}
+
+async function isTesterAllowlisted(email, accessToken = null) {
+  if (!email) {
+    return { ok: false, error: "Missing email", allowlisted: false };
+  }
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || SUPABASE_URL.includes("YOUR_SUPABASE_URL")) {
+    return { ok: false, error: "Supabase not configured", allowlisted: false };
+  }
+  try {
+    const qs = new URLSearchParams({
+      select: "email",
+      email: `ilike.${email}`,
+      limit: "1"
+    });
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/testers_allowlist?${qs.toString()}`, {
+      method: "GET",
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${accessToken || SUPABASE_ANON_KEY}`
+      }
+    });
+    const text = await response.text();
+    let json = null;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch (_) {}
+    if (!response.ok) {
+      const msg = (json && (json.message || json.error)) ? (json.message || json.error) : text;
+      return { ok: false, error: msg || `Supabase error ${response.status}`, allowlisted: false };
+    }
+    const allowlisted = Array.isArray(json) && json.length > 0;
+    return { ok: true, allowlisted };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, error: message || "Allowlist check failed", allowlisted: false };
+  }
+}
+
 const SupabaseClient = {
   url: SUPABASE_URL,
   anonKey: SUPABASE_ANON_KEY,
   callPageChat,
   generateFeatureSpec,
+  fetchLaunchFlag,
+  fetchAuthUser,
+  isTesterAllowlisted,
 
   async refreshSession(refreshToken) {
     if (!refreshToken) {

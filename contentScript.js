@@ -10,6 +10,10 @@ let selectedEl = null;
 
 let lastPicked = null; // { selector, description }
 let currentUser = null; // { id, email, ... }
+let authState = "unauthenticated"; // unauthenticated | authenticated_not_tester | authenticated_tester
+let authStateCheckedAt = 0;
+let authStateEmail = null;
+const AUTH_STATE_TTL_MS = 0; // Always revalidate allowlist status
 
 // ============================================================
 // Supabase "edits" (cloud) live application + Undo/Redo sync
@@ -77,8 +81,73 @@ function isProbablyWebEditAppPage() {
   }
 }
 
+function setAuthState(nextState, email = null) {
+  authState = nextState;
+  authStateEmail = email || null;
+  authStateCheckedAt = Date.now();
+}
+
+async function resolveAuthorizationState(force = false) {
+  const now = Date.now();
+  if (!force && authStateCheckedAt && (now - authStateCheckedAt) < AUTH_STATE_TTL_MS) {
+    return authState;
+  }
+
+  const client = window.SupabaseClient;
+  if (!client) {
+    setAuthState("unauthenticated");
+    return authState;
+  }
+
+  let session = null;
+  try {
+    const sessionResp = await client.getSession();
+    session = sessionResp?.data?.session || null;
+  } catch (_) {
+    session = null;
+  }
+
+  let user = session?.user || null;
+  if (typeof client.fetchAuthUser === "function") {
+    try {
+      const authResp = await client.fetchAuthUser();
+      user = authResp?.ok ? authResp.user : null;
+    } catch (_) {
+      user = null;
+    }
+  }
+  if (!user?.email) {
+    setAuthState("unauthenticated");
+    return authState;
+  }
+
+  if (authStateEmail && authStateEmail === user.email && !force && (now - authStateCheckedAt) < AUTH_STATE_TTL_MS) {
+    return authState;
+  }
+
+  let allowlisted = false;
+  if (typeof client.isTesterAllowlisted === "function") {
+    try {
+      const allowResp = await client.isTesterAllowlisted(user.email, session?.access_token || null);
+      allowlisted = !!allowResp?.allowlisted;
+    } catch (_) {
+      allowlisted = false;
+    }
+  }
+
+  setAuthState(allowlisted ? "authenticated_tester" : "authenticated_not_tester", user.email);
+  return authState;
+}
+
+async function isTesterAuthorized(force = false) {
+  const state = await resolveAuthorizationState(force);
+  return state === "authenticated_tester";
+}
+
 async function getSupabaseAuth() {
   try {
+    const authorized = await isTesterAuthorized();
+    if (!authorized) return null;
     const client = window.SupabaseClient;
     if (!client) return null;
     const { data: { session } } = await client.getSession();
@@ -608,6 +677,18 @@ async function initCloudEditsRuntime() {
   }
 }
 
+function stopCloudEditsRuntime() {
+  try { cloudRealtime?.close?.(); } catch (_) {}
+  cloudRealtime = null;
+  cloudRuntimeStarted = false;
+  cloudWebsiteId = null;
+  cloudRealtimeKey = null;
+  try { if (cloudPollTimer) clearInterval(cloudPollTimer); } catch (_) {}
+  try { if (cloudRebuildTimer) clearTimeout(cloudRebuildTimer); } catch (_) {}
+  cloudPollTimer = null;
+  cloudRebuildTimer = null;
+}
+
 // Best-effort cleanup on navigation/unload (avoid dangling sockets / timers)
 try {
   window.addEventListener("beforeunload", () => {
@@ -668,6 +749,11 @@ async function refreshCurrentUser() {
 }
 
 async function applySavedEditsForUser() {
+  const authorized = await isTesterAuthorized();
+  if (!authorized) {
+    stopCloudEditsRuntime();
+    return;
+  }
   await refreshCurrentUser();
   if (!currentUser?.id) {
     return;
@@ -1287,6 +1373,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "WEBEDIT_SESSION_UPDATED") {
     (async () => {
       try {
+        const authorized = await isTesterAuthorized(true);
+        if (!authorized) {
+          stopPickMode();
+          stopRemoveMode();
+          clearHover();
+          clearSelected();
+          stopCloudEditsRuntime();
+        }
         await applySavedEditsForUser();
         sendResponse({ ok: true });
       } catch (error) {
@@ -1297,8 +1391,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message?.type === "WEBEDIT_SIDEPANEL_COMMAND") {
-    const payload = message.payload || {};
-    const type = payload.type;
+    (async () => {
+      const authorized = await isTesterAuthorized();
+      if (!authorized) {
+        stopPickMode();
+        stopRemoveMode();
+        clearHover();
+        clearSelected();
+        sendResponse({ ok: false, error: "Not authorized" });
+        return;
+      }
+      const payload = message.payload || {};
+      const type = payload.type;
 
     if (type === "START_PICK_MODE") {
       startPickMode();
@@ -1532,6 +1636,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     sendResponse({ ok: false, error: "Unknown command" });
+    return true;
+    })();
     return true;
   }
 
