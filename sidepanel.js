@@ -593,7 +593,11 @@
       if (!action) return;
       menu.classList.remove("visible");
       if (action === "signout") {
-        chrome.runtime.sendMessage({ type: "WEBEDIT_SIGN_OUT" });
+        // Requirement: sign out fully inside the extension (no website redirect) using Supabase session only.
+        // We call `supabase.auth.signOut()` in the side panel context, then clear/broadcast via background.
+        Promise.resolve(window.supabase?.auth?.signOut?.())
+          .catch(() => {})
+          .finally(() => chrome.runtime.sendMessage({ type: "WEBEDIT_SIGN_OUT" }));
         }
     });
 }

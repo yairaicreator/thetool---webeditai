@@ -10,8 +10,6 @@ const SIDEPANEL_PATH = "sidepanel.html";
 // WebEdit AI website routes (use apex domain + hash routes to avoid SPA 404s during OAuth back navigation).
 const WEBEDIT_LOGIN_URL = "https://webeditai.com/#/signup?from=extension";
 const WEBEDIT_HISTORY_URL = "https://webeditai.com/#/history";
-const WEBEDIT_SIGNOUT_URL = "https://webeditai.com/#/history?from=extension-logout";
-const WEBEDIT_LANDING_URL = "https://webeditai.com/";
 
 async function configureSidePanelForTab(tabId) {
   if (!tabId || !chrome.sidePanel?.setOptions) return;
@@ -291,29 +289,32 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "WEBEDIT_SIGN_OUT") {
-    chrome.storage.local.remove(["webeditSupabaseSession", "webeditSessionTimestamp"], () => {
-      const session = null;
-      chrome.runtime.sendMessage({ type: "WEBEDIT_SESSION_UPDATED", session }).catch(() => {});
-      chrome.tabs.query({}, (tabs) => {
-        tabs.forEach((tab) => {
-          if (!tab.id) return;
-          chrome.tabs.sendMessage(tab.id, { type: "WEBEDIT_SESSION_UPDATED", session }).catch(() => {});
+    chrome.storage.local.get(["webeditSupabaseSession"], async (result) => {
+      const previousSession = result?.webeditSupabaseSession || null;
+      const previousUserId = previousSession?.user?.id || null;
+
+      // Clear any user-scoped cached keys (chats/rules/features/etc.) so a refresh won't resurrect old state.
+      chrome.storage.local.get(null, (all) => {
+        const keys = Object.keys(all || {});
+        const keysToRemove = new Set(["webeditSupabaseSession", "webeditSessionTimestamp"]);
+        if (previousUserId) {
+          keys.forEach((k) => {
+            if (k.includes(`::${previousUserId}`)) keysToRemove.add(k);
+          });
+        }
+
+        chrome.storage.local.remove(Array.from(keysToRemove), () => {
+          const session = null;
+          chrome.runtime.sendMessage({ type: "WEBEDIT_SESSION_UPDATED", session }).catch(() => {});
+          chrome.tabs.query({}, (tabs) => {
+            tabs.forEach((tab) => {
+              if (!tab.id) return;
+              chrome.tabs.sendMessage(tab.id, { type: "WEBEDIT_SESSION_UPDATED", session }).catch(() => {});
+            });
+          });
+          sendResponse({ ok: true, clearedUserId: previousUserId });
         });
       });
-
-      // Best-effort: open a hidden WebEdit tab to trigger website logout (if the site implements it),
-      // then bring the user to the landing page. This avoids the extension being re-signed-in
-      // immediately if the website still has a valid session.
-      chrome.tabs.create({ url: WEBEDIT_SIGNOUT_URL, active: false }, (hiddenTab) => {
-        setTimeout(() => {
-          if (hiddenTab?.id) {
-            chrome.tabs.remove(hiddenTab.id).catch(() => {});
-          }
-          chrome.tabs.create({ url: WEBEDIT_LANDING_URL, active: true }, () => {});
-        }, 1000);
-      });
-
-      sendResponse({ ok: true });
     });
     return true;
   }

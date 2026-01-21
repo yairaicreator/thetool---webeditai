@@ -362,6 +362,25 @@ const SupabaseClient = {
    * Sign out - clears the session from storage
    */
   async signOut() {
+    try {
+      const { data: { session } } = await this.getSession();
+      const accessToken = session?.access_token || null;
+
+      // Supabase Auth (GoTrue) logout endpoint (equivalent to supabase.auth.signOut()).
+      // We always clear local storage even if this request fails.
+      if (accessToken && SUPABASE_URL && SUPABASE_ANON_KEY && !SUPABASE_URL.includes("YOUR_SUPABASE_URL")) {
+        await fetch(`${SUPABASE_URL}/auth/v1/logout`, {
+          method: "POST",
+          headers: {
+            apikey: SUPABASE_ANON_KEY,
+            Authorization: `Bearer ${accessToken}`
+          }
+        }).catch(() => {});
+      }
+    } catch (_) {
+      // ignore
+    }
+
     return this.setSession(null);
   },
 
@@ -383,6 +402,13 @@ if (typeof window !== 'undefined') {
   window.SupabaseClient = SupabaseClient;
   window.callPageChat = callPageChat;
   window.generateFeatureSpec = generateFeatureSpec;
+
+  // Minimal supabase-js compatible API surface used by the extension UI:
+  // The side panel can call `supabase.auth.signOut()` and it will perform a real Supabase logout + clear storage.
+  if (!window.supabase) window.supabase = {};
+  if (!window.supabase.auth) window.supabase.auth = {};
+  window.supabase.auth.signOut = () => SupabaseClient.signOut();
+
   console.log('✅ SupabaseClient exported to window');
 }
 
