@@ -68,6 +68,7 @@
   let addFeatureDescription = "";
   let lastPickedTarget = null; // { selector, description }
   let pendingAiAnchorRequest = null; // { text } waiting for Pick Element anchor
+  let pendingPreviewRefine = null; // { previewId, plan }
 
   // References shown after picking an element should be ephemeral.
   const PICK_REFERENCE_TTL_MS = 8000;
@@ -149,8 +150,56 @@
     addChatMessage("system", text);
   }
 
+  async function handlePreviewApply(previewId) {
+    if (!previewId) return;
+    const thinking = addChatMessage("assistant", "Applying preview...");
+    const resp = await sendToActiveTab({ type: "COMMIT_FEATURE", previewId });
+    if (resp?.response?.ok) {
+      chatMessages = chatMessages.filter(m => !(m.type === "preview" && m.content?.previewId === previewId));
+      thinking.content = "✅ Feature applied.";
+    } else {
+      thinking.content = `❌ Apply failed: ${resp?.response?.error || "unknown error"}`;
+    }
+    renderChatMessages();
+    saveChatHistory();
+  }
+
+  async function handlePreviewUndo(previewId) {
+    if (!previewId) return;
+    const resp = await sendToActiveTab({ type: "UNDO_FEATURE", previewId });
+    if (resp?.response?.ok) {
+      chatMessages = chatMessages.filter(m => !(m.type === "preview" && m.content?.previewId === previewId));
+      addChatMessage("assistant", "✅ Preview removed.");
+    } else {
+      addChatMessage("assistant", `❌ Undo failed: ${resp?.response?.error || "unknown error"}`);
+    }
+    renderChatMessages();
+    saveChatHistory();
+  }
+
+  function handlePreviewRefine(previewId) {
+    if (!previewId) return;
+    const msg = chatMessages.find(m => m.type === "preview" && m.content?.previewId === previewId);
+    if (!msg) return;
+    pendingPreviewRefine = { previewId, plan: msg.content?.plan || null };
+    addChatMessage("system", "Describe how to refine this preview.");
+    renderChatMessages();
+    saveChatHistory();
+  }
+
   function addChatMessage(type, content) {
     const msg = { type, content, timestamp: Date.now() };
+    chatMessages.push(msg);
+    if (chatMessages.length > MAX_MESSAGES) {
+      chatMessages = chatMessages.slice(-MAX_MESSAGES);
+    }
+    renderChatMessages();
+    saveChatHistory();
+    return msg;
+  }
+
+  function addPreviewMessage(content) {
+    const msg = { type: "preview", content, timestamp: Date.now() };
     chatMessages.push(msg);
     if (chatMessages.length > MAX_MESSAGES) {
       chatMessages = chatMessages.slice(-MAX_MESSAGES);
@@ -179,10 +228,45 @@
     regular.forEach((msg) => {
       const msgEl = document.createElement("div");
       msgEl.className = `webedit-chat-message webedit-chat-message-${msg.type}`;
-      const contentEl = document.createElement("div");
-      contentEl.className = "webedit-chat-message-content";
-      contentEl.textContent = msg.content;
-      msgEl.appendChild(contentEl);
+      if (msg.type === "preview") {
+        const data = msg.content || {};
+        const contentEl = document.createElement("div");
+        contentEl.className = "webedit-chat-message-content";
+        const confidence = Math.round((data.confidence || 0) * 100);
+        contentEl.textContent = `Preview: ${data.feature_type || "Feature"} (${confidence}% confidence)`;
+        msgEl.appendChild(contentEl);
+
+        if (Array.isArray(data.warnings) && data.warnings.length > 0) {
+          const warnEl = document.createElement("div");
+          warnEl.className = "webedit-chat-message-content";
+          warnEl.textContent = `Warnings: ${data.warnings.join("; ")}`;
+          msgEl.appendChild(warnEl);
+        }
+
+        const actions = document.createElement("div");
+        actions.className = "webedit-preview-actions";
+        const applyBtn = document.createElement("button");
+        applyBtn.className = "webedit-btn-small webedit-btn-primary";
+        applyBtn.textContent = "Apply";
+        applyBtn.addEventListener("click", () => handlePreviewApply(data.previewId));
+        const undoBtn = document.createElement("button");
+        undoBtn.className = "webedit-btn-small webedit-btn-secondary";
+        undoBtn.textContent = "Undo";
+        undoBtn.addEventListener("click", () => handlePreviewUndo(data.previewId));
+        const refineBtn = document.createElement("button");
+        refineBtn.className = "webedit-btn-small webedit-btn-secondary";
+        refineBtn.textContent = "Refine";
+        refineBtn.addEventListener("click", () => handlePreviewRefine(data.previewId));
+        actions.appendChild(applyBtn);
+        actions.appendChild(undoBtn);
+        actions.appendChild(refineBtn);
+        msgEl.appendChild(actions);
+      } else {
+        const contentEl = document.createElement("div");
+        contentEl.className = "webedit-chat-message-content";
+        contentEl.textContent = msg.content;
+        msgEl.appendChild(contentEl);
+      }
       els.chatMessages.appendChild(msgEl);
     });
 
@@ -763,6 +847,7 @@
       pendingAddFeatureStep = "idle";
       addFeatureName = "";
       addFeatureDescription = "";
+      pendingPreviewRefine = null;
       els.customizePanel?.classList.remove("visible");
       showNotificationInChat("Pick an element to add content near it.");
       const resp = await sendToActiveTab({ type: "START_PICK_MODE", reason: "add" });
@@ -826,6 +911,42 @@
     if (!requireTesterAccess("use WebEdit")) return;
     if (typeof textOverride !== "string") els.chatInput.value = "";
 
+    if (pendingPreviewRefine) {
+      const { previewId, plan } = pendingPreviewRefine;
+      pendingPreviewRefine = null;
+      addChatMessage("user", text);
+      const thinking = addChatMessage("assistant", "Refining preview...");
+      const selector = plan?.targetSelector || lastPickedTarget?.selector || "";
+      const ctxResp = await sendToActiveTab({ type: "GET_ADD_CONTEXT", selector });
+      const context = ctxResp?.response?.context || null;
+      const planner = window.FeaturePlanner;
+      if (!planner || typeof planner.plan !== "function") {
+        thinking.content = "❌ FeaturePlanner not available.";
+        renderChatMessages();
+        saveChatHistory();
+        return;
+      }
+      const nextPlan = planner.plan(text, context);
+      nextPlan.targetSelector = selector;
+      await sendToActiveTab({ type: "UNDO_FEATURE", previewId });
+      const previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE", plan: nextPlan });
+      if (previewResp?.response?.ok) {
+        addPreviewMessage({
+          previewId: previewResp.response.previewId,
+          feature_type: nextPlan.feature_type,
+          confidence: nextPlan.confidence,
+          warnings: nextPlan.warnings || [],
+          plan: nextPlan
+        });
+        thinking.content = "✅ Updated preview.";
+      } else {
+        thinking.content = `❌ Preview failed: ${previewResp?.response?.error || "unknown error"}`;
+      }
+      renderChatMessages();
+      saveChatHistory();
+      return;
+    }
+
     const lower = text.toLowerCase();
     if (lower === "undo" || lower === "/undo") {
       addChatMessage("user", text);
@@ -869,45 +990,33 @@
 
         const thinking = addChatMessage("assistant", "Generating your feature...");
         try {
-          const pageContextResp = await sendToActiveTab({ type: "GET_PAGE_CONTEXT" });
-          const pageContext = pageContextResp?.response?.pageContext || null;
-
-          const prompt = `Create an ADD feature near this target element.\n\nTarget selector: ${lastPickedTarget.selector}\nEdit name: ${addFeatureName}\nUser request: ${addFeatureDescription}`;
-          const context = {
-            ...pageContext,
-            target: lastPickedTarget,
-            editName: addFeatureName,
-            requestedAction: "add"
-          };
-
-          const aiResp = window.SupabaseClient?.generateFeatureSpec
-            ? await window.SupabaseClient.generateFeatureSpec(prompt, context)
-            : null;
-
-          const spec = aiResp?.ok ? aiResp.spec : null;
-          if (spec) {
-            // Apply via FeatureSpecExecutor
-            const applyResp = await sendToActiveTab({
-              type: "APPLY_FEATURE_SPEC",
-              spec: {
-                ...spec,
-                action: "add",
-                targetSelector: spec.targetSelector || lastPickedTarget.selector,
-                selector: spec.selector || spec.targetSelector || lastPickedTarget.selector
-              }
-            });
-
-            if (applyResp?.response?.ok) {
-              thinking.content = `✅ "${addFeatureName}" added successfully!`;
-            } else {
-              throw new Error(applyResp?.response?.error || "Failed to apply spec");
-            }
-          } else {
-            throw new Error(aiResp?.error || "AI spec unavailable");
+          const ctxResp = await sendToActiveTab({ type: "GET_ADD_CONTEXT", selector: lastPickedTarget.selector });
+          if (!ctxResp?.response?.ok) {
+            throw new Error(ctxResp?.response?.error || "Context unavailable");
           }
+          const context = ctxResp.response.context || null;
+          const planner = window.FeaturePlanner;
+          if (!planner || typeof planner.plan !== "function") {
+            throw new Error("FeaturePlanner not available");
+          }
+          const prompt = `${addFeatureName}. ${addFeatureDescription}`;
+          const plan = planner.plan(prompt, context);
+          plan.targetSelector = lastPickedTarget.selector;
+          const previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE", plan });
+          if (!previewResp?.response?.ok) {
+            throw new Error(previewResp?.response?.error || "Preview failed");
+          }
+          addPreviewMessage({
+            previewId: previewResp.response.previewId,
+            feature_type: plan.feature_type,
+            confidence: plan.confidence,
+            warnings: plan.warnings || [],
+            plan
+          });
+          thinking.content = "✅ Preview ready. Review and click Apply.";
         } catch (e) {
-          console.error("[Add Feature] AI Spec failed:", e);
-          thinking.content = `❌ I couldn't generate that feature.\nReason: ${e.message || "Unknown error"}`;
+          console.error("[Add Feature] Planner preview failed:", e);
+          thinking.content = `❌ I couldn't generate a preview.\nReason: ${e.message || "Unknown error"}`;
         }
 
         addFeatureName = "";

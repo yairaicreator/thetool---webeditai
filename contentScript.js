@@ -798,6 +798,17 @@ async function applySavedEditsForUser() {
   } catch (e) {
     console.warn("[WebEdit] FeatureSpec restoreAndReplay failed:", e?.message || e);
   }
+
+  // New deterministic features (Planner → Engine → Commit)
+  try {
+    const store = window.FeatureStore;
+    if (store && typeof store.restoreCommittedFeatures === "function") {
+      const res = await store.restoreCommittedFeatures();
+      console.log("[WebEdit] FeatureStore restoreCommittedFeatures:", res);
+    }
+  } catch (e) {
+    console.warn("[WebEdit] FeatureStore restoreCommittedFeatures failed:", e?.message || e);
+  }
 }
 
 async function ensureEditRulesReady() {
@@ -1548,9 +1559,72 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       })();
       return true;
     }
+    if (type === "PREVIEW_FEATURE") {
+      const engine = window.FeatureEngine;
+      if (!engine || typeof engine.applyFeature !== "function") {
+        sendResponse({ ok: false, error: "FeatureEngine not available" });
+        return true;
+      }
+      const result = engine.applyFeature(payload.plan, "preview");
+      sendResponse(result);
+      return true;
+    }
+    if (type === "COMMIT_FEATURE") {
+      (async () => {
+        const engine = window.FeatureEngine;
+        const store = window.FeatureStore;
+        if (!engine || typeof engine.applyFeature !== "function") {
+          sendResponse({ ok: false, error: "FeatureEngine not available" });
+          return;
+        }
+        if (!store || typeof store.addCommittedFeature !== "function") {
+          sendResponse({ ok: false, error: "FeatureStore not available" });
+          return;
+        }
+        const previewId = payload.previewId || null;
+        const plan = payload.plan || null;
+        let result = null;
+        if (previewId) {
+          result = engine.commitPreview(previewId);
+        } else {
+          result = engine.applyFeature(plan, "commit");
+        }
+        if (!result?.ok) {
+          sendResponse(result || { ok: false, error: "Commit failed" });
+          return;
+        }
+        if (result.record) {
+          await store.addCommittedFeature(result.record);
+        }
+        sendResponse({ ok: true, record: result.record || null });
+      })();
+      return true;
+    }
+    if (type === "UNDO_FEATURE") {
+      const engine = window.FeatureEngine;
+      if (!engine) {
+        sendResponse({ ok: false, error: "FeatureEngine not available" });
+        return true;
+      }
+      if (payload.previewId) {
+        const res = engine.undoPreview(payload.previewId);
+        sendResponse(res);
+        return true;
+      }
+      sendResponse({ ok: false, error: "Missing previewId" });
+      return true;
+    }
     if (type === "UNDO_LAST") {
       (async () => {
         try {
+          const store = window.FeatureStore;
+          if (store && typeof store.undoLastCommit === "function") {
+            const storeRes = await store.undoLastCommit();
+            if (storeRes?.ok) {
+              sendResponse(storeRes);
+              return;
+            }
+          }
           const exec = window.FeatureSpecExecutor;
           if (!exec || typeof exec.undoLast !== "function") {
             sendResponse({ ok: false, error: "Undo not available" });
@@ -1567,6 +1641,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (type === "REDO_LAST") {
       (async () => {
         try {
+          const store = window.FeatureStore;
+          if (store && typeof store.redoLastCommit === "function") {
+            const storeRes = await store.redoLastCommit();
+            if (storeRes?.ok) {
+              sendResponse(storeRes);
+              return;
+            }
+          }
           const exec = window.FeatureSpecExecutor;
           if (!exec || typeof exec.redoLast !== "function") {
             sendResponse({ ok: false, error: "Redo not available" });
@@ -1599,6 +1681,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (type === "REVEAL_HEADER") {
       const count = revealLikelyHeader();
       sendResponse({ ok: true, count });
+      return true;
+    }
+    if (type === "GET_ADD_CONTEXT") {
+      const selector = payload.selector || payload.targetSelector || "";
+      const extractor = window.ContextExtractor;
+      if (!selector) {
+        sendResponse({ ok: false, error: "Missing selector" });
+        return true;
+      }
+      if (!extractor || typeof extractor.extractContext !== "function") {
+        sendResponse({ ok: false, error: "ContextExtractor not available" });
+        return true;
+      }
+      const result = extractor.extractContext(selector);
+      sendResponse(result);
       return true;
     }
     if (type === "GET_PAGE_CONTEXT") {

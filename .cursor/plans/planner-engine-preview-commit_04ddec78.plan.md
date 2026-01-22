@@ -4,36 +4,36 @@ overview: Refactor the Add flow into a safe Planner → Engine → Preview → C
 todos:
   - id: context-extractor
     content: Add limited context extractor + GET_ADD_CONTEXT handler
-    status: pending
+    status: completed
   - id: feature-registry-engine
     content: Implement FeatureRegistry + FeatureEngine primitives
-    status: pending
+    status: completed
     dependencies:
       - context-extractor
   - id: planner-client
     content: Add client-only FeaturePlanner returning JSON plans
-    status: pending
+    status: completed
     dependencies:
       - context-extractor
   - id: preview-commit-flow
     content: Wire preview/apply/undo in sidepanel + contentScript messaging
-    status: pending
+    status: completed
     dependencies:
       - feature-registry-engine
       - planner-client
   - id: store-reapply
     content: Persist committed features + reapply on load/SPA
-    status: pending
+    status: completed
     dependencies:
       - preview-commit-flow
   - id: undo-redo
     content: Add undo/redo for committed features in engine/store
-    status: pending
+    status: completed
     dependencies:
       - store-reapply
   - id: verify
     content: "Run manual tests: preview, commit, reload, SPA nav, undo/redo"
-    status: pending
+    status: completed
     dependencies:
       - undo-redo
 ---

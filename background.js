@@ -100,6 +100,10 @@ async function injectPageRuntime(tabId) {
     "saveEdit.js",
     "featureSpec.js",
     "featureSpecExecutor.js",
+    "contextExtractor.js",
+    "featureRegistry.js",
+    "featureEngine.js",
+    "featureStore.js",
     "messages.js",
     "contentScript.js"
   ];

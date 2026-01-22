@@ -439,6 +439,20 @@
   box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
 }
 
+.webedit-chat-message-preview {
+  background: #fff7ed;
+  color: #0f172a;
+  align-self: flex-start;
+  border-left: 3px solid #f97316;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+}
+
+.webedit-preview-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
 /* References container - holds all reference messages at bottom */
 .webedit-references-container {
   margin-top: auto;
