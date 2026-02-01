@@ -401,7 +401,7 @@
     if (!currentUser?.id) {
       const msg = authState === AUTH_STATES.NOT_TESTER
         ? "Private alpha – access restricted"
-        : "Sign in to view history";
+        : "Log in to view history";
       els.historyList.innerHTML = `<div style="padding:10px; color:#9ca3af; font-size:12px; text-align:center">${msg}</div>`;
       return;
     }
@@ -550,7 +550,7 @@
   function requireTesterAccess(actionName) {
     if (isTesterAuthorized()) return true;
     if (authState === AUTH_STATES.UNAUTHENTICATED) {
-      showNotificationInChat(`Please sign in to ${actionName}`);
+      showNotificationInChat(`Please log in to ${actionName}`);
     } else {
       showNotificationInChat("Access restricted. Private alpha is limited to allowlisted testers.");
     }
@@ -633,7 +633,7 @@
   function renderSignInButton() {
     if (!els.signinBtn) return;
     els.signinBtn.className = "webedit-nav-btn signin-btn";
-    els.signinBtn.textContent = "Sign in";
+    els.signinBtn.textContent = "Log in";
     els.signinBtn.onclick = () => {
       chrome.runtime.sendMessage({ type: "WEBEDIT_OPEN_LOGIN_TAB" });
     };
