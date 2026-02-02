@@ -37,7 +37,6 @@
         "saveEdit.js",
         "featureSpec.js",
         "featureSpecExecutor.js",
-        "PreviewLab.js",
         "contextExtractor.js",
         "featureRegistry.js",
         "featureEngine.js",

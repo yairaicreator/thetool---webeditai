@@ -34,11 +34,10 @@ function getToggleStateKey(scopeKey, markerId) {
   return `${TOGGLE_STATE_PREFIX}${scopeKey}::${markerId}`;
 }
 
-function safeQueryAll(selector, root = document) {
+function safeQueryAll(selector) {
   if (!selector) return [];
-  const scope = root && typeof root.querySelectorAll === "function" ? root : document;
   try {
-    return Array.from(scope.querySelectorAll(selector));
+    return Array.from(document.querySelectorAll(selector));
   } catch {
     return [];
   }
@@ -65,9 +64,9 @@ function pickBestElement(nodeList) {
   return candidates[0] || null;
 }
 
-function sanitizeHtml(html, doc = document) {
+function sanitizeHtml(html) {
   const source = typeof html === "string" ? html : "";
-  const template = doc.createElement("template");
+  const template = document.createElement("template");
   template.innerHTML = source;
 
   const blockedTags = new Set(["SCRIPT", "IFRAME", "OBJECT", "EMBED", "LINK", "META"]);
@@ -105,29 +104,23 @@ function sanitizeHtml(html, doc = document) {
   return template.innerHTML;
 }
 
-function injectCss(cssText, markerId, root = document) {
+function injectCss(cssText, markerId) {
   const css = typeof cssText === "string" ? cssText : "";
   if (!css.trim()) return null;
 
-  const doc = root instanceof ShadowRoot ? root.ownerDocument : document;
-  const style = doc.createElement("style");
+  const head = document.head || document.documentElement;
+  if (!head) return null;
+
+  const style = document.createElement("style");
   style.setAttribute(STYLE_MARKER_ATTR, markerId);
   style.textContent = css;
-
-  if (root instanceof ShadowRoot) {
-    root.appendChild(style);
-    return style;
-  }
-
-  const head = doc.head || doc.documentElement;
-  if (!head) return null;
   head.appendChild(style);
   return style;
 }
 
-function createNodesFromHtml(html, markerId, doc = document) {
-  const clean = sanitizeHtml(html, doc);
-  const template = doc.createElement("template");
+function createNodesFromHtml(html, markerId) {
+  const clean = sanitizeHtml(html);
+  const template = document.createElement("template");
   template.innerHTML = clean;
 
   const nodes = Array.from(template.content.childNodes);
@@ -169,20 +162,21 @@ function insertNodes(target, nodes, position) {
   }
 }
 
-function bindBehaviorForMarker(spec, markerId, root = document) {
+function bindBehaviorForMarker(spec, markerId) {
   const behavior = spec && spec.behavior ? spec.behavior : null;
   if (!behavior || !markerId) return;
 
-  const scopeRoot = root instanceof ShadowRoot ? root : document;
-  const isShadow = scopeRoot instanceof ShadowRoot;
-  const scopeKey = getScopeKey();
+  // Register behavior for delegated handlers (survives trigger remounts).
+  behaviorRegistry.set(String(markerId), behavior);
+  ensureDelegatedBehaviorHandlers();
 
   const triggerAttr = behavior.triggerAttr || "data-webedit-ai-action";
   const triggerValue = behavior.triggerValue || "toggle";
+  const scopeKey = getScopeKey();
   const stateKey = getToggleStateKey(scopeKey, markerId);
 
   // Find triggers inside inserted nodes only.
-  const containers = safeQueryAll(`[${INSERT_MARKER_ATTR}="${CSS.escape(markerId)}"]`, scopeRoot);
+  const containers = safeQueryAll(`[${INSERT_MARKER_ATTR}="${CSS.escape(markerId)}"]`);
   const triggers = [];
   containers.forEach((root) => {
     if (!(root instanceof Element)) return;
@@ -198,7 +192,7 @@ function bindBehaviorForMarker(spec, markerId, root = document) {
   // Basic layout constraint: if we inserted into a header/nav, pin the trigger to top-right.
   // This avoids overlap with chat inputs on some SPAs where the header is a flex row.
   try {
-  const headerish = safeQueryAll("header, nav, [role='banner'], [role='navigation']", scopeRoot);
+    const headerish = safeQueryAll("header, nav, [role='banner'], [role='navigation']");
     const isInHeader = containers.some((c) => headerish.some((h) => h.contains && h.contains(c)));
     if (isInHeader) {
       triggers.forEach((t) => {
@@ -226,11 +220,6 @@ function bindBehaviorForMarker(spec, markerId, root = document) {
     }
   } catch (_) {}
 
-  const resolveTarget = () => {
-    const nodes = safeQueryAll(behavior.targetSelector, scopeRoot);
-    return pickBestElement(nodes);
-  };
-
   const updateTriggerLabel = (trigger, isExpanded) => {
     const expandedLabel = (behavior.expandedLabel || "").trim();
     const collapsedLabel = (behavior.collapsedLabel || "").trim();
@@ -242,51 +231,9 @@ function bindBehaviorForMarker(spec, markerId, root = document) {
     trigger.setAttribute("aria-pressed", String(!!isExpanded));
   };
 
-  const toggleBehavior = (trigger) => {
-    const expandedLabel = (behavior.expandedLabel || "").trim();
-    const collapsedLabel = (behavior.collapsedLabel || "").trim();
-    const updateLabel = (isExpanded) => {
-      const label = isExpanded ? expandedLabel : collapsedLabel;
-      if (label) {
-        trigger.setAttribute("title", label);
-        trigger.setAttribute("aria-label", label);
-      }
-      trigger.setAttribute("aria-pressed", String(!!isExpanded));
-    };
-
-    if (behavior.type === "toggleClass") {
-      const target = resolveTarget();
-      if (!target) return;
-      const className = behavior.className;
-      if (!className) return;
-      const next = !target.classList.contains(className);
-      target.classList.toggle(className, next);
-      updateLabel(next);
-      try { localStorage.setItem(stateKey, next ? "1" : "0"); } catch (_) {}
-      return;
-    }
-
-    if (behavior.type === "toggleStyles") {
-      const target = resolveTarget();
-      if (!target) return;
-      const stylesOn = behavior.stylesOn || {};
-      const stylesOff = behavior.stylesOff || {};
-      const isOn = target.getAttribute("data-webedit-ai-style-state") === "on";
-      const next = !isOn;
-      target.setAttribute("data-webedit-ai-style-state", next ? "on" : "off");
-      const styles = next ? stylesOn : stylesOff;
-      Object.entries(styles).forEach(([k, v]) => {
-        const prop = String(k || "").trim();
-        if (!prop) return;
-        if (v) {
-          target.style.setProperty(prop, String(v), "important");
-        } else {
-          target.style.removeProperty(prop);
-        }
-      });
-      updateLabel(next);
-      try { localStorage.setItem(stateKey, next ? "1" : "0"); } catch (_) {}
-    }
+  const resolveTarget = () => {
+    const nodes = safeQueryAll(behavior.targetSelector);
+    return pickBestElement(nodes);
   };
 
   triggers.forEach((trigger) => {
@@ -327,26 +274,7 @@ function bindBehaviorForMarker(spec, markerId, root = document) {
     }
 
     updateTriggerLabel(trigger, wantExpanded);
-
-    if (isShadow) {
-      trigger.addEventListener("click", (event) => {
-        event.stopPropagation();
-        toggleBehavior(trigger);
-      });
-      trigger.addEventListener("keydown", (event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          toggleBehavior(trigger);
-        }
-      });
-    }
   });
-
-  if (!isShadow) {
-    // Register behavior for delegated handlers (survives trigger remounts).
-    behaviorRegistry.set(String(markerId), behavior);
-    ensureDelegatedBehaviorHandlers();
-  }
 }
 
 function ensureDelegatedBehaviorHandlers() {
@@ -483,13 +411,11 @@ async function applyFeatureSpec(spec, options = {}) {
   const skipPersist = !!options.skipPersist;
   const id = options.id || spec._webeditId || spec.id || uuid();
   const timestamp = Date.now();
-  const root = options.root || document;
-  const targetOverride = options.targetEl instanceof Element ? options.targetEl : null;
-  const rootDoc = root instanceof ShadowRoot ? root.ownerDocument : document;
 
   try {
     if (spec.action === "hide") {
-      const el = targetOverride || pickBestElement(safeQueryAll(spec.selector, root));
+      const nodes = safeQueryAll(spec.selector);
+      const el = pickBestElement(nodes);
       if (!el) return { ok: false, error: `Could not find element for selector: ${spec.selector}` };
 
       const previousDisplay = el.style.getPropertyValue("display");
@@ -509,7 +435,8 @@ async function applyFeatureSpec(spec, options = {}) {
     }
 
     if (spec.action === "customize") {
-      const el = targetOverride || pickBestElement(safeQueryAll(spec.selector, root));
+      const nodes = safeQueryAll(spec.selector);
+      const el = pickBestElement(nodes);
       if (!el) return { ok: false, error: `Could not find element for selector: ${spec.selector}` };
 
       const styles = spec.styles || {};
@@ -534,7 +461,8 @@ async function applyFeatureSpec(spec, options = {}) {
     }
 
     if (spec.action === "text") {
-      const el = targetOverride || pickBestElement(safeQueryAll(spec.selector, root));
+      const nodes = safeQueryAll(spec.selector);
+      const el = pickBestElement(nodes);
       if (!el) return { ok: false, error: `Could not find element for selector: ${spec.selector}` };
 
       const position = spec.position || "replace";
@@ -553,8 +481,8 @@ async function applyFeatureSpec(spec, options = {}) {
         return { ok: true, applied };
       }
 
-      const node = rootDoc.createTextNode(content);
-      const markerSpan = rootDoc.createElement("span");
+      const node = document.createTextNode(content);
+      const markerSpan = document.createElement("span");
       markerSpan.setAttribute(INSERT_MARKER_ATTR, id);
       markerSpan.appendChild(node);
 
@@ -579,13 +507,14 @@ async function applyFeatureSpec(spec, options = {}) {
 
     if (spec.action === "add") {
       const targetSel = spec.targetSelector || spec.selector;
-      const el = targetOverride || pickBestElement(safeQueryAll(targetSel, root));
+      const nodes = safeQueryAll(targetSel);
+      const el = pickBestElement(nodes);
       if (!el) return { ok: false, error: `Could not find target for selector: ${targetSel}` };
 
       // Idempotency: if this spec has already inserted nodes for this id, do not insert again.
-      const already = safeQueryAll(`[${INSERT_MARKER_ATTR}="${CSS.escape(id)}"]`, root);
+      const already = safeQueryAll(`[${INSERT_MARKER_ATTR}="${CSS.escape(id)}"]`);
       if (already.length > 0) {
-        try { bindBehaviorForMarker(spec, id, root); } catch (_) {}
+        try { bindBehaviorForMarker(spec, id); } catch (_) {}
         return { ok: true, applied: { id, spec, timestamp, replayed: true } };
       }
 
@@ -596,9 +525,9 @@ async function applyFeatureSpec(spec, options = {}) {
 
       let nodesToInsert = [];
       if (html) {
-        nodesToInsert = createNodesFromHtml(html, id, rootDoc);
+        nodesToInsert = createNodesFromHtml(html, id);
       } else {
-        const wrapper = rootDoc.createElement("div");
+        const wrapper = document.createElement("div");
         wrapper.setAttribute(INSERT_MARKER_ATTR, id);
         wrapper.textContent = content;
         nodesToInsert = [wrapper];
@@ -608,12 +537,12 @@ async function applyFeatureSpec(spec, options = {}) {
       const replacedOuterHTML = position === "replace" ? el.outerHTML : null;
 
       // Inject CSS (if present) before insertion so initial paint has styles.
-      const injectedStyle = injectCss(css, id, root);
+      const injectedStyle = injectCss(css, id);
       insertNodes(el, nodesToInsert, position);
 
       // Bind safe behavior triggers inside inserted content (click handlers implemented by the extension).
       try {
-        bindBehaviorForMarker(spec, id, root);
+        bindBehaviorForMarker(spec, id);
       } catch (e) {
         console.warn("[WebEdit AI] Failed to bind behavior:", e?.message || e);
       }
