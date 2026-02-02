@@ -1380,6 +1380,74 @@ function scanForOrphanedEdits(activeEdits = []) {
    return orphans;
 }
 
+async function applyFeatureSpecWithPersistence(spec) {
+  const exec = window.FeatureSpecExecutor;
+  if (!exec || typeof exec.applyFeatureSpec !== "function") {
+    return { ok: false, error: "FeatureSpec executor not found" };
+  }
+
+  // Retry a few times on SPA remounts where the target selector may not exist yet.
+  let result = null;
+  let lastErr = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    result = await exec.applyFeatureSpec(spec, { skipPersist: true });
+    if (result?.ok) break;
+    lastErr = result?.error || "apply failed";
+    if (typeof lastErr === "string" && lastErr.includes("Could not find target")) {
+      await new Promise(r => setTimeout(r, 250 * attempt));
+      continue;
+    }
+    break;
+  }
+  if (!result?.ok) {
+    return { ok: false, error: lastErr || "Failed to apply spec" };
+  }
+
+  // Confirm persistence to Supabase for add features; if it fails, undo to avoid lying.
+  if (spec?.action === "add") {
+    const saver = window.SaveEdit?.saveAddFeature;
+    if (typeof saver !== "function") {
+      await exec.undoById?.(result.applied?.id);
+      return { ok: false, error: "SaveEdit module not available; cannot persist feature" };
+    }
+    const saveResp = await saver({
+      ...spec,
+      selector: spec.selector || spec.targetSelector,
+      name: spec.name || "AI Feature",
+      purpose: spec.purpose || spec.description || "AI generated feature"
+    });
+    if (!saveResp?.ok) {
+      try { await exec.undoById?.(result.applied?.id); } catch (_) {}
+      return { ok: false, error: `Failed to persist to Supabase: ${saveResp?.error || "unknown error"}` };
+    }
+
+    // Replace the local (temporary) insertion with a cloud-managed insertion keyed by the Supabase edit id.
+    const persistedEditId = saveResp?.edit?.id;
+    if (persistedEditId) {
+      try { await exec.undoById?.(result.applied?.id); } catch (_) {}
+      const replayed = await exec.applyFeatureSpec(spec, { replay: true, id: persistedEditId, skipPersist: true });
+      if (replayed?.ok) {
+        try {
+          const nodes = document.querySelectorAll(`[data-webedit-ai-insert-id="${cssEscapeSafe(persistedEditId)}"]`);
+          nodes.forEach((el) => {
+            try { el.setAttribute(WEBEDIT_CLOUD_EDIT_ATTR, persistedEditId); } catch (_) {}
+          });
+        } catch (_) {}
+      }
+      return { ok: true, applied: replayed?.applied || result.applied, persisted: true, edit: saveResp.edit || null };
+    }
+
+    return { ok: true, applied: result.applied, persisted: true, edit: saveResp.edit || null };
+  }
+
+  // Non-add actions are applied but not persisted via SaveEdit yet.
+  return { ok: true, applied: result.applied, persisted: false };
+}
+
+function createPreviewId() {
+  return `preview-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "WEBEDIT_SESSION_UPDATED") {
     (async () => {
@@ -1485,74 +1553,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (type === "APPLY_FEATURE_SPEC") {
       (async () => {
         try {
-          const exec = window.FeatureSpecExecutor;
-          if (!exec || typeof exec.applyFeatureSpec !== "function") {
-            sendResponse({ ok: false, error: "FeatureSpec executor not found" });
-            return;
-          }
-
-          // Retry a few times on SPA remounts where the target selector may not exist yet.
           const spec = payload.spec;
-          let result = null;
-          let lastErr = null;
-          for (let attempt = 1; attempt <= 3; attempt++) {
-            result = await exec.applyFeatureSpec(spec, { skipPersist: true });
-            if (result?.ok) break;
-            lastErr = result?.error || "apply failed";
-            if (typeof lastErr === "string" && lastErr.includes("Could not find target")) {
-              await new Promise(r => setTimeout(r, 250 * attempt));
-              continue;
-            }
-            break;
-          }
-          if (!result?.ok) {
-            sendResponse({ ok: false, error: lastErr || "Failed to apply spec" });
+          const applyResult = await applyFeatureSpecWithPersistence(spec);
+          sendResponse(applyResult);
+        } catch (error) {
+          sendResponse({ ok: false, error: error.message });
+        }
+      })();
+      return true;
+    }
+    if (type === "PREVIEW_FEATURE_SPEC") {
+      (async () => {
+        try {
+          const lab = window.PreviewLab;
+          if (!lab || typeof lab.openPreview !== "function") {
+            sendResponse({ ok: false, error: "PreviewLab not available" });
             return;
           }
-
-          // Confirm persistence to Supabase for add features; if it fails, undo to avoid lying.
-          if (spec?.action === "add") {
-            const saver = window.SaveEdit?.saveAddFeature;
-            if (typeof saver !== "function") {
-              await exec.undoById?.(result.applied?.id);
-              sendResponse({ ok: false, error: "SaveEdit module not available; cannot persist feature" });
-              return;
-            }
-            const saveResp = await saver({
-              ...spec,
-              selector: spec.selector || spec.targetSelector,
-              name: spec.name || "AI Feature",
-              purpose: spec.purpose || spec.description || "AI generated feature"
-            });
-            if (!saveResp?.ok) {
-              try { await exec.undoById?.(result.applied?.id); } catch (_) {}
-              sendResponse({ ok: false, error: `Failed to persist to Supabase: ${saveResp?.error || "unknown error"}` });
-              return;
-            }
-
-            // Replace the local (temporary) insertion with a cloud-managed insertion keyed by the Supabase edit id.
-            const persistedEditId = saveResp?.edit?.id;
-            if (persistedEditId) {
-              try { await exec.undoById?.(result.applied?.id); } catch (_) {}
-              const replayed = await exec.applyFeatureSpec(spec, { replay: true, id: persistedEditId, skipPersist: true });
-              if (replayed?.ok) {
-                try {
-                  const nodes = document.querySelectorAll(`[data-webedit-ai-insert-id="${cssEscapeSafe(persistedEditId)}"]`);
-                  nodes.forEach((el) => {
-                    try { el.setAttribute(WEBEDIT_CLOUD_EDIT_ATTR, persistedEditId); } catch (_) {}
-                  });
-                } catch (_) {}
-              }
-              sendResponse({ ok: true, applied: replayed?.applied || result.applied, persisted: true, edit: saveResp.edit || null });
-              return;
-            }
-
-            sendResponse({ ok: true, applied: result.applied, persisted: true, edit: saveResp.edit || null });
-            return;
-          }
-
-          // Non-add actions are applied but not persisted via SaveEdit yet.
-          sendResponse({ ok: true, applied: result.applied, persisted: false });
+          const previewId = payload.previewId || createPreviewId();
+          lab.openPreview({ kind: "spec", spec: payload.spec, previewId });
+          sendResponse({ ok: true, previewId });
         } catch (error) {
           sendResponse({ ok: false, error: error.message });
         }
@@ -1560,13 +1580,75 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true;
     }
     if (type === "PREVIEW_FEATURE") {
-      const engine = window.FeatureEngine;
-      if (!engine || typeof engine.applyFeature !== "function") {
-        sendResponse({ ok: false, error: "FeatureEngine not available" });
+      const lab = window.PreviewLab;
+      if (!lab || typeof lab.openPreview !== "function") {
+        sendResponse({ ok: false, error: "PreviewLab not available" });
         return true;
       }
-      const result = engine.applyFeature(payload.plan, "preview");
-      sendResponse(result);
+      const previewId = payload.previewId || createPreviewId();
+      lab.openPreview({ kind: "plan", plan: payload.plan, previewId });
+      sendResponse({ ok: true, previewId, plan: payload.plan });
+      return true;
+    }
+    if (type === "LAB_APPLY_PREVIEW") {
+      (async () => {
+        try {
+          const lab = window.PreviewLab;
+          if (!lab || typeof lab.getPreviewPayload !== "function") {
+            sendResponse({ ok: false, error: "PreviewLab not available" });
+            return;
+          }
+          const preview = lab.getPreviewPayload(payload.previewId);
+          if (!preview) {
+            sendResponse({ ok: false, error: "Preview not found" });
+            return;
+          }
+          if (preview.kind === "spec") {
+            const spec = { ...(preview.spec || {}) };
+            const extracted = preview.extracted || {};
+            if (extracted.html) spec.html = extracted.html;
+            if (typeof extracted.css === "string") spec.css = extracted.css;
+            const applyResult = await applyFeatureSpecWithPersistence(spec);
+            if (applyResult?.ok) {
+              lab.clearPreview();
+            }
+            sendResponse(applyResult);
+            return;
+          }
+
+          if (preview.kind === "plan") {
+            const engine = window.FeatureEngine;
+            const store = window.FeatureStore;
+            if (!engine || typeof engine.applyFeature !== "function") {
+              sendResponse({ ok: false, error: "FeatureEngine not available" });
+              return;
+            }
+            const result = engine.applyFeature(preview.plan, "commit");
+            if (!result?.ok) {
+              sendResponse(result || { ok: false, error: "Commit failed" });
+              return;
+            }
+            if (result.record && store?.addCommittedFeature) {
+              await store.addCommittedFeature(result.record);
+            }
+            lab.clearPreview();
+            sendResponse({ ok: true, record: result.record || null });
+            return;
+          }
+
+          sendResponse({ ok: false, error: "Unknown preview kind" });
+        } catch (error) {
+          sendResponse({ ok: false, error: error.message });
+        }
+      })();
+      return true;
+    }
+    if (type === "LAB_DISCARD_PREVIEW") {
+      const lab = window.PreviewLab;
+      if (lab && typeof lab.clearPreview === "function") {
+        lab.clearPreview();
+      }
+      sendResponse({ ok: true });
       return true;
     }
     if (type === "COMMIT_FEATURE") {

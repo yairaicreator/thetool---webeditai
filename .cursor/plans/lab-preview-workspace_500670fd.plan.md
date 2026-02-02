@@ -4,16 +4,16 @@ overview: Introduce a floating Shadow DOM “Lab” preview for all AI-generated
 todos:
   - id: lab-ui
     content: Create PreviewLab with ShadowRoot + drag/resize + buttons
-    status: pending
+    status: completed
   - id: lab-preview-routing
     content: Route PREVIEW_FEATURE/_SPEC into Lab, store state
-    status: pending
+    status: completed
   - id: lab-commit-bridge
     content: Apply/Refine/Undo from Lab to live DOM paths
-    status: pending
+    status: completed
   - id: executor-support
     content: Add shadowRoot support in FeatureSpecExecutor/Engine
-    status: pending
+    status: completed
 isProject: false
 ---
 
@@ -94,4 +94,11 @@ if (type === "COMMIT_FEATURE") { /* ... */ }
 - Trigger standard AI edit → confirm no live DOM change until Apply; Refine updates the Lab; Undo clears Lab.
 - Verify elements inside the Lab are interactive (click/hover) and that styles match the host page.
 ```
+
+### Suggested Tweaks for Efficiency
+
+While the plan is strong, adding these two small technical details to your Cursor instructions will save you debugging time:
+
+1. **Event Bubbling Isolation:** Ensure that clicks or keyboard events inside the "Lab" don't trigger event listeners on the live website. For example, if a user clicks a button in the Lab, you don't want the background website to think they clicked an ad or a link.
+2. **The "Z-Index" War:** Explicitly tell Cursor to give the Lab a very high `z-index` (e.g., `2147483647`) to ensure it stays on top of sticky headers or other overlays on complex sites.
 

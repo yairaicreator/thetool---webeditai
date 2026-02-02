@@ -7,10 +7,11 @@ const FeatureEngine = (() => {
   const DATA_PREVIEW_BADGE = "data-webedit-preview-badge";
   const previewHandles = new Map(); // previewId -> { plan, snapshot }
 
-  function safeQuery(selector) {
+  function safeQuery(selector, root = document) {
     if (!selector) return null;
     try {
-      return document.querySelector(selector);
+      const scope = root && typeof root.querySelector === "function" ? root : document;
+      return scope.querySelector(selector);
     } catch (_) {
       return null;
     }
@@ -50,10 +51,10 @@ const FeatureEngine = (() => {
     });
   }
 
-  function addPreviewBadge(el, previewId) {
+  function addPreviewBadge(el, previewId, doc = document) {
     const existing = el.querySelector(`[${DATA_PREVIEW_BADGE}="${previewId}"]`);
     if (existing) return;
-    const badge = document.createElement("div");
+    const badge = doc.createElement("div");
     badge.setAttribute(DATA_PREVIEW_BADGE, previewId);
     badge.textContent = "Preview";
     badge.style.setProperty("position", "absolute", "important");
@@ -163,7 +164,8 @@ const FeatureEngine = (() => {
       return { ok: false, error: validation?.error || "Invalid plan" };
     }
     const normalized = validation.plan;
-    const el = safeQuery(normalized.targetSelector);
+    const root = options.root || document;
+    const el = options.targetEl || safeQuery(normalized.targetSelector, root);
     if (!el) return { ok: false, error: "Target element not found" };
 
     const featureId = options.id || normalized.id || `feat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -190,8 +192,13 @@ const FeatureEngine = (() => {
     }
 
     if (mode === "preview") {
-      addPreviewBadge(el, featureId);
-      previewHandles.set(featureId, { plan: normalized, snapshot });
+      if (!options.skipBadges) {
+        const doc = root instanceof ShadowRoot ? root.ownerDocument : document;
+        addPreviewBadge(el, featureId, doc);
+      }
+      if (!options.skipPreviewStore) {
+        previewHandles.set(featureId, { plan: normalized, snapshot });
+      }
       return { ok: true, previewId: featureId, plan: normalized };
     }
 

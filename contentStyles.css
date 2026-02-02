@@ -56,3 +56,102 @@ body.webedit-panel-open {
   }
 }
 
+/* WebEdit Preview Lab */
+.webedit-preview-lab {
+  position: fixed;
+  top: 80px;
+  right: 36px;
+  width: 420px;
+  height: 360px;
+  display: none;
+  flex-direction: column;
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: 14px;
+  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.35);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  pointer-events: auto;
+}
+
+.webedit-preview-lab-open {
+  display: flex;
+}
+
+.webedit-preview-lab-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: #111827;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.25);
+  cursor: grab;
+  user-select: none;
+}
+
+.webedit-preview-lab-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.webedit-preview-lab-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.webedit-preview-lab-btn {
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  background: rgba(30, 41, 59, 0.9);
+  color: #e2e8f0;
+  border-radius: 8px;
+  font-size: 12px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.webedit-preview-lab-btn:hover {
+  background: rgba(59, 130, 246, 0.2);
+  border-color: rgba(59, 130, 246, 0.6);
+}
+
+.webedit-preview-lab-body {
+  flex: 1;
+  position: relative;
+  background: #f8fafc;
+  color: #0f172a;
+  overflow: hidden;
+}
+
+.webedit-preview-lab-preview-host {
+  position: absolute;
+  inset: 0;
+}
+
+.webedit-preview-lab-shadow-container {
+  min-height: 100%;
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+.webedit-preview-lab-status,
+.webedit-preview-lab-placeholder {
+  font-size: 13px;
+  color: #0f172a;
+  background: #e2e8f0;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.webedit-preview-lab-resizer {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 14px;
+  height: 14px;
+  border-right: 2px solid rgba(148, 163, 184, 0.8);
+  border-bottom: 2px solid rgba(148, 163, 184, 0.8);
+  cursor: nwse-resize;
+}
+
