@@ -12,6 +12,7 @@
  * @property {"before"|"after"|"inside"|"replace"=} position
  * @property {string=} html
  * @property {string=} css
+ * @property {string=} js
  * @property {Object=} behavior
  */
 
@@ -118,6 +119,7 @@ function parseFeatureSpec(raw) {
   const content = normalizeString(raw.content);
   const html = typeof raw.html === "string" ? raw.html : "";
   const css = typeof raw.css === "string" ? raw.css : "";
+  const js = typeof raw.js === "string" ? raw.js : "";
   const behavior = normalizeBehavior(raw.behavior);
 
   let position = normalizePosition(raw.position);
@@ -182,6 +184,7 @@ function parseFeatureSpec(raw) {
     position: position || undefined,
     html: html || undefined,
     css: css || undefined,
+    js: js || undefined,
     behavior: behavior || undefined
   };
 

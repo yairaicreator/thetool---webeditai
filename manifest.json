@@ -41,6 +41,7 @@
         "featureRegistry.js",
         "featureEngine.js",
         "featureStore.js",
+        "previewLab.js",
         "contentScript.js"
       ],
       "css": ["contentStyles.css"],

@@ -115,8 +115,13 @@ function mountFeature(spec, hostDocument = document) {
   - Provide an API on `window.PreviewLab` (or module export) with:
     - `open(previewId, title)` / `close()` / `clear()`
     - `setContent({ html, css, js })` with injection scoped to the lab’s shadow root
+      - If the AI generates a script that uses `document.querySelector`, it might accidentally find elements on the *live page* instead of inside the *Lab*.
+        - **Improvement:** Wrap the AI-generated JS in an IIFE (Immediately Invoked Function Expression) that rebinds `document` to the Lab's `shadowRoot`.
     - `getContent()` to extract current HTML/CSS/JS from the shadow root for Apply
   - Use `pointer-events` and `user-select` settings to ensure interactive state inside the lab.
+  - Z-Index Conflict Resolution
+    Some websites (like YouTube or Facebook) use very high z-indexes for their own modals.
+    - **Improvement:** Explicitly set the Lab's host element z-index to the maximum possible integer: `2147483647`.
 2. **Implement style inheritance utility for the Shadow Root**
   - Add a helper (inside `previewLab.js` or a new shared module) that clones host page styles into the lab’s shadow root.
   - Strategy:
@@ -135,6 +140,9 @@ function mountFeature(spec, hostDocument = document) {
   - On `PREVIEW_FEATURE`, instead of calling `FeatureEngine.applyFeature`, render via lab and store `{ previewId, plan, labSnapshot }` in a preview map for Apply/Undo.
   - On `COMMIT_FEATURE` with previewId, read lab content and inject into the live target using the existing executor, then close/clear lab.
   - On `UNDO_FEATURE`, clear lab preview for that previewId and respond ok.
+  - The "Ghost Target" Indicator
+    When the Lab is open, the user might forget where they originally "Picked" the element.
+    - **Improvement:** While the Lab floats, the actual target element on the live page should have a temporary "Ghost" highlight (e.g., a dashed purple border) to show exactly where the code will be injected upon clicking "Apply."
 5. **Wire sidepanel preview state to open the Lab when preview is ready**
   - In `[sidepanel.js](sidepanel.js)`, when a preview message is added, send `OPEN_PREVIEW_LAB` (with previewId + plan/spec) to the active tab.
   - Keep existing Apply/Undo/Refine buttons (per decision) and have them call the lab-enabled message types.
@@ -149,7 +157,9 @@ function mountFeature(spec, hostDocument = document) {
     - Hover/click interactions work inside the lab.
     - Apply copies content into target element and removes lab.
     - Undo/Close clears lab without touching DOM.
-    - Refine updates lab content without closing.
+    - Refine updates lab content without closing
+
+
 
 ## Todos
 

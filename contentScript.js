@@ -15,6 +15,166 @@ let authStateCheckedAt = 0;
 let authStateEmail = null;
 const AUTH_STATE_TTL_MS = 0; // Always revalidate allowlist status
 
+// Preview Lab state
+const PREVIEW_LAB_TARGET_ATTR = "data-webedit-preview-target";
+const PREVIEW_GHOST_ATTR = "data-webedit-preview-ghost";
+const previewLabPreviews = new Map(); // previewId -> { type, plan, spec, selector }
+
+function getPreviewLab() {
+  return window.PreviewLab || null;
+}
+
+function ensureGhostStyles() {
+  if (document.getElementById("webedit-preview-ghost-style")) return;
+  const style = document.createElement("style");
+  style.id = "webedit-preview-ghost-style";
+  style.textContent = `
+    [${PREVIEW_GHOST_ATTR}] {
+      outline: 2px dashed #a855f7 !important;
+      outline-offset: 2px !important;
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+function setGhostHighlight(previewId, selector) {
+  ensureGhostStyles();
+  clearGhostHighlight(previewId);
+  if (!selector) return;
+  let el = null;
+  try { el = document.querySelector(selector); } catch (_) { el = null; }
+  if (!el) return;
+  el.setAttribute(PREVIEW_GHOST_ATTR, previewId);
+}
+
+function clearGhostHighlight(previewId) {
+  const nodes = document.querySelectorAll(`[${PREVIEW_GHOST_ATTR}="${CSS.escape(previewId)}"]`);
+  nodes.forEach((el) => el.removeAttribute(PREVIEW_GHOST_ATTR));
+}
+
+function notifyPreviewAction(action, previewId) {
+  chrome.runtime.sendMessage({
+    type: "WEBEDIT_PREVIEW_ACTION",
+    payload: { action, previewId }
+  }).catch(() => {});
+}
+
+function openPreviewLab(previewId, title) {
+  const lab = getPreviewLab();
+  if (!lab) return;
+  lab.open(previewId, title || "Preview Lab", {
+    onApply: () => notifyPreviewAction("apply", previewId),
+    onRefine: () => notifyPreviewAction("refine", previewId),
+    onUndo: () => notifyPreviewAction("undo", previewId),
+    onClose: () => notifyPreviewAction("undo", previewId)
+  });
+}
+
+function applyPlanPreviewToElement(el, plan) {
+  if (!el || !plan) return;
+  const type = plan.feature_type;
+  if (type === "ResizablePanel") {
+    const fullscreen = plan.parameters?.mode === "fullscreen";
+    if (fullscreen) {
+      el.style.setProperty("width", "100%", "important");
+      el.style.setProperty("height", "100%", "important");
+    } else {
+      if (plan.parameters?.width) el.style.setProperty("width", plan.parameters.width, "important");
+      if (plan.parameters?.height) el.style.setProperty("height", plan.parameters.height, "important");
+    }
+    el.style.setProperty("outline", "2px dashed #4f46e5", "important");
+    return;
+  }
+  if (type === "HideElement") {
+    el.style.setProperty("opacity", "0.25", "important");
+    el.style.setProperty("outline", "2px dashed #ef4444", "important");
+    return;
+  }
+  if (type === "MoveElement") {
+    const dir = plan.parameters?.direction === "down" ? 1 : -1;
+    el.style.setProperty("transform", `translateY(${dir * 12}px)`, "important");
+    el.style.setProperty("outline", "2px dashed #10b981", "important");
+    return;
+  }
+  if (type === "StickyElement") {
+    el.style.setProperty("position", "sticky", "important");
+    el.style.setProperty("top", plan.parameters?.top || "0px", "important");
+    el.style.setProperty("outline", "2px dashed #0ea5e9", "important");
+  }
+}
+
+function renderPlanPreviewInLab(plan, previewId) {
+  const lab = getPreviewLab();
+  if (!lab) return { ok: false, error: "PreviewLab not available" };
+  const selector = plan?.targetSelector || "";
+  let target = null;
+  try { target = selector ? document.querySelector(selector) : null; } catch (_) { target = null; }
+  if (!target) return { ok: false, error: "Target element not found" };
+
+  openPreviewLab(previewId, "Preview Lab");
+  lab.clearContent();
+  const clone = target.cloneNode(true);
+  clone.setAttribute(PREVIEW_LAB_TARGET_ATTR, "1");
+  const mount = lab.getMountNode();
+  if (!mount) return { ok: false, error: "Preview mount unavailable" };
+  mount.appendChild(clone);
+
+  const shadowRoot = lab.getShadowRoot();
+  const previewTarget = shadowRoot?.querySelector(`[${PREVIEW_LAB_TARGET_ATTR}="1"]`);
+  if (!previewTarget) return { ok: false, error: "Preview target missing" };
+  applyPlanPreviewToElement(previewTarget, plan);
+  return { ok: true };
+}
+
+async function renderSpecPreviewInLab(spec, previewId) {
+  const lab = getPreviewLab();
+  if (!lab) return { ok: false, error: "PreviewLab not available" };
+  const exec = window.FeatureSpecExecutor;
+  if (!exec || typeof exec.applyFeatureSpec !== "function") {
+    return { ok: false, error: "FeatureSpec executor not available" };
+  }
+
+  openPreviewLab(previewId, "Preview Lab");
+  lab.clearContent();
+  const mount = lab.getMountNode();
+  const shadowRoot = lab.getShadowRoot();
+  if (!mount || !shadowRoot) return { ok: false, error: "Preview mount unavailable" };
+
+  const selector = spec.selector || spec.targetSelector || "";
+  let previewTarget = null;
+
+  if (spec.action === "add") {
+    previewTarget = document.createElement("div");
+    previewTarget.setAttribute(PREVIEW_LAB_TARGET_ATTR, "1");
+    mount.appendChild(previewTarget);
+  } else {
+    let target = null;
+    try { target = selector ? document.querySelector(selector) : null; } catch (_) { target = null; }
+    if (!target) return { ok: false, error: "Target element not found" };
+    const clone = target.cloneNode(true);
+    clone.setAttribute(PREVIEW_LAB_TARGET_ATTR, "1");
+    mount.appendChild(clone);
+    previewTarget = shadowRoot.querySelector(`[${PREVIEW_LAB_TARGET_ATTR}="1"]`);
+  }
+
+  if (!previewTarget) return { ok: false, error: "Preview target missing" };
+
+  const previewSpec = {
+    ...spec,
+    selector: `[${PREVIEW_LAB_TARGET_ATTR}="1"]`,
+    targetSelector: `[${PREVIEW_LAB_TARGET_ATTR}="1"]`
+  };
+
+  const result = await exec.applyFeatureSpec(previewSpec, {
+    root: shadowRoot,
+    targetOverride: previewTarget,
+    skipPersist: true,
+    preview: true,
+    id: previewId
+  });
+  return result?.ok ? { ok: true } : { ok: false, error: result?.error || "Preview failed" };
+}
+
 // ============================================================
 // Supabase "edits" (cloud) live application + Undo/Redo sync
 // ============================================================
@@ -1310,6 +1470,74 @@ function alignElement(selector, align) {
   return false;
 }
 
+async function applyFeatureSpecFlow(spec) {
+  try {
+    const exec = window.FeatureSpecExecutor;
+    if (!exec || typeof exec.applyFeatureSpec !== "function") {
+      return { ok: false, error: "FeatureSpec executor not found" };
+    }
+
+    // Retry a few times on SPA remounts where the target selector may not exist yet.
+    let result = null;
+    let lastErr = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      result = await exec.applyFeatureSpec(spec, { skipPersist: true });
+      if (result?.ok) break;
+      lastErr = result?.error || "apply failed";
+      if (typeof lastErr === "string" && lastErr.includes("Could not find target")) {
+        await new Promise(r => setTimeout(r, 250 * attempt));
+        continue;
+      }
+      break;
+    }
+    if (!result?.ok) {
+      return { ok: false, error: lastErr || "Failed to apply spec" };
+    }
+
+    // Confirm persistence to Supabase for add features; if it fails, undo to avoid lying.
+    if (spec?.action === "add") {
+      const saver = window.SaveEdit?.saveAddFeature;
+      if (typeof saver !== "function") {
+        await exec.undoById?.(result.applied?.id);
+        return { ok: false, error: "SaveEdit module not available; cannot persist feature" };
+      }
+      const saveResp = await saver({
+        ...spec,
+        selector: spec.selector || spec.targetSelector,
+        name: spec.name || "AI Feature",
+        purpose: spec.purpose || spec.description || "AI generated feature"
+      });
+      if (!saveResp?.ok) {
+        try { await exec.undoById?.(result.applied?.id); } catch (_) {}
+        return { ok: false, error: `Failed to persist to Supabase: ${saveResp?.error || "unknown error"}` };
+      }
+
+      // Replace the local (temporary) insertion with a cloud-managed insertion keyed by the Supabase edit id.
+      const persistedEditId = saveResp?.edit?.id;
+      if (persistedEditId) {
+        try { await exec.undoById?.(result.applied?.id); } catch (_) {}
+        const replayed = await exec.applyFeatureSpec(spec, { replay: true, id: persistedEditId, skipPersist: true });
+        if (replayed?.ok) {
+          try {
+            const nodes = document.querySelectorAll(`[data-webedit-ai-insert-id="${cssEscapeSafe(persistedEditId)}"]`);
+            nodes.forEach((el) => {
+              try { el.setAttribute(WEBEDIT_CLOUD_EDIT_ATTR, persistedEditId); } catch (_) {}
+            });
+          } catch (_) {}
+        }
+        return { ok: true, applied: replayed?.applied || result.applied, persisted: true, edit: saveResp.edit || null };
+      }
+
+      return { ok: true, applied: result.applied, persisted: true, edit: saveResp.edit || null };
+    }
+
+    // Non-add actions are applied but not persisted via SaveEdit yet.
+    return { ok: true, applied: result.applied, persisted: false };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
 function getPagePlainText() {
   const text = document.body?.innerText || "";
   return text.slice(0, 5000).trim();
@@ -1484,89 +1712,105 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     if (type === "APPLY_FEATURE_SPEC") {
       (async () => {
-        try {
-          const exec = window.FeatureSpecExecutor;
-          if (!exec || typeof exec.applyFeatureSpec !== "function") {
-            sendResponse({ ok: false, error: "FeatureSpec executor not found" });
-            return;
-          }
-
-          // Retry a few times on SPA remounts where the target selector may not exist yet.
-          const spec = payload.spec;
-          let result = null;
-          let lastErr = null;
-          for (let attempt = 1; attempt <= 3; attempt++) {
-            result = await exec.applyFeatureSpec(spec, { skipPersist: true });
-            if (result?.ok) break;
-            lastErr = result?.error || "apply failed";
-            if (typeof lastErr === "string" && lastErr.includes("Could not find target")) {
-              await new Promise(r => setTimeout(r, 250 * attempt));
-              continue;
-            }
-            break;
-          }
-          if (!result?.ok) {
-            sendResponse({ ok: false, error: lastErr || "Failed to apply spec" });
-            return;
-          }
-
-          // Confirm persistence to Supabase for add features; if it fails, undo to avoid lying.
-          if (spec?.action === "add") {
-            const saver = window.SaveEdit?.saveAddFeature;
-            if (typeof saver !== "function") {
-              await exec.undoById?.(result.applied?.id);
-              sendResponse({ ok: false, error: "SaveEdit module not available; cannot persist feature" });
-              return;
-            }
-            const saveResp = await saver({
-              ...spec,
-              selector: spec.selector || spec.targetSelector,
-              name: spec.name || "AI Feature",
-              purpose: spec.purpose || spec.description || "AI generated feature"
-            });
-            if (!saveResp?.ok) {
-              try { await exec.undoById?.(result.applied?.id); } catch (_) {}
-              sendResponse({ ok: false, error: `Failed to persist to Supabase: ${saveResp?.error || "unknown error"}` });
-              return;
-            }
-
-            // Replace the local (temporary) insertion with a cloud-managed insertion keyed by the Supabase edit id.
-            const persistedEditId = saveResp?.edit?.id;
-            if (persistedEditId) {
-              try { await exec.undoById?.(result.applied?.id); } catch (_) {}
-              const replayed = await exec.applyFeatureSpec(spec, { replay: true, id: persistedEditId, skipPersist: true });
-              if (replayed?.ok) {
-                try {
-                  const nodes = document.querySelectorAll(`[data-webedit-ai-insert-id="${cssEscapeSafe(persistedEditId)}"]`);
-                  nodes.forEach((el) => {
-                    try { el.setAttribute(WEBEDIT_CLOUD_EDIT_ATTR, persistedEditId); } catch (_) {}
-                  });
-                } catch (_) {}
-              }
-              sendResponse({ ok: true, applied: replayed?.applied || result.applied, persisted: true, edit: saveResp.edit || null });
-              return;
-            }
-
-            sendResponse({ ok: true, applied: result.applied, persisted: true, edit: saveResp.edit || null });
-            return;
-          }
-
-          // Non-add actions are applied but not persisted via SaveEdit yet.
-          sendResponse({ ok: true, applied: result.applied, persisted: false });
-        } catch (error) {
-          sendResponse({ ok: false, error: error.message });
-        }
+        const spec = payload.spec;
+        const result = await applyFeatureSpecFlow(spec);
+        sendResponse(result);
       })();
       return true;
     }
-    if (type === "PREVIEW_FEATURE") {
-      const engine = window.FeatureEngine;
-      if (!engine || typeof engine.applyFeature !== "function") {
-        sendResponse({ ok: false, error: "FeatureEngine not available" });
+    if (type === "PREVIEW_FEATURE_SPEC") {
+      (async () => {
+        const spec = payload.spec || null;
+        if (!spec) {
+          sendResponse({ ok: false, error: "Missing spec" });
+          return;
+        }
+        const previewId = payload.previewId || `preview-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const res = await renderSpecPreviewInLab(spec, previewId);
+        if (res?.ok) {
+          previewLabPreviews.set(previewId, {
+            type: "spec",
+            spec,
+            selector: spec.targetSelector || spec.selector || ""
+          });
+          if (spec.targetSelector || spec.selector) {
+            setGhostHighlight(previewId, spec.targetSelector || spec.selector);
+          }
+          sendResponse({ ok: true, previewId });
+          return;
+        }
+        sendResponse({ ok: false, error: res?.error || "Preview failed" });
+      })();
+      return true;
+    }
+    if (type === "COMMIT_FEATURE_SPEC") {
+      (async () => {
+        const previewId = payload.previewId || null;
+        const handle = previewId ? previewLabPreviews.get(previewId) : null;
+        if (!handle || handle.type !== "spec") {
+          sendResponse({ ok: false, error: "Preview not found" });
+          return;
+        }
+        const lab = getPreviewLab();
+        const content = lab?.getContent?.() || {};
+        const shadowRoot = lab?.getShadowRoot?.();
+        const previewTarget = shadowRoot?.querySelector(`[${PREVIEW_LAB_TARGET_ATTR}="1"]`);
+        let html = content.html || "";
+        if (previewTarget && previewTarget.innerHTML.trim()) {
+          html = previewTarget.innerHTML;
+        } else if (previewTarget) {
+          const mount = lab?.getMountNode?.();
+          if (mount) {
+            const clone = mount.cloneNode(true);
+            const placeholder = clone.querySelector(`[${PREVIEW_LAB_TARGET_ATTR}="1"]`);
+            if (placeholder) placeholder.remove();
+            html = clone.innerHTML;
+          }
+        }
+        const specToApply = {
+          ...handle.spec,
+          html: html || handle.spec.html,
+          css: content.css || handle.spec.css,
+          js: content.js || handle.spec.js
+        };
+        const result = await applyFeatureSpecFlow(specToApply);
+        if (result?.ok) {
+          previewLabPreviews.delete(previewId);
+          clearGhostHighlight(previewId);
+          lab?.close?.();
+        }
+        sendResponse(result);
+      })();
+      return true;
+    }
+    if (type === "UNDO_FEATURE_SPEC") {
+      const previewId = payload.previewId || null;
+      if (previewId && previewLabPreviews.has(previewId)) {
+        previewLabPreviews.delete(previewId);
+        clearGhostHighlight(previewId);
+        const lab = getPreviewLab();
+        lab?.close?.();
+        sendResponse({ ok: true });
         return true;
       }
-      const result = engine.applyFeature(payload.plan, "preview");
-      sendResponse(result);
+      sendResponse({ ok: false, error: "Preview not found" });
+      return true;
+    }
+    if (type === "PREVIEW_FEATURE") {
+      const plan = payload.plan || null;
+      if (!plan) {
+        sendResponse({ ok: false, error: "Missing plan" });
+        return true;
+      }
+      const previewId = payload.previewId || plan.id || `preview-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const res = renderPlanPreviewInLab(plan, previewId);
+      if (res?.ok) {
+        previewLabPreviews.set(previewId, { type: "plan", plan, selector: plan.targetSelector || "" });
+        if (plan.targetSelector) setGhostHighlight(previewId, plan.targetSelector);
+        sendResponse({ ok: true, previewId, plan });
+        return true;
+      }
+      sendResponse({ ok: false, error: res?.error || "Preview failed" });
       return true;
     }
     if (type === "COMMIT_FEATURE") {
@@ -1584,7 +1828,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const previewId = payload.previewId || null;
         const plan = payload.plan || null;
         let result = null;
-        if (previewId) {
+        if (previewId && previewLabPreviews.has(previewId)) {
+          const handle = previewLabPreviews.get(previewId);
+          if (handle?.type === "plan") {
+            result = engine.applyFeature(handle.plan, "commit", { id: previewId });
+          } else {
+            result = { ok: false, error: "Preview type mismatch" };
+          }
+        } else if (previewId) {
           result = engine.commitPreview(previewId);
         } else {
           result = engine.applyFeature(plan, "commit");
@@ -1596,17 +1847,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (result.record) {
           await store.addCommittedFeature(result.record);
         }
+        if (previewId && previewLabPreviews.has(previewId)) {
+          previewLabPreviews.delete(previewId);
+          clearGhostHighlight(previewId);
+          const lab = getPreviewLab();
+          lab?.close?.();
+        }
         sendResponse({ ok: true, record: result.record || null });
       })();
       return true;
     }
     if (type === "UNDO_FEATURE") {
       const engine = window.FeatureEngine;
-      if (!engine) {
-        sendResponse({ ok: false, error: "FeatureEngine not available" });
-        return true;
-      }
       if (payload.previewId) {
+        if (previewLabPreviews.has(payload.previewId)) {
+          previewLabPreviews.delete(payload.previewId);
+          clearGhostHighlight(payload.previewId);
+          const lab = getPreviewLab();
+          lab?.close?.();
+          sendResponse({ ok: true });
+          return true;
+        }
+        if (!engine) {
+          sendResponse({ ok: false, error: "FeatureEngine not available" });
+          return true;
+        }
         const res = engine.undoPreview(payload.previewId);
         sendResponse(res);
         return true;

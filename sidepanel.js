@@ -152,8 +152,12 @@
 
   async function handlePreviewApply(previewId) {
     if (!previewId) return;
+    const msg = chatMessages.find(m => m.type === "preview" && m.content?.previewId === previewId);
+    const kind = msg?.content?.previewKind || "plan";
     const thinking = addChatMessage("assistant", "Applying preview...");
-    const resp = await sendToActiveTab({ type: "COMMIT_FEATURE", previewId });
+    const resp = kind === "spec"
+      ? await sendToActiveTab({ type: "COMMIT_FEATURE_SPEC", previewId })
+      : await sendToActiveTab({ type: "COMMIT_FEATURE", previewId });
     if (resp?.response?.ok) {
       chatMessages = chatMessages.filter(m => !(m.type === "preview" && m.content?.previewId === previewId));
       thinking.content = "✅ Feature applied.";
@@ -166,7 +170,11 @@
 
   async function handlePreviewUndo(previewId) {
     if (!previewId) return;
-    const resp = await sendToActiveTab({ type: "UNDO_FEATURE", previewId });
+    const msg = chatMessages.find(m => m.type === "preview" && m.content?.previewId === previewId);
+    const kind = msg?.content?.previewKind || "plan";
+    const resp = kind === "spec"
+      ? await sendToActiveTab({ type: "UNDO_FEATURE_SPEC", previewId })
+      : await sendToActiveTab({ type: "UNDO_FEATURE", previewId });
     if (resp?.response?.ok) {
       chatMessages = chatMessages.filter(m => !(m.type === "preview" && m.content?.previewId === previewId));
       addChatMessage("assistant", "✅ Preview removed.");
@@ -181,7 +189,12 @@
     if (!previewId) return;
     const msg = chatMessages.find(m => m.type === "preview" && m.content?.previewId === previewId);
     if (!msg) return;
-    pendingPreviewRefine = { previewId, plan: msg.content?.plan || null };
+    pendingPreviewRefine = {
+      previewId,
+      plan: msg.content?.plan || null,
+      spec: msg.content?.spec || null,
+      mode: msg.content?.previewKind || "plan"
+    };
     addChatMessage("system", "Describe how to refine this preview.");
     renderChatMessages();
     saveChatHistory();
@@ -912,10 +925,51 @@
     if (typeof textOverride !== "string") els.chatInput.value = "";
 
     if (pendingPreviewRefine) {
-      const { previewId, plan } = pendingPreviewRefine;
+      const { previewId, plan, spec, mode } = pendingPreviewRefine;
       pendingPreviewRefine = null;
       addChatMessage("user", text);
       const thinking = addChatMessage("assistant", "Refining preview...");
+
+      if (mode === "spec") {
+        const pageContextResp = await sendToActiveTab({ type: "GET_PAGE_CONTEXT" });
+        const pageContext = pageContextResp?.response?.pageContext || {};
+        if (lastPickedTarget && lastPickedTarget.selector) {
+          pageContext.anchorElement = lastPickedTarget;
+        }
+        if (spec) {
+          pageContext.previousSpec = spec;
+        }
+        const aiResp = window.SupabaseClient?.generateFeatureSpec
+          ? await window.SupabaseClient.generateFeatureSpec(text, pageContext)
+          : null;
+        if (!aiResp?.ok) {
+          thinking.content = `❌ ${aiResp?.error || "AI is not available right now."}`;
+        } else {
+          const nextSpec = aiResp.spec;
+          if (!nextSpec || nextSpec.action === "chat" || nextSpec.action === "undo" || nextSpec.action === "reveal") {
+            thinking.content = "❌ I couldn't generate a new preview for that refinement.";
+          } else {
+            const previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec: nextSpec, previewId });
+            if (previewResp?.response?.ok) {
+              addPreviewMessage({
+                previewId: previewResp.response.previewId,
+                feature_type: nextSpec.action,
+                confidence: nextSpec.confidence,
+                warnings: nextSpec.warnings || [],
+                spec: nextSpec,
+                previewKind: "spec"
+              });
+              thinking.content = "✅ Updated preview.";
+            } else {
+              thinking.content = `❌ Preview failed: ${previewResp?.response?.error || "unknown error"}`;
+            }
+          }
+        }
+        renderChatMessages();
+        saveChatHistory();
+        return;
+      }
+
       const selector = plan?.targetSelector || lastPickedTarget?.selector || "";
       const ctxResp = await sendToActiveTab({ type: "GET_ADD_CONTEXT", selector });
       const context = ctxResp?.response?.context || null;
@@ -929,14 +983,15 @@
       const nextPlan = planner.plan(text, context);
       nextPlan.targetSelector = selector;
       await sendToActiveTab({ type: "UNDO_FEATURE", previewId });
-      const previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE", plan: nextPlan });
+      const previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE", plan: nextPlan, previewId });
       if (previewResp?.response?.ok) {
         addPreviewMessage({
           previewId: previewResp.response.previewId,
           feature_type: nextPlan.feature_type,
           confidence: nextPlan.confidence,
           warnings: nextPlan.warnings || [],
-          plan: nextPlan
+          plan: nextPlan,
+          previewKind: "plan"
         });
         thinking.content = "✅ Updated preview.";
       } else {
@@ -1011,7 +1066,8 @@
             feature_type: plan.feature_type,
             confidence: plan.confidence,
             warnings: plan.warnings || [],
-            plan
+            plan,
+            previewKind: "plan"
           });
           thinking.content = "✅ Preview ready. Review and click Apply.";
         } catch (e) {
@@ -1064,12 +1120,20 @@
             : `❌ ${revealResp?.response?.error || "Reveal failed"}`;
         } else {
           // It's an edit command (hide, customize, add, text)
-          thinking.content = "Processing your request...";
-          const applyResp = await sendToActiveTab({ type: "APPLY_FEATURE_SPEC", spec });
-          if (applyResp?.response?.ok) {
-            thinking.content = `✅ Done! I've ${spec.action === 'hide' ? 'hidden' : 'updated'} that for you.`;
+          thinking.content = "Generating a preview...";
+          const previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec });
+          if (previewResp?.response?.ok) {
+            addPreviewMessage({
+              previewId: previewResp.response.previewId,
+              feature_type: spec.action,
+              confidence: spec.confidence,
+              warnings: spec.warnings || [],
+              spec,
+              previewKind: "spec"
+            });
+            thinking.content = "✅ Preview ready. Review and click Apply.";
           } else {
-            const err = applyResp?.response?.error || "it didn't work";
+            const err = previewResp?.response?.error || "preview failed";
             if (typeof err === "string" && err.includes("Could not find target for selector")) {
               thinking.content = "❌ I couldn't find the exact element. Click **Pick element**, select the area, then re-send your request.";
               pendingAiAnchorRequest = { text };
@@ -1095,6 +1159,18 @@
     }
     if (message?.type === "WEBEDIT_TAB_EVENT") {
       // placeholder
+      return;
+    }
+    if (message?.type === "WEBEDIT_PREVIEW_ACTION") {
+      const action = message?.payload?.action;
+      const previewId = message?.payload?.previewId;
+      if (action === "apply") {
+        handlePreviewApply(previewId);
+      } else if (action === "undo") {
+        handlePreviewUndo(previewId);
+      } else if (action === "refine") {
+        handlePreviewRefine(previewId);
+      }
       return;
     }
     if (message?.type === "WEBEDIT_ELEMENT_PICKED") {
