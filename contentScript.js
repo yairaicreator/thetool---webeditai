@@ -10,10 +10,10 @@ let selectedEl = null;
 
 let lastPicked = null; // { selector, description }
 let currentUser = null; // { id, email, ... }
-let authState = "unauthenticated"; // unauthenticated | authenticated_not_tester | authenticated_tester
+let authState = "unauthenticated"; // unauthenticated | authenticated
 let authStateCheckedAt = 0;
 let authStateEmail = null;
-const AUTH_STATE_TTL_MS = 0; // Always revalidate allowlist status
+const AUTH_STATE_TTL_MS = 0; // Always revalidate auth status
 
 // Preview Lab state
 const PREVIEW_LAB_TARGET_ATTR = "data-webedit-preview-target";
@@ -285,28 +285,18 @@ async function resolveAuthorizationState(force = false) {
     return authState;
   }
 
-  let allowlisted = false;
-  if (typeof client.isTesterAllowlisted === "function") {
-    try {
-      const allowResp = await client.isTesterAllowlisted(user.email, session?.access_token || null);
-      allowlisted = !!allowResp?.allowlisted;
-    } catch (_) {
-      allowlisted = false;
-    }
-  }
-
-  setAuthState(allowlisted ? "authenticated_tester" : "authenticated_not_tester", user.email);
+  setAuthState("authenticated", user.email);
   return authState;
 }
 
-async function isTesterAuthorized(force = false) {
+async function isAuthenticated(force = false) {
   const state = await resolveAuthorizationState(force);
-  return state === "authenticated_tester";
+  return state === "authenticated";
 }
 
 async function getSupabaseAuth() {
   try {
-    const authorized = await isTesterAuthorized();
+    const authorized = await isAuthenticated();
     if (!authorized) return null;
     const client = window.SupabaseClient;
     if (!client) return null;
@@ -909,7 +899,7 @@ async function refreshCurrentUser() {
 }
 
 async function applySavedEditsForUser() {
-  const authorized = await isTesterAuthorized();
+  const authorized = await isAuthenticated();
   if (!authorized) {
     stopCloudEditsRuntime();
     return;
@@ -1612,7 +1602,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "WEBEDIT_SESSION_UPDATED") {
     (async () => {
       try {
-        const authorized = await isTesterAuthorized(true);
+        const authorized = await isAuthenticated(true);
         if (!authorized) {
           stopPickMode();
           stopRemoveMode();
@@ -1631,7 +1621,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message?.type === "WEBEDIT_SIDEPANEL_COMMAND") {
     (async () => {
-      const authorized = await isTesterAuthorized();
+      const authorized = await isAuthenticated();
       if (!authorized) {
         stopPickMode();
         stopRemoveMode();

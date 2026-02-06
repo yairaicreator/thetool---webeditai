@@ -49,12 +49,10 @@
 
   const AUTH_STATES = {
     UNAUTHENTICATED: "unauthenticated",
-    NOT_TESTER: "authenticated_not_tester",
-    TESTER: "authenticated_tester"
+    AUTHENTICATED: "authenticated"
   };
 
   let authState = AUTH_STATES.UNAUTHENTICATED;
-  let isPublicLaunch = false;
   let signedInUser = null;
   let currentUser = null;
   let lastUserId = null;
@@ -125,7 +123,7 @@
   }
 
   async function sendToActiveTab(payload) {
-    if (!isTesterAuthorized()) {
+    if (!isAuthenticated()) {
       return { ok: false, error: "Not authorized" };
     }
     try {
@@ -412,9 +410,7 @@
   function renderHistoryList(historyData = null) {
     if (!els.historyList) return;
     if (!currentUser?.id) {
-      const msg = authState === AUTH_STATES.NOT_TESTER
-        ? "Private alpha – access restricted"
-        : "Log in to view history";
+      const msg = "Log in to view history";
       els.historyList.innerHTML = `<div style="padding:10px; color:#9ca3af; font-size:12px; text-align:center">${msg}</div>`;
       return;
     }
@@ -556,43 +552,28 @@
     saveChatHistory();
   }
 
-  function isTesterAuthorized() {
-    return authState === AUTH_STATES.TESTER;
+  function isAuthenticated() {
+    return authState === AUTH_STATES.AUTHENTICATED;
   }
 
-  function requireTesterAccess(actionName) {
-    if (isTesterAuthorized()) return true;
-    if (authState === AUTH_STATES.UNAUTHENTICATED) {
-      showNotificationInChat(`Please log in to ${actionName}`);
-    } else {
-      showNotificationInChat("Access restricted. Private alpha is limited to allowlisted testers.");
-    }
+  function requireAuth(actionName) {
+    if (isAuthenticated()) return true;
+    showNotificationInChat(`Please log in to ${actionName}`);
     return false;
   }
 
   function updateAuthGuardUI() {
     if (!els.authGuard) return;
-    const showGuard = authState !== AUTH_STATES.TESTER;
+    const showGuard = authState === AUTH_STATES.UNAUTHENTICATED;
     els.authGuard.classList.toggle("hidden", !showGuard);
 
     if (authState === AUTH_STATES.UNAUTHENTICATED) {
-      if (els.authGuardTitle) els.authGuardTitle.textContent = "Launching soon – sign up on the website";
-      if (els.authGuardMessage) els.authGuardMessage.textContent = "";
+      if (els.authGuardTitle) els.authGuardTitle.textContent = "Log in to use WebEdit AI";
+      if (els.authGuardMessage) els.authGuardMessage.textContent = "Sign in or create an account to continue.";
       if (els.authGuardSignin) {
-        els.authGuardSignin.textContent = "Sign up";
+        els.authGuardSignin.textContent = "Log in";
         els.authGuardSignin.hidden = false;
       }
-      return;
-    }
-
-    if (authState === AUTH_STATES.NOT_TESTER) {
-      if (els.authGuardTitle) els.authGuardTitle.textContent = "Private alpha – access restricted";
-      if (els.authGuardMessage) els.authGuardMessage.textContent = "";
-      if (els.authGuardSignin) {
-        els.authGuardSignin.textContent = "Sign up";
-        els.authGuardSignin.hidden = true;
-      }
-      return;
     }
   }
 
@@ -633,8 +614,8 @@
 
   function applyAuthStateUI() {
     updateAuthGuardUI();
-    setFeatureControlsEnabled(isTesterAuthorized());
-    if (isTesterAuthorized()) {
+    setFeatureControlsEnabled(isAuthenticated());
+    if (isAuthenticated()) {
       renderHistoryList();
       return;
     }
@@ -749,16 +730,6 @@
     const client = window.SupabaseClient;
     let session = null;
     let user = null;
-    let allowlisted = false;
-
-    try {
-      if (client?.fetchLaunchFlag) {
-        const launchResp = await client.fetchLaunchFlag();
-        isPublicLaunch = !!launchResp?.isPublicLaunch;
-      }
-    } catch (_) {
-      isPublicLaunch = false;
-    }
 
     try {
       if (client?.getSession) {
@@ -773,25 +744,16 @@
       if (client?.fetchAuthUser) {
         const authResp = await client.fetchAuthUser();
         user = authResp?.ok ? authResp.user : null;
+      } else {
+        user = session?.user || null;
       }
     } catch (_) {
       user = null;
     }
 
-    if (user?.email && client?.isTesterAllowlisted) {
-      try {
-        const allowResp = await client.isTesterAllowlisted(user.email, session?.access_token || null);
-        allowlisted = !!allowResp?.allowlisted;
-      } catch (_) {
-        allowlisted = false;
-      }
-    }
-
     signedInUser = user || null;
-    currentUser = allowlisted ? user : null;
-    authState = !user
-      ? AUTH_STATES.UNAUTHENTICATED
-      : (allowlisted ? AUTH_STATES.TESTER : AUTH_STATES.NOT_TESTER);
+    currentUser = user || null;
+    authState = user ? AUTH_STATES.AUTHENTICATED : AUTH_STATES.UNAUTHENTICATED;
 
     const nextUserId = signedInUser?.id || null;
     if (nextUserId !== lastUserId) {
@@ -828,9 +790,9 @@
   }
 
   async function handleToolClick(tool) {
-    if (tool === "remove" && !requireTesterAccess("remove elements")) return;
-    if (tool === "customize" && !requireTesterAccess("customize elements")) return;
-    if (tool === "add" && !requireTesterAccess("add features")) return;
+    if (tool === "remove" && !requireAuth("remove elements")) return;
+    if (tool === "customize" && !requireAuth("customize elements")) return;
+    if (tool === "add" && !requireAuth("add features")) return;
 
     setActiveTool(tool);
     if (els.toolsMenu) els.toolsMenu.classList.remove("visible");
@@ -872,7 +834,7 @@
   }
 
   async function handlePickClick() {
-    if (!requireTesterAccess("pick elements")) return;
+    if (!requireAuth("pick elements")) return;
     const resp = await sendToActiveTab({ type: "START_PICK_MODE", reason: "manual-pick" });
     if (!resp?.ok) {
       hideModeIndicator();
@@ -882,7 +844,7 @@
   }
 
   async function applyCustomize() {
-    if (!requireTesterAccess("apply customizations")) return;
+    if (!requireAuth("apply customizations")) return;
     if (!lastPickedTarget?.selector) {
       showNotificationInChat("Pick an element first.");
       return;
@@ -908,7 +870,7 @@
   }
 
   async function resetCustomize() {
-    if (!requireTesterAccess("reset customizations")) return;
+    if (!requireAuth("reset customizations")) return;
     if (!lastPickedTarget?.selector) return;
     await sendToActiveTab({ type: "RESET_STYLES", selector: lastPickedTarget.selector });
     if (els.widthValueInput) els.widthValueInput.value = "";
@@ -921,7 +883,7 @@
   async function handleSend(textOverride = null) {
     const text = (typeof textOverride === "string" ? textOverride : (els.chatInput?.value || "")).trim();
     if (!text) return;
-    if (!requireTesterAccess("use WebEdit")) return;
+    if (!requireAuth("use WebEdit")) return;
     if (typeof textOverride !== "string") els.chatInput.value = "";
 
     if (pendingPreviewRefine) {
@@ -1215,7 +1177,7 @@
 
   function initializeFeatureHandlers() {
     els.newChatBtn?.addEventListener("click", () => {
-      if (!requireTesterAccess("create a chat")) return;
+      if (!requireAuth("create a chat")) return;
       startNewChat();
     });
 
@@ -1248,14 +1210,14 @@
     });
 
     els.moveUpBtn?.addEventListener("click", async () => {
-      if (!requireTesterAccess("move elements")) return;
+      if (!requireAuth("move elements")) return;
       if (!lastPickedTarget?.selector) return;
       await sendToActiveTab({ type: "MOVE_ELEMENT", selector: lastPickedTarget.selector, direction: "up" });
       showNotificationInChat("Moved up.");
     });
 
     els.moveDownBtn?.addEventListener("click", async () => {
-      if (!requireTesterAccess("move elements")) return;
+      if (!requireAuth("move elements")) return;
       if (!lastPickedTarget?.selector) return;
       await sendToActiveTab({ type: "MOVE_ELEMENT", selector: lastPickedTarget.selector, direction: "down" });
       showNotificationInChat("Moved down.");
@@ -1263,7 +1225,7 @@
 
     els.alignBtns.forEach((btn) => {
       btn.addEventListener("click", async () => {
-        if (!requireTesterAccess("align elements")) return;
+        if (!requireAuth("align elements")) return;
         if (!lastPickedTarget?.selector) return;
         const align = btn.dataset.align;
         await sendToActiveTab({ type: "ALIGN_ELEMENT", selector: lastPickedTarget.selector, align });
