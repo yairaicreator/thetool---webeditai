@@ -629,7 +629,7 @@
     els.signinBtn.className = "webedit-nav-btn signin-btn";
     els.signinBtn.textContent = "Log in";
     els.signinBtn.onclick = () => {
-      chrome.runtime.sendMessage({ type: "WEBEDIT_OPEN_LOGIN_TAB" });
+      window.open("https://webeditai.com/#/signup?from=extension", "_blank");
     };
   }
 
@@ -704,7 +704,7 @@
 
     if (els.homeBtn) {
       els.homeBtn.addEventListener("click", () => {
-        chrome.tabs.create({ url: "https://webeditai.com/" });
+        window.open("https://webeditai.com/", "_blank");
       });
     }
   }
@@ -1244,7 +1244,7 @@
 
   // Wire UI
   attachHeaderEventListeners();
-  els.authGuardSignin?.addEventListener("click", () => chrome.runtime.sendMessage({ type: "WEBEDIT_OPEN_LOGIN_TAB" }));
+  els.authGuardSignin?.addEventListener("click", () => window.open("https://webeditai.com/#/signup?from=extension", "_blank"));
 
   // Init
   (async () => {

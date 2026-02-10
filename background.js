@@ -7,9 +7,8 @@
 
 const SIDEPANEL_PATH = "sidepanel.html";
 
-// WebEdit AI website routes (use apex domain + hash routes to avoid SPA 404s during OAuth back navigation).
-const WEBEDIT_LOGIN_URL = "https://webeditai.com/#/signup?from=extension";
-const WEBEDIT_HISTORY_URL = "https://webeditai.com/#/history";
+// Active-tab tracking for activeTab compliance (no "tabs" permission).
+const SESSION_TAB_KEY = "webeditActiveTabId";
 
 async function configureSidePanelForTab(tabId) {
   if (!tabId || !chrome.sidePanel?.setOptions) return;
@@ -43,19 +42,14 @@ chrome.runtime.onStartup.addListener(async () => {
   await configureGlobalSidePanelBehavior();
 });
 
-chrome.tabs.onActivated.addListener(async ({ tabId }) => {
-  await configureSidePanelForTab(tabId);
-});
-
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
-  if (changeInfo.status === "complete") {
-    await configureSidePanelForTab(tabId);
-  }
-});
-
 chrome.action.onClicked.addListener(async (tab) => {
   if (!tab?.id) return;
   await configureSidePanelForTab(tab.id);
+  try {
+    if (chrome.storage?.session?.set) {
+      await chrome.storage.session.set({ [SESSION_TAB_KEY]: tab.id });
+    }
+  } catch (_) {}
 
   // Ensure the side panel opens for the current tab.
   if (chrome.sidePanel?.open) {
@@ -67,10 +61,11 @@ chrome.action.onClicked.addListener(async (tab) => {
   }
 });
 
-function getActiveTabId() {
+async function getStoredActiveTabId() {
+  if (!chrome.storage?.session?.get) return null;
   return new Promise((resolve) => {
-    chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
-      resolve(tabs?.[0]?.id || null);
+    chrome.storage.session.get([SESSION_TAB_KEY], (result) => {
+      resolve(result[SESSION_TAB_KEY] || null);
     });
   });
 }
@@ -181,7 +176,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "WEBEDIT_SIDEPANEL_COMMAND") {
     (async () => {
       const tabIdFromSender = sender?.tab?.id || null;
-      const tabId = tabIdFromSender || (await getActiveTabId());
+      const tabId = tabIdFromSender || (await getStoredActiveTabId());
       if (!tabId) {
         sendResponse({ ok: false, error: "No active tab found" });
         return;
@@ -219,7 +214,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   } else {
     (async () => {
       const tabIdFromSender = sender?.tab?.id || null;
-      const tabId = tabIdFromSender || (await getActiveTabId());
+      const tabId = tabIdFromSender || (await getStoredActiveTabId());
       if (!tabId) {
         sendResponse({ ok: false, error: "No active tab found" });
         return;
@@ -250,12 +245,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     const broadcast = () => {
       chrome.runtime.sendMessage({ type: "WEBEDIT_SESSION_UPDATED", session }).catch(() => {});
-      chrome.tabs.query({}, (tabs) => {
-        tabs.forEach((tab) => {
-          if (!tab.id) return;
-          chrome.tabs.sendMessage(tab.id, { type: "WEBEDIT_SESSION_UPDATED", session }).catch(() => {});
-        });
-      });
     };
 
     if (!session) {
@@ -310,12 +299,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         chrome.storage.local.remove(Array.from(keysToRemove), () => {
           const session = null;
           chrome.runtime.sendMessage({ type: "WEBEDIT_SESSION_UPDATED", session }).catch(() => {});
-          chrome.tabs.query({}, (tabs) => {
-            tabs.forEach((tab) => {
-              if (!tab.id) return;
-              chrome.tabs.sendMessage(tab.id, { type: "WEBEDIT_SESSION_UPDATED", session }).catch(() => {});
-            });
-          });
           sendResponse({ ok: true, clearedUserId: previousUserId });
         });
       });
@@ -324,17 +307,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "WEBEDIT_OPEN_LOGIN_TAB") {
-    // Use apex domain + hash route to avoid SPA 404s/redirects that can drop the hash.
-    chrome.tabs.create({ url: WEBEDIT_LOGIN_URL }, (tab) => {
-      sendResponse({ ok: true, tabId: tab?.id || null });
-    });
+    sendResponse({ ok: true, openUrl: "https://webeditai.com/#/signup?from=extension" });
     return true;
   }
 
   if (message?.type === "WEBEDIT_OPEN_HISTORY") {
-    chrome.tabs.create({ url: WEBEDIT_HISTORY_URL }, (tab) => {
-      sendResponse({ ok: true, tabId: tab?.id || null });
-    });
+    sendResponse({ ok: true, openUrl: "https://webeditai.com/#/history" });
     return true;
   }
 
