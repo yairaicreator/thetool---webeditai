@@ -7,7 +7,7 @@
 
 const SIDEPANEL_PATH = "sidepanel.html";
 
-// Active-tab tracking for activeTab compliance (no "tabs" permission).
+// Active-tab tracking: tab ID stored on action click for messaging.
 const SESSION_TAB_KEY = "webeditActiveTabId";
 
 async function configureSidePanelForTab(tabId) {
