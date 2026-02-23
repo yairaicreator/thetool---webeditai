@@ -195,6 +195,19 @@ let cloudRuntimeStarted = false;
 let cloudPollTimer = null;
 let lastSpaKey = null; // origin+pathname
 let spaReapplyTimer = null;
+const CUSTOMIZE_STYLE_PROPS = [
+  "background-color",
+  "color",
+  "font-size",
+  "width",
+  "height",
+  "transform",
+  "transform-origin",
+  "display",
+  "margin-left",
+  "margin-right"
+];
+const customizeSessions = new Map(); // selector -> { baseline: { prop: { value, priority } }, previewActive: boolean }
 
 function getSpaKey() {
   return `${location.origin}${location.pathname || "/"}`;
@@ -1230,17 +1243,25 @@ function handleRemoveClick(event) {
   event.stopPropagation();
 
   const selector = generateSelectorForElement(el);
-  const description = generateDescriptionForElement(el);
-  const prevDisplayValue = el.style.getPropertyValue("display") || "";
-  const prevDisplayPriority = el.style.getPropertyPriority("display") || "";
+  removeElementBySelector(selector, el);
 
-  // Apply hide
+  stopRemoveMode();
+  chrome.runtime.sendMessage({ type: "WEBEDIT_MODE_EXITED" }).catch(() => {});
+
+}
+
+function removeElementBySelector(selector, targetEl = null) {
+  if (!selector && !targetEl) return { ok: false, error: "Missing selector" };
+  const el = targetEl || (selector ? document.querySelector(selector) : null);
+  if (!el) return { ok: false, error: "Element not found" };
+  const resolvedSelector = selector || generateSelectorForElement(el);
+  if (!resolvedSelector) return { ok: false, error: "Could not resolve selector" };
+
   el.style.setProperty("display", "none", "important");
 
-  // Persist hide so it survives refresh
   ensureEditRulesReady().then((editRules) => {
-    if (!editRules || !selector) return;
-    editRules.createRule(el, "hide", {}, currentUser, selector).then((rule) => {
+    if (!editRules) return;
+    editRules.createRule(el, "hide", {}, currentUser, resolvedSelector).then((rule) => {
       if (window.SaveEdit?.saveRemoveEdit) {
         window.SaveEdit.saveRemoveEdit(el, rule).catch(() => {});
       }
@@ -1249,15 +1270,72 @@ function handleRemoveClick(event) {
     });
   });
 
-  stopRemoveMode();
-  chrome.runtime.sendMessage({ type: "WEBEDIT_MODE_EXITED" }).catch(() => {});
+  return { ok: true, selector: resolvedSelector };
+}
 
+function captureCustomizeBaseline(el) {
+  const baseline = {};
+  CUSTOMIZE_STYLE_PROPS.forEach((prop) => {
+    baseline[prop] = {
+      value: el.style.getPropertyValue(prop) || "",
+      priority: el.style.getPropertyPriority(prop) || ""
+    };
+  });
+  return baseline;
+}
+
+function restoreCustomizeBaseline(el, baseline) {
+  if (!el || !baseline) return;
+  CUSTOMIZE_STYLE_PROPS.forEach((prop) => {
+    const previous = baseline[prop] || { value: "", priority: "" };
+    if (previous.value) {
+      el.style.setProperty(prop, previous.value, previous.priority || "");
+    } else {
+      el.style.removeProperty(prop);
+    }
+  });
+}
+
+function startCustomizeSession(selector) {
+  if (!selector) return { ok: false, error: "Missing selector" };
+  const el = document.querySelector(selector);
+  if (!el) return { ok: false, error: "Element not found" };
+  if (!customizeSessions.has(selector)) {
+    customizeSessions.set(selector, { baseline: captureCustomizeBaseline(el), previewActive: false });
+  }
+  return { ok: true };
+}
+
+function previewStylesForSelector(selector, styles) {
+  const sessionRes = startCustomizeSession(selector);
+  if (!sessionRes.ok) return sessionRes;
+  const el = document.querySelector(selector);
+  const session = customizeSessions.get(selector);
+  if (!el || !session) return { ok: false, error: "Element not found" };
+  restoreCustomizeBaseline(el, session.baseline);
+  Object.entries(styles || {}).forEach(([key, value]) => {
+    if (!value) return;
+    const cssKey = key.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase());
+    el.style.setProperty(cssKey, String(value), "important");
+  });
+  session.previewActive = true;
+  return { ok: true };
+}
+
+function resetPreviewStylesForSelector(selector) {
+  const el = selector ? document.querySelector(selector) : null;
+  const session = selector ? customizeSessions.get(selector) : null;
+  if (!el || !session) return true;
+  restoreCustomizeBaseline(el, session.baseline);
+  session.previewActive = false;
+  return true;
 }
 
 function applyStylesToSelector(selector, styles) {
-  if (!selector) return false;
+  if (!selector) return { ok: false, error: "Missing selector" };
   const el = document.querySelector(selector);
-  if (!el) return false;
+  if (!el) return { ok: false, error: "Element not found" };
+  startCustomizeSession(selector);
   const previous = {};
   Object.entries(styles || {}).forEach(([key, value]) => {
     if (!value) return;
@@ -1277,18 +1355,15 @@ function applyStylesToSelector(selector, styles) {
 function resetStylesForSelector(selector) {
   const el = selector ? document.querySelector(selector) : null;
   if (!el) return false;
-  el.style.removeProperty("background-color");
-  el.style.removeProperty("color");
-  el.style.removeProperty("font-size");
-  el.style.removeProperty("width");
-  el.style.removeProperty("height");
-  el.style.removeProperty("transform");
-  el.style.removeProperty("transform-origin");
-  el.style.removeProperty("display");
-  el.style.removeProperty("margin-left");
-  el.style.removeProperty("margin-right");
+  const session = customizeSessions.get(selector);
+  if (session?.baseline) {
+    restoreCustomizeBaseline(el, session.baseline);
+    customizeSessions.delete(selector);
+  } else {
+    CUSTOMIZE_STYLE_PROPS.forEach((prop) => el.style.removeProperty(prop));
+  }
   deleteRulesForSelectorAction(selector, "style").catch(() => {});
-    return true;
+  return true;
 }
 
 function escapeHtml(value = "") {
@@ -1642,6 +1717,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok: true });
       return true;
     }
+    if (type === "REMOVE_ELEMENT") {
+      const result = removeElementBySelector(payload.selector);
+      sendResponse(result);
+      return true;
+    }
     if (type === "START_REMOVE_MODE") {
       startRemoveMode();
       chrome.runtime.sendMessage({
@@ -1649,6 +1729,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         payload: { mode: "remove", reason: payload.reason || null }
       }).catch(() => {});
       sendResponse({ ok: true });
+      return true;
+    }
+    if (type === "START_CUSTOMIZE_SESSION") {
+      const result = startCustomizeSession(payload.selector);
+      sendResponse(result);
+      return true;
+    }
+    if (type === "PREVIEW_STYLES") {
+      const result = previewStylesForSelector(payload.selector, payload.styles || {});
+      sendResponse(result);
+      return true;
+    }
+    if (type === "RESET_PREVIEW_STYLES") {
+      const ok = resetPreviewStylesForSelector(payload.selector);
+      sendResponse({ ok });
       return true;
     }
     if (type === "EXIT_FEATURES") {

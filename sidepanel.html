@@ -37,7 +37,7 @@
     <div class="webedit-main-content">
       <div class="webedit-chat-messages" id="webedit-chat-messages">
         <div class="webedit-chat-placeholder">
-          <p>Select a tool from Visual Edit menu below to get started</p>
+          <p>Select Remove, Add, or Customize below to get started</p>
         </div>
       </div>
       <div class="webedit-references-container" id="webedit-references-container"></div>
@@ -120,28 +120,19 @@
       </div>
       
       <div class="webedit-customize-actions">
-        <button class="webedit-btn-small webedit-btn-primary" id="webedit-apply-btn" type="button">Apply</button>
         <button class="webedit-btn-small webedit-btn-secondary" id="webedit-reset-btn" type="button">Reset</button>
+        <button class="webedit-btn-small webedit-btn-secondary" id="webedit-review-btn" type="button">Review</button>
+        <button class="webedit-btn-small webedit-btn-primary" id="webedit-apply-btn" type="button">Apply</button>
       </div>
     </div>
 
     <!-- Bottom Controls -->
     <div class="webedit-bottom-controls">
-      <div class="webedit-visual-edit">
-        <span class="webedit-tool-label">Visual Edit</span>
-        <button class="webedit-hamburger-btn" id="webedit-burger-btn">
-          <span></span>
-          <span></span>
-          <span></span>
-        </button>
-        <!-- Tools dropdown menu -->
-        <div class="webedit-tools-menu" id="webedit-tools-menu">
-          <button class="webedit-tool-btn" data-tool="add" id="webedit-add-btn">Add</button>
-          <button class="webedit-tool-btn active" data-tool="remove" id="webedit-remove-btn">Remove/hide</button>
-          <button class="webedit-tool-btn" data-tool="customize" id="webedit-customize-btn">Customize</button>
-        </div>
+      <div class="webedit-feature-controls">
+        <button class="webedit-feature-btn" id="webedit-remove-btn" data-tool="remove" type="button">Remove</button>
+        <button class="webedit-feature-btn" id="webedit-add-btn" data-tool="add" type="button">Add</button>
+        <button class="webedit-feature-btn" id="webedit-customize-btn" data-tool="customize" type="button">Customize</button>
       </div>
-      <button class="webedit-pick-btn-bottom" id="webedit-pick-btn">Pick element</button>
     </div>
 
     <div class="webedit-mode-indicator hidden" id="webedit-mode-indicator" aria-live="polite" aria-hidden="true">

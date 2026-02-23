@@ -15,10 +15,10 @@
     newChatBtn: document.getElementById("webedit-new-chat-btn"),
     chatMessages: document.getElementById("webedit-chat-messages"),
     referencesContainer: document.getElementById("webedit-references-container"),
-    burgerBtn: document.getElementById("webedit-burger-btn"),
-    toolsMenu: document.getElementById("webedit-tools-menu"),
-    toolButtons: Array.from(document.querySelectorAll(".webedit-tool-btn")),
-    pickBtn: document.getElementById("webedit-pick-btn"),
+    featureButtons: Array.from(document.querySelectorAll(".webedit-feature-btn")),
+    removeBtn: document.getElementById("webedit-remove-btn"),
+    addBtn: document.getElementById("webedit-add-btn"),
+    customizeBtn: document.getElementById("webedit-customize-btn"),
     modeIndicator: document.getElementById("webedit-mode-indicator"),
     modeText: document.getElementById("webedit-mode-text"),
     modeCloseBtn: document.getElementById("webedit-mode-close-btn"),
@@ -26,6 +26,7 @@
     customizeCloseBtn: document.getElementById("webedit-customize-close-btn"),
     applyBtn: document.getElementById("webedit-apply-btn"),
     resetBtn: document.getElementById("webedit-reset-btn"),
+    reviewBtn: document.getElementById("webedit-review-btn"),
     bgColorInput: document.getElementById("webedit-bg-color"),
     textColorInput: document.getElementById("webedit-text-color"),
     fontSizeInput: document.getElementById("webedit-font-size"),
@@ -59,11 +60,10 @@
   let currentSessionId = null;
   let chatMessages = [];
   let activeHistoryRenameForm = null;
-  let currentTool = null;
+  let currentTool = "add";
+  let pendingFeaturePickMode = null; // null | add | remove | customize
   let isAddFeatureMode = false;
-  let pendingAddFeatureStep = "idle"; // idle | name | description
-  let addFeatureName = "";
-  let addFeatureDescription = "";
+  let customizeReviewApplied = false;
   let lastPickedTarget = null; // { selector, description }
   let pendingAiAnchorRequest = null; // { text } waiting for Pick Element anchor
   let pendingPreviewRefine = null; // { previewId, plan }
@@ -237,7 +237,7 @@
     if (chatMessages.length === 0) {
       const placeholder = document.createElement("div");
       placeholder.className = "webedit-chat-placeholder";
-      placeholder.innerHTML = "<p>Select a tool from Visual Edit menu below to get started</p>";
+      placeholder.innerHTML = "<p>Select Remove, Add, or Customize below to get started</p>";
       els.chatMessages.appendChild(placeholder);
       return;
     }
@@ -589,15 +589,16 @@
   function setFeatureControlsEnabled(enabled) {
     const controls = [
       els.newChatBtn,
-      els.burgerBtn,
-      els.pickBtn,
+      els.removeBtn,
+      els.addBtn,
+      els.customizeBtn,
       els.applyBtn,
       els.resetBtn,
+      els.reviewBtn,
       els.moveUpBtn,
       els.moveDownBtn,
       els.sendBtn,
       els.chatInput,
-      ...els.toolButtons,
       ...els.alignBtns
     ].filter(Boolean);
 
@@ -609,13 +610,11 @@
     });
 
     if (!enabled) {
-      els.toolsMenu?.classList.remove("visible");
       els.customizePanel?.classList.remove("visible");
       hideModeIndicator();
       isAddFeatureMode = false;
-      pendingAddFeatureStep = "idle";
-      addFeatureName = "";
-      addFeatureDescription = "";
+      pendingFeaturePickMode = null;
+      customizeReviewApplied = false;
       pendingAiAnchorRequest = null;
       lastPickedTarget = null;
     }
@@ -782,7 +781,7 @@
 
   function setActiveTool(tool) {
     currentTool = tool;
-    els.toolButtons.forEach((btn) => {
+    els.featureButtons.forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.tool === tool);
     });
   }
@@ -798,58 +797,70 @@
     els.modeIndicator.classList.add("hidden");
   }
 
-  async function handleToolClick(tool) {
+  async function startFeaturePickFlow(tool) {
     if (tool === "remove" && !requireAuth("remove elements")) return;
     if (tool === "customize" && !requireAuth("customize elements")) return;
     if (tool === "add" && !requireAuth("add features")) return;
 
     setActiveTool(tool);
-    if (els.toolsMenu) els.toolsMenu.classList.remove("visible");
+    pendingFeaturePickMode = tool;
+    pendingPreviewRefine = null;
+    isAddFeatureMode = false;
+    customizeReviewApplied = false;
+    els.customizePanel?.classList.remove("visible");
 
     if (tool === "remove") {
-      isAddFeatureMode = false;
-      els.customizePanel?.classList.remove("visible");
-      showModeIndicator("Remove mode active - Click an element to hide it");
-      const resp = await sendToActiveTab({ type: "START_REMOVE_MODE" });
-      if (!resp?.ok) {
-        hideModeIndicator();
-      }
-      return;
+      showNotificationInChat("Pick an element to remove.");
+      showModeIndicator("Remove: pick an element to remove");
     }
     if (tool === "customize") {
-      isAddFeatureMode = false;
-      els.customizePanel?.classList.add("visible");
-      showNotificationInChat("Pick an element to customize, or use Pick element.");
-      const resp = await sendToActiveTab({ type: "START_PICK_MODE", reason: "customize" });
-      if (!resp?.ok) {
-        hideModeIndicator();
-      }
-      return;
+      showNotificationInChat("Pick an element to customize.");
+      showModeIndicator("Customize: pick an element");
     }
     if (tool === "add") {
-      isAddFeatureMode = true;
-      pendingAddFeatureStep = "idle";
-      addFeatureName = "";
-      addFeatureDescription = "";
-      pendingPreviewRefine = null;
-      els.customizePanel?.classList.remove("visible");
       showNotificationInChat("Pick an element to add content near it.");
-      const resp = await sendToActiveTab({ type: "START_PICK_MODE", reason: "add" });
-      if (!resp?.ok) {
-        hideModeIndicator();
-      }
-      return;
+      showModeIndicator("Add: pick an anchor element");
     }
-  }
 
-  async function handlePickClick() {
-    if (!requireAuth("pick elements")) return;
-    const resp = await sendToActiveTab({ type: "START_PICK_MODE", reason: "manual-pick" });
+    const resp = await sendToActiveTab({ type: "START_PICK_MODE", reason: tool });
     if (!resp?.ok) {
       hideModeIndicator();
+      pendingFeaturePickMode = null;
       return;
     }
     showModeIndicator("Pick mode active - Click an element to select it");
+  }
+
+  function buildCustomizeDraftStyles() {
+    const widthValue = (els.widthValueInput?.value || "").trim();
+    const widthUnit = els.widthUnitSelect?.value || "px";
+    const heightValue = (els.heightValueInput?.value || "").trim();
+    const heightUnit = els.heightUnitSelect?.value || "px";
+    const scalePct = Number(els.scaleInput?.value || 100);
+    const scale = Number.isFinite(scalePct) ? Math.max(0.1, scalePct / 100) : 1;
+
+    return {
+      backgroundColor: els.bgColorInput?.value || "#ffffff",
+      color: els.textColorInput?.value || "#000000",
+      fontSize: (els.fontSizeInput?.value || "16") + "px",
+      ...(widthValue ? { width: `${widthValue}${widthUnit}` } : {}),
+      ...(heightValue ? { height: `${heightValue}${heightUnit}` } : {}),
+      ...(scale !== 1 ? { transform: `scale(${scale})`, transformOrigin: "center" } : {})
+    };
+  }
+
+  async function reviewCustomize() {
+    if (!requireAuth("review customizations")) return;
+    if (!lastPickedTarget?.selector) {
+      showNotificationInChat("Pick an element first.");
+      return;
+    }
+    const styles = buildCustomizeDraftStyles();
+    const resp = await sendToActiveTab({ type: "PREVIEW_STYLES", selector: lastPickedTarget.selector, styles });
+    if (resp?.response?.ok) {
+      showNotificationInChat("Preview updated. Apply to save permanently.");
+      customizeReviewApplied = false;
+    }
   }
 
   async function applyCustomize() {
@@ -858,35 +869,25 @@
       showNotificationInChat("Pick an element first.");
       return;
     }
-
-    const widthValue = (els.widthValueInput?.value || "").trim();
-    const widthUnit = els.widthUnitSelect?.value || "px";
-    const heightValue = (els.heightValueInput?.value || "").trim();
-    const heightUnit = els.heightUnitSelect?.value || "px";
-    const scalePct = Number(els.scaleInput?.value || 100);
-    const scale = Number.isFinite(scalePct) ? Math.max(0.1, scalePct / 100) : 1;
-
-    const styles = {
-      backgroundColor: els.bgColorInput?.value || "#ffffff",
-      color: els.textColorInput?.value || "#000000",
-      fontSize: (els.fontSizeInput?.value || "16") + "px",
-      ...(widthValue ? { width: `${widthValue}${widthUnit}` } : {}),
-      ...(heightValue ? { height: `${heightValue}${heightUnit}` } : {}),
-      ...(scale !== 1 ? { transform: `scale(${scale})`, transformOrigin: "center" } : {})
-    };
+    const styles = buildCustomizeDraftStyles();
     const resp = await sendToActiveTab({ type: "APPLY_STYLES", selector: lastPickedTarget.selector, styles });
-    showNotificationInChat("Styles applied.");
+    if (resp?.response?.ok) {
+      customizeReviewApplied = true;
+      showNotificationInChat("Customization applied and saved.");
+    }
   }
 
   async function resetCustomize() {
     if (!requireAuth("reset customizations")) return;
     if (!lastPickedTarget?.selector) return;
-    await sendToActiveTab({ type: "RESET_STYLES", selector: lastPickedTarget.selector });
+    const resetType = customizeReviewApplied ? "RESET_STYLES" : "RESET_PREVIEW_STYLES";
+    await sendToActiveTab({ type: resetType, selector: lastPickedTarget.selector });
     if (els.widthValueInput) els.widthValueInput.value = "";
     if (els.heightValueInput) els.heightValueInput.value = "";
     if (els.scaleInput) els.scaleInput.value = "100";
     if (els.scaleValue) els.scaleValue.textContent = "100%";
-    showNotificationInChat("Styles reset.");
+    customizeReviewApplied = false;
+    showNotificationInChat("Element reset to original state.");
   }
 
   async function handleSend(textOverride = null) {
@@ -994,7 +995,7 @@
       return;
     }
 
-    // Add Feature flow step handling
+    // Add Feature flow handling (single guided prompt after pick)
     if (isAddFeatureMode) {
       if (!lastPickedTarget?.selector) {
         addChatMessage("system", "Pick an element first.");
@@ -1002,56 +1003,40 @@
       }
 
       addChatMessage("user", text);
-      if (pendingAddFeatureStep === "idle" || pendingAddFeatureStep === "name") {
-        addFeatureName = text;
-        pendingAddFeatureStep = "description";
-        addChatMessage("system", "Describe the edit:");
-      return;
-    }
-
-      if (pendingAddFeatureStep === "description") {
-        addFeatureDescription = text;
-        pendingAddFeatureStep = "idle";
-        isAddFeatureMode = false; // Reset mode before AI call
-
-        const thinking = addChatMessage("assistant", "Generating your feature...");
-        try {
-          const ctxResp = await sendToActiveTab({ type: "GET_ADD_CONTEXT", selector: lastPickedTarget.selector });
-          if (!ctxResp?.response?.ok) {
-            throw new Error(ctxResp?.response?.error || "Context unavailable");
-          }
-          const context = ctxResp.response.context || null;
-          const planner = window.FeaturePlanner;
-          if (!planner || typeof planner.plan !== "function") {
-            throw new Error("FeaturePlanner not available");
-          }
-          const prompt = `${addFeatureName}. ${addFeatureDescription}`;
-          const plan = planner.plan(prompt, context);
-          plan.targetSelector = lastPickedTarget.selector;
-          const previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE", plan });
-          if (!previewResp?.response?.ok) {
-            throw new Error(previewResp?.response?.error || "Preview failed");
-          }
-          addPreviewMessage({
-            previewId: previewResp.response.previewId,
-            feature_type: plan.feature_type,
-            confidence: plan.confidence,
-            warnings: plan.warnings || [],
-            plan,
-            previewKind: "plan"
-          });
-          thinking.content = "✅ Preview ready. Review and click Apply.";
-        } catch (e) {
-          console.error("[Add Feature] Planner preview failed:", e);
-          thinking.content = `❌ I couldn't generate a preview.\nReason: ${e.message || "Unknown error"}`;
+      isAddFeatureMode = false; // consume guided add prompt and return to normal chat mode
+      const thinking = addChatMessage("assistant", "Generating your feature...");
+      try {
+        const ctxResp = await sendToActiveTab({ type: "GET_ADD_CONTEXT", selector: lastPickedTarget.selector });
+        if (!ctxResp?.response?.ok) {
+          throw new Error(ctxResp?.response?.error || "Context unavailable");
         }
-
-        addFeatureName = "";
-        addFeatureDescription = "";
-        renderChatMessages();
-        saveChatHistory();
-        return;
+        const context = ctxResp.response.context || null;
+        const planner = window.FeaturePlanner;
+        if (!planner || typeof planner.plan !== "function") {
+          throw new Error("FeaturePlanner not available");
+        }
+        const plan = planner.plan(text, context);
+        plan.targetSelector = lastPickedTarget.selector;
+        const previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE", plan });
+        if (!previewResp?.response?.ok) {
+          throw new Error(previewResp?.response?.error || "Preview failed");
+        }
+        addPreviewMessage({
+          previewId: previewResp.response.previewId,
+          feature_type: plan.feature_type,
+          confidence: plan.confidence,
+          warnings: plan.warnings || [],
+          plan,
+          previewKind: "plan"
+        });
+        thinking.content = "✅ Preview ready. Review and click Apply.";
+      } catch (e) {
+        console.error("[Add Feature] Planner preview failed:", e);
+        thinking.content = `❌ I couldn't generate a preview.\nReason: ${e.message || "Unknown error"}`;
       }
+      renderChatMessages();
+      saveChatHistory();
+      return;
     }
 
     // General chat / Conversation / Edit Commands
@@ -1062,7 +1047,7 @@
       const pageContextResp = await sendToActiveTab({ type: "GET_PAGE_CONTEXT" });
       const pageContext = pageContextResp?.response?.pageContext || {};
 
-      // Inject user-picked anchor if available (crucial for "Pick element" retry flow)
+      // Inject user-picked anchor if available (crucial for user-guided retry flow)
       if (lastPickedTarget && lastPickedTarget.selector) {
         pageContext.anchorElement = lastPickedTarget;
       }
@@ -1106,7 +1091,7 @@
           } else {
             const err = previewResp?.response?.error || "preview failed";
             if (typeof err === "string" && err.includes("Could not find target for selector")) {
-              thinking.content = "❌ I couldn't find the exact element. Click **Pick element**, select the area, then re-send your request.";
+              thinking.content = "❌ I couldn't find the exact element. Click Add, Remove, or Customize, pick an anchor, then re-send your request.";
               pendingAiAnchorRequest = { text };
             } else {
               thinking.content = `❌ I tried to do that, but: ${err}`;
@@ -1150,6 +1135,32 @@
         showPickReference(lastPickedTarget.description);
       }
       hideModeIndicator();
+      els.customizePanel?.classList.remove("visible");
+
+      const pickedTool = pendingFeaturePickMode;
+      pendingFeaturePickMode = null;
+      if (pickedTool === "remove" && lastPickedTarget?.selector) {
+        (async () => {
+          const resp = await sendToActiveTab({ type: "REMOVE_ELEMENT", selector: lastPickedTarget.selector });
+          if (resp?.response?.ok) {
+            showNotificationInChat(`Removed: ${lastPickedTarget.description || lastPickedTarget.selector}`);
+          }
+        })();
+      } else if (pickedTool === "customize" && lastPickedTarget?.selector) {
+        (async () => {
+          await sendToActiveTab({ type: "START_CUSTOMIZE_SESSION", selector: lastPickedTarget.selector });
+          customizeReviewApplied = false;
+          els.customizePanel?.classList.add("visible");
+          showNotificationInChat(`Element picked for customize: ${lastPickedTarget.description || lastPickedTarget.selector}`);
+        })();
+      } else if (pickedTool === "add" && lastPickedTarget?.selector) {
+        isAddFeatureMode = true;
+        addChatMessage(
+          "system",
+          "Great, anchor selected. Describe your feature using this template:\nWorkflow: ...\nUI: ...\nPurpose: ..."
+        );
+      }
+
       if (pendingAiAnchorRequest && lastPickedTarget?.selector) {
         addChatMessage("system", `Anchor selected: ${lastPickedTarget.description || lastPickedTarget.selector}`);
         
@@ -1162,10 +1173,6 @@
           addChatMessage("system", "Now re-send your last request and I will apply it to this selected area.");
           pendingAiAnchorRequest = null;
         }
-      }
-      if (isAddFeatureMode) {
-        pendingAddFeatureStep = "name";
-        addChatMessage("system", "Name of edit:");
       }
       return;
     }
@@ -1190,25 +1197,20 @@
       startNewChat();
     });
 
-    els.burgerBtn?.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      els.toolsMenu?.classList.toggle("visible");
+    els.featureButtons.forEach((btn) => {
+      btn.addEventListener("click", () => startFeaturePickFlow(btn.dataset.tool));
     });
 
-    els.toolButtons.forEach((btn) => {
-      btn.addEventListener("click", () => handleToolClick(btn.dataset.tool));
-    });
-
-    els.pickBtn?.addEventListener("click", handlePickClick);
     els.modeCloseBtn?.addEventListener("click", async () => {
       hideModeIndicator();
+      pendingFeaturePickMode = null;
       await sendToActiveTab({ type: "EXIT_FEATURES" });
     });
 
     els.customizeCloseBtn?.addEventListener("click", () => {
       els.customizePanel?.classList.remove("visible");
     });
+    els.reviewBtn?.addEventListener("click", reviewCustomize);
     els.applyBtn?.addEventListener("click", applyCustomize);
     els.resetBtn?.addEventListener("click", resetCustomize);
 
@@ -1259,6 +1261,7 @@
   (async () => {
     await refreshAuthorization();
     initializeFeatureHandlers();
+    setActiveTool("add");
     renderChatMessages();
   })();
 })();

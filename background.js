@@ -132,6 +132,35 @@ async function queryActiveTabInCurrentWindow() {
   });
 }
 
+async function queryBestEditableTabInCurrentWindow() {
+  return new Promise((resolve) => {
+    try {
+      chrome.tabs.query({ currentWindow: true }, (tabs) => {
+        if (chrome.runtime.lastError || !Array.isArray(tabs) || tabs.length === 0) {
+          resolve(null);
+          return;
+        }
+        const candidates = tabs.filter((tab) => tab?.id && !isWebEditDomainUrl(tab.url || ""));
+        if (!candidates.length) {
+          resolve(null);
+          return;
+        }
+        const activeCandidate = candidates.find((tab) => tab.active);
+        if (activeCandidate) {
+          resolve(activeCandidate);
+          return;
+        }
+        const sorted = candidates
+          .slice()
+          .sort((a, b) => Number(b.lastAccessed || 0) - Number(a.lastAccessed || 0));
+        resolve(sorted[0] || null);
+      });
+    } catch (_) {
+      resolve(null);
+    }
+  });
+}
+
 async function resolveTargetTabContext(senderTabId = null) {
   if (senderTabId) {
     const senderTab = await getTabById(senderTabId);
@@ -139,6 +168,18 @@ async function resolveTargetTabContext(senderTabId = null) {
       await storeActiveTabId(senderTab.id);
       return { tab: senderTab, source: "sender" };
     }
+  }
+
+  const activeTab = await queryActiveTabInCurrentWindow();
+  if (activeTab?.id && !isWebEditDomainUrl(activeTab.url || "")) {
+    await storeActiveTabId(activeTab.id);
+    return { tab: activeTab, source: "active-query" };
+  }
+
+  const bestEditableTab = await queryBestEditableTabInCurrentWindow();
+  if (bestEditableTab?.id) {
+    await storeActiveTabId(bestEditableTab.id);
+    return { tab: bestEditableTab, source: "best-editable" };
   }
 
   const storedTabId = await getStoredActiveTabId();
@@ -150,10 +191,9 @@ async function resolveTargetTabContext(senderTabId = null) {
     await clearStoredActiveTabId();
   }
 
-  const activeTab = await queryActiveTabInCurrentWindow();
-  if (activeTab) {
+  if (activeTab?.id) {
     await storeActiveTabId(activeTab.id);
-    return { tab: activeTab, source: "active-query" };
+    return { tab: activeTab, source: "active-query-fallback" };
   }
   return { tab: null, source: "none" };
 }

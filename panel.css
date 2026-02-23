@@ -696,7 +696,7 @@
 
 .webedit-customize-actions {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: 8px;
   margin-top: 4px;
 }
@@ -732,8 +732,8 @@
 /* Bottom Controls */
 .webedit-bottom-controls {
   display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
+  align-items: center;
+  justify-content: center;
   padding: 8px 32px 6px;
   background: #d7fbff;
   flex-shrink: 0;
@@ -783,112 +783,97 @@
   transform: scale(1.05);
 }
 
-.webedit-visual-edit {
+.webedit-feature-controls {
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  position: relative;
-}
-
-.webedit-tool-label {
-  font-size: 12px;
-  color: #0f172a;
-  font-weight: 600;
-}
-
-.webedit-hamburger-btn {
-  width: 48px;
-  height: 40px;
-  border-radius: 12px;
-  border: 2px solid #0f172a;
-  background: white;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  gap: 5px;
-  cursor: pointer;
-  padding: 8px;
-  transition: background 0.2s, transform 0.2s;
-}
-
-.webedit-hamburger-btn:hover {
-  background: #f1f5f9;
-  transform: translateY(-1px);
-}
-
-.webedit-hamburger-btn span {
-  display: block;
-  width: 24px;
-  height: 3px;
-  border-radius: 2px;
-  background: #0f172a;
-}
-
-/* Tools dropdown menu */
-.webedit-tools-menu {
-  position: absolute;
-  bottom: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  margin-bottom: 8px;
-  background: white;
-  border-radius: 10px;
-  padding: 6px;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.2);
-  display: none;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 140px;
-  z-index: 10;
-}
-
-.webedit-tools-menu.visible {
-  display: flex;
-}
-
-.webedit-tool-btn {
   width: 100%;
-  padding: 10px 16px;
+  gap: 10px;
+}
+
+.webedit-feature-btn {
+  flex: 1;
+  min-width: 0;
   border: 2px solid #64748b;
-  border-radius: 8px;
-  background: #e2e8f0;
-  color: #1e293b;
+  border-radius: 12px;
+  padding: 11px 10px;
+  background: #ffffff;
+  color: #0f172a;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 700;
   cursor: pointer;
   transition: all 0.2s;
-  text-align: center;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
 }
 
-.webedit-tool-btn:hover {
-  background: #cbd5e1;
-  border-color: #475569;
-}
-
-.webedit-tool-btn.active {
-  background: #94a3b8;
+.webedit-feature-btn:hover {
   border-color: #334155;
-  font-weight: 600;
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.12);
 }
 
+.webedit-feature-btn.active {
+  border-color: #4338ca;
+  background: #eef2ff;
+  color: #312e81;
+  box-shadow: 0 8px 18px rgba(67, 56, 202, 0.18);
+}
+
+.webedit-feature-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.webedit-feature-btn[data-tool="remove"] {
+  border-color: #b91c1c;
+  color: #7f1d1d;
+}
+
+.webedit-feature-btn[data-tool="add"] {
+  border-color: #4338ca;
+  color: #312e81;
+}
+
+.webedit-feature-btn[data-tool="customize"] {
+  border-color: #0369a1;
+  color: #0c4a6e;
+}
+
+.webedit-feature-btn[data-tool="remove"].active {
+  background: #fee2e2;
+}
+
+.webedit-feature-btn[data-tool="add"].active {
+  background: #e0e7ff;
+}
+
+.webedit-feature-btn[data-tool="customize"].active {
+  background: #e0f2fe;
+}
+
+/* Legacy controls retained for compatibility but hidden in new layout */
+.webedit-visual-edit,
+.webedit-tool-label,
+.webedit-hamburger-btn,
+.webedit-tools-menu,
+.webedit-tool-btn,
 .webedit-pick-btn-bottom {
-  border: none;
-  border-radius: 999px;
-  padding: 12px 26px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  background: linear-gradient(90deg, #a78bfa, #ec4899);
-  color: white;
-  transition: transform 0.2s, box-shadow 0.2s;
-  box-shadow: 0 4px 12px rgba(167, 139, 250, 0.35);
+  display: none !important;
 }
 
-.webedit-pick-btn-bottom:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 18px rgba(167, 139, 250, 0.5);
+.webedit-mode-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 24px 12px;
+  padding: 10px 16px;
+  border-radius: 12px;
+  background: #0f172a;
+  color: #f8fafc;
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.15);
 }
 
 /* Chat Input Bar at Bottom */
