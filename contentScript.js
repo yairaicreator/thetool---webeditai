@@ -1845,36 +1845,46 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       (async () => {
         const previewId = payload.previewId || null;
         const handle = previewId ? previewLabPreviews.get(previewId) : null;
-        if (!handle || handle.type !== "spec") {
+        const fallbackSpec = payload.spec || null;
+        let specToApply = null;
+
+        if (handle && handle.type === "spec") {
+          const lab = getPreviewLab();
+          const content = lab?.getContent?.() || {};
+          const shadowRoot = lab?.getShadowRoot?.();
+          const previewTarget = shadowRoot?.querySelector(`[${PREVIEW_LAB_TARGET_ATTR}="1"]`);
+          let html = content.html || "";
+          if (previewTarget && previewTarget.innerHTML.trim()) {
+            html = previewTarget.innerHTML;
+          } else if (previewTarget) {
+            const mount = lab?.getMountNode?.();
+            if (mount) {
+              const clone = mount.cloneNode(true);
+              const placeholder = clone.querySelector(`[${PREVIEW_LAB_TARGET_ATTR}="1"]`);
+              if (placeholder) placeholder.remove();
+              html = clone.innerHTML;
+            }
+          }
+          specToApply = {
+            ...handle.spec,
+            html: html || handle.spec.html,
+            css: content.css || handle.spec.css,
+            js: content.js || handle.spec.js
+          };
+        } else if (fallbackSpec) {
+          specToApply = fallbackSpec;
+        } else {
           sendResponse({ ok: false, error: "Preview not found" });
           return;
         }
-        const lab = getPreviewLab();
-        const content = lab?.getContent?.() || {};
-        const shadowRoot = lab?.getShadowRoot?.();
-        const previewTarget = shadowRoot?.querySelector(`[${PREVIEW_LAB_TARGET_ATTR}="1"]`);
-        let html = content.html || "";
-        if (previewTarget && previewTarget.innerHTML.trim()) {
-          html = previewTarget.innerHTML;
-        } else if (previewTarget) {
-          const mount = lab?.getMountNode?.();
-          if (mount) {
-            const clone = mount.cloneNode(true);
-            const placeholder = clone.querySelector(`[${PREVIEW_LAB_TARGET_ATTR}="1"]`);
-            if (placeholder) placeholder.remove();
-            html = clone.innerHTML;
-          }
-        }
-        const specToApply = {
-          ...handle.spec,
-          html: html || handle.spec.html,
-          css: content.css || handle.spec.css,
-          js: content.js || handle.spec.js
-        };
+
         const result = await applyFeatureSpecFlow(specToApply);
         if (result?.ok) {
-          previewLabPreviews.delete(previewId);
-          clearGhostHighlight(previewId);
+          if (previewId) {
+            previewLabPreviews.delete(previewId);
+            clearGhostHighlight(previewId);
+          }
+          const lab = getPreviewLab();
           lab?.close?.();
         }
         sendResponse(result);
@@ -1913,6 +1923,48 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       })();
       return true;
     }
+    if (type === "REOPEN_PREVIEW") {
+      (async () => {
+        const previewId = payload.previewId || `preview-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const previewKind = payload.previewKind || "plan";
+        if (previewKind === "spec") {
+          const spec = payload.spec || null;
+          if (!spec) {
+            sendResponse({ ok: false, error: "Missing spec" });
+            return;
+          }
+          const res = await renderSpecPreviewInLab(spec, previewId);
+          if (!res?.ok) {
+            sendResponse({ ok: false, error: res?.error || "Preview failed" });
+            return;
+          }
+          previewLabPreviews.set(previewId, {
+            type: "spec",
+            spec,
+            selector: spec.targetSelector || spec.selector || ""
+          });
+          if (spec.targetSelector || spec.selector) {
+            setGhostHighlight(previewId, spec.targetSelector || spec.selector);
+          }
+          sendResponse({ ok: true, previewId });
+          return;
+        }
+        const plan = payload.plan || null;
+        if (!plan) {
+          sendResponse({ ok: false, error: "Missing plan" });
+          return;
+        }
+        const res = await renderPlanPreviewInLab(plan, previewId);
+        if (!res?.ok) {
+          sendResponse({ ok: false, error: res?.error || "Preview failed" });
+          return;
+        }
+        previewLabPreviews.set(previewId, { type: "plan", plan, selector: plan.targetSelector || "" });
+        if (plan.targetSelector) setGhostHighlight(previewId, plan.targetSelector);
+        sendResponse({ ok: true, previewId });
+      })();
+      return true;
+    }
     if (type === "COMMIT_FEATURE") {
       (async () => {
         const engine = window.FeatureEngine;
@@ -1936,7 +1988,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             result = { ok: false, error: "Preview type mismatch" };
           }
         } else if (previewId) {
-          result = engine.commitPreview(previewId);
+          result = plan ? engine.applyFeature(plan, "commit", { id: previewId }) : engine.commitPreview(previewId);
         } else {
           result = engine.applyFeature(plan, "commit");
         }

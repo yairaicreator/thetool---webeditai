@@ -160,11 +160,12 @@
   async function handlePreviewApply(previewId) {
     if (!previewId) return;
     const msg = chatMessages.find(m => m.type === "preview" && m.content?.previewId === previewId);
+    if (!msg) return;
     const kind = msg?.content?.previewKind || "plan";
     const thinking = addChatMessage("assistant", "Applying preview...");
     const resp = kind === "spec"
-      ? await sendToActiveTab({ type: "COMMIT_FEATURE_SPEC", previewId })
-      : await sendToActiveTab({ type: "COMMIT_FEATURE", previewId });
+      ? await sendToActiveTab({ type: "COMMIT_FEATURE_SPEC", previewId, spec: msg.content?.spec || null })
+      : await sendToActiveTab({ type: "COMMIT_FEATURE", previewId, plan: msg.content?.plan || null });
     if (resp?.response?.ok) {
       chatMessages = chatMessages.filter(m => !(m.type === "preview" && m.content?.previewId === previewId));
       thinking.content = "✅ Feature applied.";
@@ -205,6 +206,23 @@
     addChatMessage("system", "Describe how to refine this preview.");
     renderChatMessages();
     saveChatHistory();
+  }
+
+  async function handlePreviewReopen(previewId) {
+    if (!previewId) return;
+    const msg = chatMessages.find(m => m.type === "preview" && m.content?.previewId === previewId);
+    if (!msg) return;
+    const content = msg.content || {};
+    const mode = content.previewKind || "plan";
+    const payload = mode === "spec"
+      ? { type: "REOPEN_PREVIEW", previewId, previewKind: "spec", spec: content.spec || null }
+      : { type: "REOPEN_PREVIEW", previewId, previewKind: "plan", plan: content.plan || null };
+    const resp = await sendToActiveTab(payload);
+    if (resp?.response?.ok) {
+      addChatMessage("system", "Preview window reopened.");
+      return;
+    }
+    addChatMessage("system", `Could not reopen preview: ${resp?.response?.error || resp?.error || "unknown error"}`);
   }
 
   function addChatMessage(type, content) {
@@ -277,9 +295,14 @@
         refineBtn.className = "webedit-btn-small webedit-btn-secondary";
         refineBtn.textContent = "Refine";
         refineBtn.addEventListener("click", () => handlePreviewRefine(data.previewId));
+        const reopenBtn = document.createElement("button");
+        reopenBtn.className = "webedit-btn-small webedit-btn-secondary";
+        reopenBtn.textContent = "Reopen";
+        reopenBtn.addEventListener("click", () => handlePreviewReopen(data.previewId));
         actions.appendChild(applyBtn);
         actions.appendChild(undoBtn);
         actions.appendChild(refineBtn);
+        actions.appendChild(reopenBtn);
         msgEl.appendChild(actions);
       } else {
         const contentEl = document.createElement("div");
