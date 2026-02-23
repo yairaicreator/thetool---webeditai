@@ -944,6 +944,24 @@
           if (!nextSpec || nextSpec.action === "chat" || nextSpec.action === "undo" || nextSpec.action === "reveal") {
             thinking.content = "❌ I couldn't generate a new preview for that refinement.";
           } else {
+            // Keep Add refinements anchored to the originally picked element.
+            if (spec?.action === "add") {
+              if (nextSpec.action !== "add") {
+                thinking.content = "❌ Refinement must still describe an Add feature. Please refine with UI/workflow/goal for a new feature.";
+                renderChatMessages();
+                saveChatHistory();
+                return;
+              }
+              const anchorSelector = lastPickedTarget?.selector || spec.targetSelector || spec.selector || "";
+              if (!anchorSelector) {
+                thinking.content = "❌ I lost the selected anchor. Please pick the target section again and retry.";
+                renderChatMessages();
+                saveChatHistory();
+                return;
+              }
+              nextSpec.targetSelector = anchorSelector;
+              if (!nextSpec.selector) nextSpec.selector = anchorSelector;
+            }
             const previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec: nextSpec, previewId });
             if (previewResp?.response?.ok) {
               addPreviewMessage({
@@ -1049,6 +1067,12 @@
         if (spec.action !== "add") {
           const actionLabel = spec.action || "unknown";
           throw new Error(`AI generated '${actionLabel}' instead of an add feature. Refine your prompt with clear UI and workflow details for a new feature.`);
+        }
+
+        // Force Add previews to stay anchored to the picked target section.
+        if (lastPickedTarget?.selector) {
+          spec.targetSelector = lastPickedTarget.selector;
+          if (!spec.selector) spec.selector = lastPickedTarget.selector;
         }
 
         const previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec });
