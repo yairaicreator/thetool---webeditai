@@ -257,7 +257,7 @@ function parseFeatureSpec(raw) {
   const selector = normalizeString(raw.selector);
   const targetSelector = normalizeString(raw.targetSelector);
   const description = normalizeString(raw.description);
-  const content = normalizeString(raw.content);
+  let content = normalizeString(raw.content);
   const generatedModule = isPlainObject(raw.generated_module) ? raw.generated_module : null;
   const moduleHtml = typeof generatedModule?.html === "string" ? generatedModule.html : "";
   const moduleCss = typeof generatedModule?.css === "string" ? generatedModule.css : "";
@@ -304,6 +304,11 @@ function parseFeatureSpec(raw) {
       return { ok: false, error: "Invalid spec: add requires targetSelector (or selector)" };
     }
     if (!position) position = "inside";
+
+    // Last-resort compatibility path: allow add specs that only contain descriptive text.
+    if (!content) {
+      content = normalizeString(raw.purpose) || normalizeString(raw.name) || description || "";
+    }
 
     const hasHtml = html.trim().length > 0;
     const hasContent = content.length > 0;

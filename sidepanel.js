@@ -236,6 +236,20 @@
     return { ok: true, spec: rebuilt.spec };
   }
 
+  function forceMinimalAddRenderable(spec, promptText = "") {
+    const next = spec ? { ...spec } : null;
+    if (!next || next.action !== "add") return next;
+    const hasRenderable = !!((next.html && String(next.html).trim()) || (next.content && String(next.content).trim()));
+    if (hasRenderable) return next;
+    const safeText = (next.description || next.purpose || next.name || promptText || "New feature").toString().trim();
+    const escaped = escapeHtml(safeText);
+    next.html = `<div data-webedit-generated-module="1" style="border:1px dashed #94a3b8;padding:8px;border-radius:8px;background:#f8fafc;">${escaped}</div>`;
+    if (!next.css) next.css = "";
+    if (!next.js) next.js = "";
+    if (!next.content) next.content = safeText;
+    return next;
+  }
+
   function showNotificationInChat(text) {
     addChatMessage("system", text);
   }
@@ -1072,7 +1086,15 @@
             nextSpec.targetSelector = anchorSelector;
             if (!nextSpec.selector) nextSpec.selector = anchorSelector;
           }
-          const previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec: nextSpec, previewId });
+          let previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec: nextSpec, previewId });
+          if (!previewResp?.response?.ok && nextSpec?.action === "add") {
+            const errText = String(previewResp?.response?.error || "");
+            if (errText.includes("add requires html or content")) {
+              const forced = forceMinimalAddRenderable(nextSpec, text);
+              previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec: forced, previewId });
+              nextSpec = forced;
+            }
+          }
           if (previewResp?.response?.ok) {
             addPreviewMessage({
               previewId: previewResp.response.previewId,
@@ -1188,7 +1210,15 @@
           if (!spec.selector) spec.selector = lastPickedTarget.selector;
         }
 
-        const previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec });
+        let previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec });
+        if (!previewResp?.response?.ok) {
+          const errText = String(previewResp?.response?.error || "");
+          if (errText.includes("add requires html or content")) {
+            const forced = forceMinimalAddRenderable(spec, text);
+            previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec: forced });
+            spec = forced;
+          }
+        }
         if (!previewResp?.response?.ok) {
           throw new Error(previewResp?.response?.error || "Preview failed");
         }
