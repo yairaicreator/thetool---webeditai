@@ -9,6 +9,7 @@ const SIDEPANEL_PATH = "sidepanel.html";
 
 // Active-tab tracking: tab ID stored on action click for messaging.
 const SESSION_TAB_KEY = "webeditActiveTabId";
+const SUPABASE_SESSION_KEY = "webeditSupabaseSession";
 
 async function configureSidePanelForTab(tabId) {
   if (!tabId || !chrome.sidePanel?.setOptions) return;
@@ -70,10 +71,116 @@ async function getStoredActiveTabId() {
   });
 }
 
-async function pingTab(tabId) {
+async function storeActiveTabId(tabId) {
+  if (!tabId || !chrome.storage?.session?.set) return;
+  try {
+    await chrome.storage.session.set({ [SESSION_TAB_KEY]: tabId });
+  } catch (_) {}
+}
+
+async function clearStoredActiveTabId() {
+  if (!chrome.storage?.session?.remove) return;
+  try {
+    await chrome.storage.session.remove([SESSION_TAB_KEY]);
+  } catch (_) {}
+}
+
+async function getStoredSession() {
+  if (!chrome.storage?.local?.get) return null;
+  return new Promise((resolve) => {
+    chrome.storage.local.get([SUPABASE_SESSION_KEY], (result) => {
+      resolve(result?.[SUPABASE_SESSION_KEY] || null);
+    });
+  });
+}
+
+function isWebEditDomainUrl(url) {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    const host = (parsed.hostname || "").toLowerCase();
+    return host === "webeditai.com" || host === "www.webeditai.com";
+  } catch (_) {
+    return false;
+  }
+}
+
+async function getTabById(tabId) {
+  if (!tabId) return null;
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    return tab?.id ? tab : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function queryActiveTabInCurrentWindow() {
   return new Promise((resolve) => {
     try {
-      chrome.tabs.sendMessage(tabId, { type: "PING" }, (resp) => {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (chrome.runtime.lastError) {
+          resolve(null);
+          return;
+        }
+        const activeTab = Array.isArray(tabs) && tabs.length > 0 ? tabs[0] : null;
+        resolve(activeTab?.id ? activeTab : null);
+      });
+    } catch (_) {
+      resolve(null);
+    }
+  });
+}
+
+async function resolveTargetTabContext(senderTabId = null) {
+  if (senderTabId) {
+    const senderTab = await getTabById(senderTabId);
+    if (senderTab) {
+      await storeActiveTabId(senderTab.id);
+      return { tab: senderTab, source: "sender" };
+    }
+  }
+
+  const storedTabId = await getStoredActiveTabId();
+  if (storedTabId) {
+    const storedTab = await getTabById(storedTabId);
+    if (storedTab) {
+      return { tab: storedTab, source: "stored" };
+    }
+    await clearStoredActiveTabId();
+  }
+
+  const activeTab = await queryActiveTabInCurrentWindow();
+  if (activeTab) {
+    await storeActiveTabId(activeTab.id);
+    return { tab: activeTab, source: "active-query" };
+  }
+  return { tab: null, source: "none" };
+}
+
+async function shouldDeferPageMessaging(tab) {
+  const tabUrl = tab?.url || "";
+  if (!isWebEditDomainUrl(tabUrl)) {
+    return { defer: false };
+  }
+  const session = await getStoredSession();
+  const isAuthed = !!session?.user?.id;
+  if (!isAuthed) {
+    return {
+      defer: true,
+      error: "Authentication in progress on webeditai.com. Finish sign-in, then open the site you want to edit."
+    };
+  }
+  return {
+    defer: true,
+    error: "You're currently on webeditai.com. Navigate back to the page you want to edit, then try again."
+  };
+}
+
+async function sendMessageToTab(tabId, message) {
+  return new Promise((resolve) => {
+    try {
+      chrome.tabs.sendMessage(tabId, message, (resp) => {
         if (chrome.runtime.lastError) {
           resolve({ ok: false, error: chrome.runtime.lastError.message });
           return;
@@ -84,6 +191,10 @@ async function pingTab(tabId) {
       resolve({ ok: false, error: error?.message || String(error) });
     }
   });
+}
+
+async function pingTab(tabId) {
+  return sendMessageToTab(tabId, { type: "PING" });
 }
 
 async function injectPageRuntime(tabId) {
@@ -175,10 +286,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === "WEBEDIT_SIDEPANEL_COMMAND") {
     (async () => {
-      const tabIdFromSender = sender?.tab?.id || null;
-      const tabId = tabIdFromSender || (await getStoredActiveTabId());
+      const tabContext = await resolveTargetTabContext(sender?.tab?.id || null);
+      const tabId = tabContext?.tab?.id || null;
       if (!tabId) {
         sendResponse({ ok: false, error: "No active tab found" });
+        return;
+      }
+
+      const deferState = await shouldDeferPageMessaging(tabContext.tab);
+      if (deferState.defer) {
+        sendResponse({ ok: false, error: deferState.error });
         return;
       }
 
@@ -193,17 +310,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
       }
 
-      chrome.tabs.sendMessage(
-        tabId,
-        { type: "WEBEDIT_SIDEPANEL_COMMAND", payload: message.payload || {} },
-        (resp) => {
-          if (chrome.runtime.lastError) {
-            sendResponse({ ok: false, error: chrome.runtime.lastError.message });
-            return;
-          }
-          sendResponse({ ok: true, response: resp || null });
-        }
-      );
+      const relayResult = await sendMessageToTab(tabId, {
+        type: "WEBEDIT_SIDEPANEL_COMMAND",
+        payload: message.payload || {}
+      });
+      if (!relayResult.ok) {
+        sendResponse({ ok: false, error: relayResult.error || "Failed to deliver command to tab" });
+        return;
+      }
+      sendResponse({ ok: true, response: relayResult.response || null });
     })();
     return true;
   }
@@ -213,28 +328,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // fall through to auth handlers below
   } else {
     (async () => {
-      const tabIdFromSender = sender?.tab?.id || null;
-      const tabId = tabIdFromSender || (await getStoredActiveTabId());
+      const tabContext = await resolveTargetTabContext(sender?.tab?.id || null);
+      const tabId = tabContext?.tab?.id || null;
       if (!tabId) {
         sendResponse({ ok: false, error: "No active tab found" });
         return;
       }
 
-      chrome.tabs.sendMessage(
-        tabId,
-        {
-          type: "WEBEDIT_FROM_SIDEPANEL",
-          text: String(message.text || ""),
-          at: Date.now()
-        },
-        (resp) => {
-          if (chrome.runtime.lastError) {
-            sendResponse({ ok: false, error: chrome.runtime.lastError.message });
-            return;
-          }
-          sendResponse({ ok: true, forwarded: true, tabId, response: resp || null });
-        }
-      );
+      const deferState = await shouldDeferPageMessaging(tabContext.tab);
+      if (deferState.defer) {
+        sendResponse({ ok: false, error: deferState.error });
+        return;
+      }
+
+      const relayResult = await sendMessageToTab(tabId, {
+        type: "WEBEDIT_FROM_SIDEPANEL",
+        text: String(message.text || ""),
+        at: Date.now()
+      });
+      if (!relayResult.ok) {
+        sendResponse({ ok: false, error: relayResult.error || "Failed to forward message to tab" });
+        return;
+      }
+      sendResponse({ ok: true, forwarded: true, tabId, response: relayResult.response || null });
     })();
 
     return true; // async response

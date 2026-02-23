@@ -132,7 +132,16 @@
         payload
       });
       if (!resp?.ok) {
-        showNotificationInChat(`Error talking to page: ${resp?.error || "unknown"}`);
+        const errorText = String(resp?.error || "unknown");
+        const isTabContextIssue =
+          errorText.includes("No active tab found") ||
+          errorText.includes("Authentication in progress on webeditai.com") ||
+          errorText.includes("You're currently on webeditai.com");
+        if (isTabContextIssue) {
+          showNotificationInChat(errorText);
+        } else {
+          showNotificationInChat(`Error talking to page: ${errorText}`);
+        }
       }
       if (resp?.ok && resp?.response && resp.response.ok === false) {
         showNotificationInChat(`Page error: ${resp.response.error || "unknown"}`);
