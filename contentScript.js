@@ -24,6 +24,19 @@ function getPreviewLab() {
   return window.PreviewLab || null;
 }
 
+async function ensurePreviewLabAvailable() {
+  let lab = getPreviewLab();
+  if (lab) return lab;
+  try {
+    await chrome.runtime.sendMessage({
+      type: "WEBEDIT_ENSURE_CONTENT_SCRIPTS",
+      files: ["previewLab.js"]
+    });
+  } catch (_) {}
+  lab = getPreviewLab();
+  return lab || null;
+}
+
 function ensureGhostStyles() {
   if (document.getElementById("webedit-preview-ghost-style")) return;
   const style = document.createElement("style");
@@ -103,8 +116,8 @@ function applyPlanPreviewToElement(el, plan) {
   }
 }
 
-function renderPlanPreviewInLab(plan, previewId) {
-  const lab = getPreviewLab();
+async function renderPlanPreviewInLab(plan, previewId) {
+  const lab = await ensurePreviewLabAvailable();
   if (!lab) return { ok: false, error: "PreviewLab not available" };
   const selector = plan?.targetSelector || "";
   let target = null;
@@ -127,7 +140,7 @@ function renderPlanPreviewInLab(plan, previewId) {
 }
 
 async function renderSpecPreviewInLab(spec, previewId) {
-  const lab = getPreviewLab();
+  const lab = await ensurePreviewLabAvailable();
   if (!lab) return { ok: false, error: "PreviewLab not available" };
   const exec = window.FeatureSpecExecutor;
   if (!exec || typeof exec.applyFeatureSpec !== "function") {
@@ -1882,20 +1895,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true;
     }
     if (type === "PREVIEW_FEATURE") {
-      const plan = payload.plan || null;
-      if (!plan) {
-        sendResponse({ ok: false, error: "Missing plan" });
-        return true;
-      }
-      const previewId = payload.previewId || plan.id || `preview-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const res = renderPlanPreviewInLab(plan, previewId);
-      if (res?.ok) {
-        previewLabPreviews.set(previewId, { type: "plan", plan, selector: plan.targetSelector || "" });
-        if (plan.targetSelector) setGhostHighlight(previewId, plan.targetSelector);
-        sendResponse({ ok: true, previewId, plan });
-        return true;
-      }
-      sendResponse({ ok: false, error: res?.error || "Preview failed" });
+      (async () => {
+        const plan = payload.plan || null;
+        if (!plan) {
+          sendResponse({ ok: false, error: "Missing plan" });
+          return;
+        }
+        const previewId = payload.previewId || plan.id || `preview-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const res = await renderPlanPreviewInLab(plan, previewId);
+        if (res?.ok) {
+          previewLabPreviews.set(previewId, { type: "plan", plan, selector: plan.targetSelector || "" });
+          if (plan.targetSelector) setGhostHighlight(previewId, plan.targetSelector);
+          sendResponse({ ok: true, previewId, plan });
+          return;
+        }
+        sendResponse({ ok: false, error: res?.error || "Preview failed" });
+      })();
       return true;
     }
     if (type === "COMMIT_FEATURE") {

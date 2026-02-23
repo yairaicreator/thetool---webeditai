@@ -1157,7 +1157,7 @@
         isAddFeatureMode = true;
         addChatMessage(
           "system",
-          "Great, anchor selected. Describe your feature using this template:\nWorkflow: ...\nUI: ...\nPurpose: ..."
+          "Great, anchor selected. Please include in your prompt the workflow, how the feature works, UI, and goal of the feature."
         );
       }
 

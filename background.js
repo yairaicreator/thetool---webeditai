@@ -250,6 +250,7 @@ async function injectPageRuntime(tabId) {
     "featureRegistry.js",
     "featureEngine.js",
     "featureStore.js",
+    "previewLab.js",
     "messages.js",
     "contentScript.js"
   ];
