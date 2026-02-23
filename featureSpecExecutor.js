@@ -10,6 +10,7 @@ const TOGGLE_STATE_PREFIX = "webeditAiToggleState::";
 const behaviorRegistry = new Map(); // markerId -> behavior
 let delegatedBehaviorHandlerInstalled = false;
 const delegatedBehaviorRoots = new WeakSet();
+const FEATURE_SPEC_SCHEMA_VERSION = "2";
 
 function isExtensionContextValid() {
   try {
@@ -140,6 +141,46 @@ function createNodesFromHtml(html, markerId) {
     }
   }
   return nodes;
+}
+
+function collectValidationFailures(spec, root = document) {
+  const validation = spec?.validation || null;
+  const tests = Array.isArray(validation?.tests) ? validation.tests : [];
+  const failures = [];
+  tests.forEach((test, index) => {
+    if (!test || typeof test !== "object") return;
+    const type = String(test.type || "").trim();
+    if (!type) return;
+    if (type === "selectorExists") {
+      const selector = String(test.selector || "").trim();
+      if (!selector) return;
+      const nodes = safeQueryAll(selector, root);
+      if (!nodes.length) {
+        failures.push({
+          code: "selector_missing",
+          message: `Validation failed: selector not found (${selector})`,
+          testIndex: index
+        });
+      }
+      return;
+    }
+    if (type === "attributeEquals") {
+      const selector = String(test.selector || "").trim();
+      const attribute = String(test.attribute || "").trim();
+      const expected = String(test.value || "");
+      if (!selector || !attribute) return;
+      const el = safeQueryAll(selector, root)[0] || null;
+      const actual = el ? String(el.getAttribute(attribute) || "") : "";
+      if (!el || actual !== expected) {
+        failures.push({
+          code: "attribute_mismatch",
+          message: `Validation failed: ${selector}[${attribute}] mismatch`,
+          testIndex: index
+        });
+      }
+    }
+  });
+  return failures;
 }
 
 function runScopedScript(js, root = document) {
@@ -555,10 +596,11 @@ async function applyFeatureSpec(spec, options = {}) {
       }
 
       const position = spec.position || "inside";
-      const html = (spec.html || "").trim();
+      const generatedModule = spec.generated_module || null;
+      const html = ((spec.html || generatedModule?.html || "") + "").trim();
       const content = (spec.content || "").trim();
-      const css = typeof spec.css === "string" ? spec.css : "";
-      const js = typeof spec.js === "string" ? spec.js : "";
+      const css = typeof spec.css === "string" ? spec.css : (typeof generatedModule?.css === "string" ? generatedModule.css : "");
+      const js = typeof spec.js === "string" ? spec.js : (typeof generatedModule?.js === "string" ? generatedModule.js : "");
 
       let nodesToInsert = [];
       if (html) {
@@ -587,10 +629,24 @@ async function applyFeatureSpec(spec, options = {}) {
         runScopedScript(js, root);
       }
 
+      const validationFailures = collectValidationFailures(spec, root);
+      if (preview && validationFailures.length > 0) {
+        return {
+          ok: false,
+          stage: "validation",
+          error: validationFailures[0].message,
+          failures: validationFailures
+        };
+      }
+
       const applied = {
         id,
         spec,
         timestamp,
+        migration: {
+          schemaVersion: spec?.metadata?.schemaVersion || FEATURE_SPEC_SCHEMA_VERSION,
+          strategy: spec?.undo_strategy?.mode || "dom-revert"
+        },
         undo: {
           action: "add",
           markerId: id,
@@ -611,7 +667,7 @@ async function applyFeatureSpec(spec, options = {}) {
         if (!skipPersist) {
           undoStack.push(applied);
           redoStack.length = 0;
-          await persistAppend(spec);
+          await persistAppend(spec, applied.migration);
         }
       }
       return { ok: true, applied };
@@ -624,11 +680,19 @@ async function applyFeatureSpec(spec, options = {}) {
   }
 }
 
-async function persistAppend(spec) {
+async function persistAppend(spec, migration = null) {
   const scopeKey = getScopeKey();
   const list = await loadPersistedSpecs(scopeKey);
   const entryId = spec._webeditId || spec.id || uuid();
-  list.push({ id: entryId, spec: { ...spec, _webeditId: entryId }, timestamp: Date.now() });
+  list.push({
+    id: entryId,
+    spec: { ...spec, _webeditId: entryId },
+    timestamp: Date.now(),
+    migration: migration || {
+      schemaVersion: spec?.metadata?.schemaVersion || FEATURE_SPEC_SCHEMA_VERSION,
+      strategy: "dom-revert"
+    }
+  });
   await savePersistedSpecs(scopeKey, list);
 }
 

@@ -153,6 +153,68 @@
     }
   }
 
+  function formatStageError(resp, fallback = "Operation failed") {
+    const stage = resp?.response?.stage || resp?.stage || "";
+    const detail = resp?.response?.error || resp?.error || fallback;
+    if (!stage) return detail;
+    const labels = {
+      parse: "parse failure",
+      capability: "capability mismatch",
+      generation: "generation failed",
+      validation: "behavior tests failed",
+      apply: "apply migration failed"
+    };
+    return `${labels[stage] || stage}: ${detail}`;
+  }
+
+  async function buildAddSpecPipeline(promptText, baseContext, previousSpec = null) {
+    const anchorSelector = lastPickedTarget?.selector || previousSpec?.targetSelector || previousSpec?.selector || "";
+    if (!anchorSelector) {
+      return { ok: false, stage: "capability", error: "No anchor selected. Pick a target section first." };
+    }
+
+    const capabilityResp = await sendToActiveTab({ type: "GET_SITE_CAPABILITIES", selector: anchorSelector });
+    const capability = capabilityResp?.response?.capability || null;
+    if (!capabilityResp?.response?.ok || !capability) {
+      return { ok: false, stage: "capability", error: capabilityResp?.response?.error || "Capability check failed." };
+    }
+
+    if (capability.recommendation === "simplified_ui_only") {
+      return {
+        ok: false,
+        stage: "capability",
+        error: "This page cannot safely run a complex generated module. Try a simpler feature or pick a more stable section."
+      };
+    }
+
+    const planner = window.FeaturePlanner;
+    if (!planner || typeof planner.buildAddSpecFromModule !== "function") {
+      return { ok: false, stage: "generation", error: "Feature module generator is not available." };
+    }
+
+    const plannerCtx = {
+      ...(baseContext || {}),
+      selector: anchorSelector,
+      anchorElement: lastPickedTarget,
+      previousSpec: previousSpec || undefined
+    };
+
+    const built = planner.buildAddSpecFromModule(promptText, plannerCtx, capability);
+    if (!built?.ok || !built?.spec) {
+      return { ok: false, stage: "generation", error: built?.error || "Could not generate module artifacts." };
+    }
+
+    built.spec.targetSelector = anchorSelector;
+    if (!built.spec.selector) built.spec.selector = anchorSelector;
+    built.spec.metadata = {
+      ...(built.spec.metadata || {}),
+      stage: "generation",
+      capabilityScore: capability.capabilityScore
+    };
+
+    return { ok: true, spec: built.spec, capability };
+  }
+
   function showNotificationInChat(text) {
     addChatMessage("system", text);
   }
@@ -170,7 +232,7 @@
       chatMessages = chatMessages.filter(m => !(m.type === "preview" && m.content?.previewId === previewId));
       thinking.content = "✅ Feature applied.";
     } else {
-      thinking.content = `❌ Apply failed: ${resp?.response?.error || "unknown error"}`;
+      thinking.content = `❌ ${formatStageError(resp, "Apply failed")}`;
     }
     renderChatMessages();
     saveChatHistory();
@@ -222,7 +284,7 @@
       addChatMessage("system", "Preview window reopened.");
       return;
     }
-    addChatMessage("system", `Could not reopen preview: ${resp?.response?.error || resp?.error || "unknown error"}`);
+    addChatMessage("system", `Could not reopen preview: ${formatStageError(resp, "unknown error")}`);
   }
 
   function addChatMessage(type, content) {
@@ -934,48 +996,63 @@
         if (spec) {
           pageContext.previousSpec = spec;
         }
-        const aiResp = window.SupabaseClient?.generateFeatureSpec
-          ? await window.SupabaseClient.generateFeatureSpec(text, pageContext)
-          : null;
-        if (!aiResp?.ok) {
-          thinking.content = `❌ ${aiResp?.error || "AI is not available right now."}`;
+        let nextSpec = null;
+        if (spec?.action === "add") {
+          const built = await buildAddSpecPipeline(text, pageContext, spec);
+          if (!built.ok) {
+            thinking.content = `❌ ${formatStageError(built, "Refinement failed")}`;
+            renderChatMessages();
+            saveChatHistory();
+            return;
+          }
+          nextSpec = built.spec;
         } else {
-          const nextSpec = aiResp.spec;
-          if (!nextSpec || nextSpec.action === "chat" || nextSpec.action === "undo" || nextSpec.action === "reveal") {
-            thinking.content = "❌ I couldn't generate a new preview for that refinement.";
+          const aiResp = window.SupabaseClient?.generateFeatureSpec
+            ? await window.SupabaseClient.generateFeatureSpec(text, pageContext)
+            : null;
+          if (!aiResp?.ok) {
+            thinking.content = `❌ ${aiResp?.error || "AI is not available right now."}`;
+            renderChatMessages();
+            saveChatHistory();
+            return;
+          }
+          nextSpec = aiResp.spec;
+        }
+
+        if (!nextSpec || nextSpec.action === "chat" || nextSpec.action === "undo" || nextSpec.action === "reveal") {
+          thinking.content = "❌ I couldn't generate a new preview for that refinement.";
+        } else {
+          // Keep Add refinements anchored to the originally picked element.
+          if (spec?.action === "add") {
+            if (nextSpec.action !== "add") {
+              thinking.content = "❌ Refinement must still describe an Add feature. Please refine with UI/workflow/goal for a new feature.";
+              renderChatMessages();
+              saveChatHistory();
+              return;
+            }
+            const anchorSelector = lastPickedTarget?.selector || spec.targetSelector || spec.selector || "";
+            if (!anchorSelector) {
+              thinking.content = "❌ I lost the selected anchor. Please pick the target section again and retry.";
+              renderChatMessages();
+              saveChatHistory();
+              return;
+            }
+            nextSpec.targetSelector = anchorSelector;
+            if (!nextSpec.selector) nextSpec.selector = anchorSelector;
+          }
+          const previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec: nextSpec, previewId });
+          if (previewResp?.response?.ok) {
+            addPreviewMessage({
+              previewId: previewResp.response.previewId,
+              feature_type: nextSpec.action,
+              confidence: nextSpec.confidence,
+              warnings: nextSpec.warnings || [],
+              spec: nextSpec,
+              previewKind: "spec"
+            });
+            thinking.content = "✅ Updated preview.";
           } else {
-            // Keep Add refinements anchored to the originally picked element.
-            if (spec?.action === "add") {
-              if (nextSpec.action !== "add") {
-                thinking.content = "❌ Refinement must still describe an Add feature. Please refine with UI/workflow/goal for a new feature.";
-                renderChatMessages();
-                saveChatHistory();
-                return;
-              }
-              const anchorSelector = lastPickedTarget?.selector || spec.targetSelector || spec.selector || "";
-              if (!anchorSelector) {
-                thinking.content = "❌ I lost the selected anchor. Please pick the target section again and retry.";
-                renderChatMessages();
-                saveChatHistory();
-                return;
-              }
-              nextSpec.targetSelector = anchorSelector;
-              if (!nextSpec.selector) nextSpec.selector = anchorSelector;
-            }
-            const previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec: nextSpec, previewId });
-            if (previewResp?.response?.ok) {
-              addPreviewMessage({
-                previewId: previewResp.response.previewId,
-                feature_type: nextSpec.action,
-                confidence: nextSpec.confidence,
-                warnings: nextSpec.warnings || [],
-                spec: nextSpec,
-                previewKind: "spec"
-              });
-              thinking.content = "✅ Updated preview.";
-            } else {
-              thinking.content = `❌ Preview failed: ${previewResp?.response?.error || "unknown error"}`;
-            }
+            thinking.content = `❌ ${formatStageError(previewResp, "Preview failed")}`;
           }
         }
         renderChatMessages();
@@ -1051,14 +1128,12 @@
         const pageContext = pageContextResp?.response?.pageContext || {};
         pageContext.anchorElement = lastPickedTarget;
 
-        const aiResp = window.SupabaseClient?.generateFeatureSpec
-          ? await window.SupabaseClient.generateFeatureSpec(text, pageContext)
-          : null;
-        if (!aiResp?.ok) {
-          throw new Error(aiResp?.error || "AI feature generation is not available right now.");
+        const built = await buildAddSpecPipeline(text, pageContext, null);
+        if (!built.ok) {
+          throw new Error(formatStageError(built, "Feature generation failed"));
         }
 
-        const spec = aiResp.spec || null;
+        const spec = built.spec || null;
         if (!spec) {
           throw new Error("No feature specification returned.");
         }
@@ -1153,7 +1228,7 @@
               thinking.content = "❌ I couldn't find the exact element. Click Add, Remove, or Customize, pick an anchor, then re-send your request.";
               pendingAiAnchorRequest = { text };
             } else {
-              thinking.content = `❌ I tried to do that, but: ${err}`;
+              thinking.content = `❌ ${formatStageError(previewResp, `I tried to do that, but: ${err}`)}`;
             }
           }
         }

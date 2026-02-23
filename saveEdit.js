@@ -614,6 +614,7 @@ async function saveEditToSupabase(params) {
 async function saveAddFeature(spec) {
   const selector = spec?.selector;
   const targetElement = selector ? querySelectorSafe(selector) : null;
+  const generatedModule = spec?.generated_module || {};
   const metadataContext = {
     editType: 'add',
     payload: spec,
@@ -630,7 +631,23 @@ async function saveAddFeature(spec) {
     type: 'add',
     name: spec.name,
     description: spec.purpose || spec.name,
-    payload: spec,
+    payload: {
+      ...spec,
+      featureArtifact: {
+        html: generatedModule?.html || spec?.html || '',
+        css: generatedModule?.css || spec?.css || '',
+        js: generatedModule?.js || spec?.js || ''
+      },
+      migration: {
+        schemaVersion: spec?.metadata?.schemaVersion || '2',
+        persistenceKey: spec?.persistence?.key || null,
+        undoStrategy: spec?.undo_strategy?.mode || 'dom-revert'
+      },
+      rollback: {
+        type: 'spec-undo',
+        selector: spec?.selector || spec?.targetSelector || null
+      }
+    },
     metadataContext
   });
 }

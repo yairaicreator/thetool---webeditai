@@ -204,6 +204,20 @@ const FeatureEngine = (() => {
         targetSelector: normalized.targetSelector,
         parameters: normalized.parameters || {},
         createdAt: Date.now(),
+        schemaVersion: "2",
+        migration: {
+          version: "2",
+          strategy: "feature-engine-commit"
+        },
+        rollback: {
+          type: "undoSnapshot",
+          selector: normalized.targetSelector
+        },
+        featureArtifact: {
+          html: "",
+          css: "",
+          js: ""
+        },
         undoSnapshot: snapshot
       }
     };

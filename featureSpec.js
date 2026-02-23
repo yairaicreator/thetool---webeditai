@@ -14,6 +14,17 @@
  * @property {string=} css
  * @property {string=} js
  * @property {Object=} behavior
+ * @property {Object=} ui_components
+ * @property {Object=} state_model
+ * @property {Array<Object>=} events
+ * @property {Array<Object>=} data_bindings
+ * @property {Object=} persistence
+ * @property {Object=} accessibility
+ * @property {Object=} undo_strategy
+ * @property {Object=} selectors
+ * @property {Object=} generated_module
+ * @property {Object=} validation
+ * @property {Object=} metadata
  */
 
 const FeatureSpecSchema = {
@@ -49,6 +60,136 @@ function normalizeStyles(value) {
     if (key && val) out[key] = val;
   }
   return Object.keys(out).length ? out : null;
+}
+
+function normalizeStringArray(value, maxItems = 24) {
+  if (!Array.isArray(value)) return null;
+  const out = [];
+  value.forEach((item) => {
+    const next = normalizeString(item);
+    if (next) out.push(next);
+  });
+  if (!out.length) return null;
+  return out.slice(0, maxItems);
+}
+
+function normalizeEvents(value) {
+  if (!Array.isArray(value)) return null;
+  const out = [];
+  value.forEach((evt) => {
+    if (!isPlainObject(evt)) return;
+    const name = normalizeString(evt.name || evt.event || evt.type);
+    const target = normalizeString(evt.target || evt.selector);
+    const handler = normalizeString(evt.handler || evt.action);
+    if (!name || !handler) return;
+    out.push({
+      name,
+      target: target || undefined,
+      handler
+    });
+  });
+  return out.length ? out.slice(0, 64) : null;
+}
+
+function normalizeDataBindings(value) {
+  if (!Array.isArray(value)) return null;
+  const out = [];
+  value.forEach((binding) => {
+    if (!isPlainObject(binding)) return;
+    const source = normalizeString(binding.source || binding.from);
+    const target = normalizeString(binding.target || binding.to);
+    const transform = normalizeString(binding.transform || "");
+    if (!source || !target) return;
+    out.push({ source, target, transform: transform || undefined });
+  });
+  return out.length ? out.slice(0, 64) : null;
+}
+
+function normalizeFeatureSpecV2(raw) {
+  if (!isPlainObject(raw)) return null;
+
+  const uiComponents = isPlainObject(raw.ui_components)
+    ? {
+        type: normalizeString(raw.ui_components.type || "module"),
+        slots: normalizeStringArray(raw.ui_components.slots || []),
+        notes: normalizeString(raw.ui_components.notes || "")
+      }
+    : null;
+
+  const stateModel = isPlainObject(raw.state_model)
+    ? {
+        type: normalizeString(raw.state_model.type || "local"),
+        keys: normalizeStringArray(raw.state_model.keys || []),
+        transitions: Array.isArray(raw.state_model.transitions) ? raw.state_model.transitions.slice(0, 64) : undefined
+      }
+    : null;
+
+  const persistence = isPlainObject(raw.persistence)
+    ? {
+        scope: normalizeString(raw.persistence.scope || "page"),
+        storage: normalizeString(raw.persistence.storage || "chrome.storage.local"),
+        key: normalizeString(raw.persistence.key || ""),
+        migrationVersion: normalizeString(raw.persistence.migrationVersion || raw.persistence.version || "1")
+      }
+    : null;
+
+  const accessibility = isPlainObject(raw.accessibility)
+    ? {
+        ariaLabels: normalizeStringArray(raw.accessibility.ariaLabels || []),
+        keyboardSupport: normalizeString(raw.accessibility.keyboardSupport || "")
+      }
+    : null;
+
+  const undoStrategy = isPlainObject(raw.undo_strategy)
+    ? {
+        mode: normalizeString(raw.undo_strategy.mode || "dom-revert"),
+        preserveStateKeys: normalizeStringArray(raw.undo_strategy.preserveStateKeys || [])
+      }
+    : null;
+
+  const selectors = isPlainObject(raw.selectors)
+    ? {
+        anchor: normalizeString(raw.selectors.anchor || ""),
+        fallback: normalizeStringArray(raw.selectors.fallback || [])
+      }
+    : null;
+
+  const generatedModule = isPlainObject(raw.generated_module)
+    ? {
+        moduleId: normalizeString(raw.generated_module.moduleId || raw.generated_module.id || ""),
+        title: normalizeString(raw.generated_module.title || ""),
+        html: typeof raw.generated_module.html === "string" ? raw.generated_module.html : "",
+        css: typeof raw.generated_module.css === "string" ? raw.generated_module.css : "",
+        js: typeof raw.generated_module.js === "string" ? raw.generated_module.js : ""
+      }
+    : null;
+
+  const validation = isPlainObject(raw.validation)
+    ? {
+        tests: Array.isArray(raw.validation.tests) ? raw.validation.tests.slice(0, 64) : [],
+        required: normalizeStringArray(raw.validation.required || [])
+      }
+    : null;
+
+  const events = normalizeEvents(raw.events);
+  const dataBindings = normalizeDataBindings(raw.data_bindings);
+
+  const result = {};
+  if (uiComponents) result.ui_components = uiComponents;
+  if (stateModel) result.state_model = stateModel;
+  if (events) result.events = events;
+  if (dataBindings) result.data_bindings = dataBindings;
+  if (persistence) result.persistence = persistence;
+  if (accessibility) result.accessibility = accessibility;
+  if (undoStrategy) result.undo_strategy = undoStrategy;
+  if (selectors) result.selectors = selectors;
+  if (generatedModule) result.generated_module = generatedModule;
+  if (validation) result.validation = validation;
+  result.metadata = {
+    schemaVersion: "2",
+    generatedAt: Date.now()
+  };
+  return result;
 }
 
 function normalizeBehavior(value) {
@@ -172,6 +313,7 @@ function parseFeatureSpec(raw) {
   }
 
   const styles = normalizeStyles(raw.styles);
+  const v2 = normalizeFeatureSpecV2(raw);
 
   /** @type {FeatureSpec} */
   const spec = {
@@ -185,7 +327,8 @@ function parseFeatureSpec(raw) {
     html: html || undefined,
     css: css || undefined,
     js: js || undefined,
-    behavior: behavior || undefined
+    behavior: behavior || undefined,
+    ...(v2 || {})
   };
 
   return { ok: true, spec };
@@ -194,6 +337,7 @@ function parseFeatureSpec(raw) {
 if (typeof window !== "undefined") {
   window.FeatureSpecSchema = FeatureSpecSchema;
   window.parseFeatureSpec = parseFeatureSpec;
+  window.normalizeFeatureSpecV2 = normalizeFeatureSpecV2;
   console.log("✅ FeatureSpec validator loaded");
 }
 

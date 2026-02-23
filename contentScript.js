@@ -146,6 +146,13 @@ async function renderSpecPreviewInLab(spec, previewId) {
   if (!exec || typeof exec.applyFeatureSpec !== "function") {
     return { ok: false, error: "FeatureSpec executor not available" };
   }
+  const parsed = typeof window.parseFeatureSpec === "function"
+    ? window.parseFeatureSpec(spec)
+    : { ok: true, spec };
+  if (!parsed?.ok || !parsed?.spec) {
+    return { ok: false, stage: "parse", error: parsed?.error || "Invalid feature spec" };
+  }
+  const normalizedSpec = parsed.spec;
 
   openPreviewLab(previewId, "Preview Lab");
   lab.clearContent();
@@ -153,10 +160,10 @@ async function renderSpecPreviewInLab(spec, previewId) {
   const shadowRoot = lab.getShadowRoot();
   if (!mount || !shadowRoot) return { ok: false, error: "Preview mount unavailable" };
 
-  const selector = spec.selector || spec.targetSelector || "";
+  const selector = normalizedSpec.selector || normalizedSpec.targetSelector || "";
   let previewTarget = null;
 
-  if (spec.action === "add") {
+  if (normalizedSpec.action === "add") {
     previewTarget = document.createElement("div");
     previewTarget.setAttribute(PREVIEW_LAB_TARGET_ATTR, "1");
     mount.appendChild(previewTarget);
@@ -173,7 +180,7 @@ async function renderSpecPreviewInLab(spec, previewId) {
   if (!previewTarget) return { ok: false, error: "Preview target missing" };
 
   const previewSpec = {
-    ...spec,
+    ...normalizedSpec,
     selector: `[${PREVIEW_LAB_TARGET_ATTR}="1"]`,
     targetSelector: `[${PREVIEW_LAB_TARGET_ATTR}="1"]`
   };
@@ -185,7 +192,28 @@ async function renderSpecPreviewInLab(spec, previewId) {
     preview: true,
     id: previewId
   });
-  return result?.ok ? { ok: true } : { ok: false, error: result?.error || "Preview failed" };
+  if (!result?.ok) {
+    return {
+      ok: false,
+      stage: result?.stage || "validation",
+      error: result?.error || "Preview failed",
+      failures: Array.isArray(result?.failures) ? result.failures : []
+    };
+  }
+
+  // Isolated preview sanity assertions to prevent "nothing happened" outcomes.
+  const mountNode = lab.getMountNode();
+  const hasRenderableNode = !!(mountNode && mountNode.querySelector("*"));
+  if (!hasRenderableNode) {
+    return {
+      ok: false,
+      stage: "validation",
+      error: "Behavior tests failed: preview rendered no new elements.",
+      failures: [{ code: "empty_preview", message: "No rendered nodes in isolated preview." }]
+    };
+  }
+
+  return { ok: true };
 }
 
 // ============================================================
@@ -1555,11 +1583,19 @@ async function applyFeatureSpecFlow(spec) {
       return { ok: false, error: "FeatureSpec executor not found" };
     }
 
+    const parsed = typeof window.parseFeatureSpec === "function"
+      ? window.parseFeatureSpec(spec)
+      : { ok: true, spec };
+    if (!parsed?.ok || !parsed?.spec) {
+      return { ok: false, stage: "parse", error: parsed?.error || "Invalid feature spec" };
+    }
+    const normalizedSpec = parsed.spec;
+
     // Retry a few times on SPA remounts where the target selector may not exist yet.
     let result = null;
     let lastErr = null;
     for (let attempt = 1; attempt <= 3; attempt++) {
-      result = await exec.applyFeatureSpec(spec, { skipPersist: true });
+      result = await exec.applyFeatureSpec(normalizedSpec, { skipPersist: true });
       if (result?.ok) break;
       lastErr = result?.error || "apply failed";
       if (typeof lastErr === "string" && lastErr.includes("Could not find target")) {
@@ -1569,32 +1605,58 @@ async function applyFeatureSpecFlow(spec) {
       break;
     }
     if (!result?.ok) {
-      return { ok: false, error: lastErr || "Failed to apply spec" };
+      return { ok: false, stage: "apply", error: lastErr || "Failed to apply spec" };
     }
 
+    const generatedModule = normalizedSpec?.generated_module || {};
+    const featureRecord = {
+      id: result?.applied?.id || spec?.id || `spec-${Date.now()}`,
+      feature_type: normalizedSpec?.action || "add",
+      targetSelector: normalizedSpec?.targetSelector || normalizedSpec?.selector || "",
+      parameters: {
+        position: normalizedSpec?.position || "inside"
+      },
+      createdAt: Date.now(),
+      schemaVersion: normalizedSpec?.metadata?.schemaVersion || "2",
+      featureArtifact: {
+        html: generatedModule?.html || normalizedSpec?.html || "",
+        css: generatedModule?.css || normalizedSpec?.css || "",
+        js: generatedModule?.js || normalizedSpec?.js || ""
+      },
+      migration: {
+        version: normalizedSpec?.persistence?.migrationVersion || "2",
+        strategy: normalizedSpec?.undo_strategy?.mode || "dom-revert"
+      },
+      rollback: {
+        type: "spec-undo",
+        selector: normalizedSpec?.targetSelector || normalizedSpec?.selector || ""
+      },
+      undoSnapshot: result?.applied?.undo || null
+    };
+
     // Confirm persistence to Supabase for add features; if it fails, undo to avoid lying.
-    if (spec?.action === "add") {
+    if (normalizedSpec?.action === "add") {
       const saver = window.SaveEdit?.saveAddFeature;
       if (typeof saver !== "function") {
         await exec.undoById?.(result.applied?.id);
         return { ok: false, error: "SaveEdit module not available; cannot persist feature" };
       }
       const saveResp = await saver({
-        ...spec,
-        selector: spec.selector || spec.targetSelector,
-        name: spec.name || "AI Feature",
-        purpose: spec.purpose || spec.description || "AI generated feature"
+        ...normalizedSpec,
+        selector: normalizedSpec.selector || normalizedSpec.targetSelector,
+        name: normalizedSpec.name || "AI Feature",
+        purpose: normalizedSpec.purpose || normalizedSpec.description || "AI generated feature"
       });
       if (!saveResp?.ok) {
         try { await exec.undoById?.(result.applied?.id); } catch (_) {}
-        return { ok: false, error: `Failed to persist to Supabase: ${saveResp?.error || "unknown error"}` };
+        return { ok: false, stage: "apply", error: `Failed to persist to Supabase: ${saveResp?.error || "unknown error"}` };
       }
 
       // Replace the local (temporary) insertion with a cloud-managed insertion keyed by the Supabase edit id.
       const persistedEditId = saveResp?.edit?.id;
       if (persistedEditId) {
         try { await exec.undoById?.(result.applied?.id); } catch (_) {}
-        const replayed = await exec.applyFeatureSpec(spec, { replay: true, id: persistedEditId, skipPersist: true });
+        const replayed = await exec.applyFeatureSpec(normalizedSpec, { replay: true, id: persistedEditId, skipPersist: true });
         if (replayed?.ok) {
           try {
             const nodes = document.querySelectorAll(`[data-webedit-ai-insert-id="${cssEscapeSafe(persistedEditId)}"]`);
@@ -1603,16 +1665,16 @@ async function applyFeatureSpecFlow(spec) {
             });
           } catch (_) {}
         }
-        return { ok: true, applied: replayed?.applied || result.applied, persisted: true, edit: saveResp.edit || null };
+        return { ok: true, applied: replayed?.applied || result.applied, persisted: true, edit: saveResp.edit || null, record: featureRecord };
       }
 
-      return { ok: true, applied: result.applied, persisted: true, edit: saveResp.edit || null };
+      return { ok: true, applied: result.applied, persisted: true, edit: saveResp.edit || null, record: featureRecord };
     }
 
     // Non-add actions are applied but not persisted via SaveEdit yet.
-    return { ok: true, applied: result.applied, persisted: false };
+    return { ok: true, applied: result.applied, persisted: false, record: featureRecord };
   } catch (error) {
-    return { ok: false, error: error.message };
+    return { ok: false, stage: "apply", error: error.message };
   }
 }
 
@@ -1837,7 +1899,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({ ok: true, previewId });
           return;
         }
-        sendResponse({ ok: false, error: res?.error || "Preview failed" });
+        sendResponse({
+          ok: false,
+          stage: res?.stage || "validation",
+          error: res?.error || "Preview failed",
+          failures: Array.isArray(res?.failures) ? res.failures : []
+        });
       })();
       return true;
     }
@@ -2112,6 +2179,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return true;
       }
       const result = extractor.extractContext(selector);
+      sendResponse(result);
+      return true;
+    }
+    if (type === "GET_SITE_CAPABILITIES") {
+      const selector = payload.selector || payload.targetSelector || "";
+      const extractor = window.ContextExtractor;
+      if (!extractor || typeof extractor.assessCapabilities !== "function") {
+        sendResponse({ ok: false, error: "Capability engine not available" });
+        return true;
+      }
+      const result = extractor.assessCapabilities(selector);
       sendResponse(result);
       return true;
     }

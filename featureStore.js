@@ -2,7 +2,8 @@
 // Persists committed features and replays them deterministically.
 
 const FeatureStore = (() => {
-  const STORE_KEY = "webeditCommittedFeaturesV1";
+  const STORE_KEY = "webeditCommittedFeaturesV2";
+  const LEGACY_STORE_KEY = "webeditCommittedFeaturesV1";
   const undoStack = [];
   const redoStack = [];
 
@@ -23,10 +24,17 @@ const FeatureStore = (() => {
   async function loadCommittedFeatures() {
     if (!isExtensionContextValid()) return [];
     return new Promise((resolve) => {
-      chrome.storage.local.get([STORE_KEY], (result) => {
-        const store = result?.[STORE_KEY] || {};
-        const list = Array.isArray(store?.[getScopeKey()]) ? store[getScopeKey()] : [];
-        resolve(list);
+      chrome.storage.local.get([STORE_KEY, LEGACY_STORE_KEY], (result) => {
+        const scopeKey = getScopeKey();
+        const v2Store = result?.[STORE_KEY] || {};
+        const v2List = Array.isArray(v2Store?.[scopeKey]) ? v2Store[scopeKey] : [];
+        if (v2List.length > 0) {
+          resolve(v2List);
+          return;
+        }
+        const legacyStore = result?.[LEGACY_STORE_KEY] || {};
+        const legacyList = Array.isArray(legacyStore?.[scopeKey]) ? legacyStore[scopeKey] : [];
+        resolve(legacyList.map(normalizeRecord));
       });
     });
   }
@@ -46,10 +54,11 @@ const FeatureStore = (() => {
 
   async function addCommittedFeature(record) {
     const list = await loadCommittedFeatures();
-    if (list.some((r) => r.id === record.id)) return { ok: true, replayed: true };
-    list.push(record);
+    const normalized = normalizeRecord(record);
+    if (list.some((r) => r.id === normalized.id)) return { ok: true, replayed: true };
+    list.push(normalized);
     await saveCommittedFeatures(list);
-    undoStack.push(record);
+    undoStack.push(normalized);
     redoStack.length = 0;
     return { ok: true };
   }
@@ -66,7 +75,8 @@ const FeatureStore = (() => {
     if (!window.FeatureEngine) return { ok: false, error: "FeatureEngine not available" };
     let applied = 0;
     for (const record of list) {
-      const res = window.FeatureEngine.applyFeature(record, "commit", { id: record.id });
+      const normalized = normalizeRecord(record);
+      const res = window.FeatureEngine.applyFeature(normalized, "commit", { id: normalized.id });
       if (res?.ok) applied += 1;
     }
     return { ok: true, applied, total: list.length };
@@ -75,7 +85,7 @@ const FeatureStore = (() => {
   async function undoLastCommit() {
     const record = undoStack.pop();
     if (!record) return { ok: false, error: "Nothing to undo" };
-    const res = window.FeatureEngine?.undoCommit?.(record);
+    const res = window.FeatureEngine?.undoCommit?.(normalizeRecord(record));
     if (res?.ok) {
       await removeCommittedFeature(record.id);
       redoStack.push(record);
@@ -87,12 +97,34 @@ const FeatureStore = (() => {
   async function redoLastCommit() {
     const record = redoStack.pop();
     if (!record) return { ok: false, error: "Nothing to redo" };
-    const res = window.FeatureEngine?.applyFeature?.(record, "commit", { id: record.id });
+    const normalized = normalizeRecord(record);
+    const res = window.FeatureEngine?.applyFeature?.(normalized, "commit", { id: normalized.id });
     if (res?.ok) {
-      await addCommittedFeature(record);
+      await addCommittedFeature(normalized);
       return { ok: true };
     }
     return { ok: false, error: res?.error || "Redo failed" };
+  }
+
+  function normalizeRecord(record) {
+    const base = record || {};
+    return {
+      ...base,
+      schemaVersion: base.schemaVersion || "2",
+      rollback: base.rollback || {
+        type: "style-snapshot",
+        createdAt: Date.now()
+      },
+      migration: base.migration || {
+        version: "2",
+        strategy: "applyFeature-v2"
+      },
+      featureArtifact: base.featureArtifact || {
+        html: base.html || "",
+        css: base.css || "",
+        js: base.js || ""
+      }
+    };
   }
 
   return {

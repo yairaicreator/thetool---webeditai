@@ -21,10 +21,19 @@ const MessageTypes = {
 
   // FeatureSpec AI actions
   GET_PAGE_CONTEXT: "GET_PAGE_CONTEXT",
+  GET_SITE_CAPABILITIES: "GET_SITE_CAPABILITIES",
   APPLY_FEATURE_SPEC: "APPLY_FEATURE_SPEC",
   
   // Ping
   PING: "PING"
+};
+
+const FeaturePipelineStages = {
+  PARSE: "parse",
+  CAPABILITY: "capability",
+  GENERATION: "generation",
+  VALIDATION: "validation",
+  APPLY: "apply"
 };
 
 /**
@@ -41,6 +50,7 @@ const MessageTypes = {
 // Export for use in other scripts
 if (typeof window !== 'undefined') {
   window.MessageTypes = MessageTypes;
+  window.FeaturePipelineStages = FeaturePipelineStages;
   console.log('✅ MessageTypes loaded');
 }
 

@@ -79,7 +79,56 @@ const ContextExtractor = (() => {
     return { ok: true, context };
   }
 
-  return { extractContext };
+  function assessCapabilities(selector = "") {
+    const anchor = selector ? safeQuery(selector) : null;
+    const body = document.body || document.documentElement;
+    const visibleButtons = Array.from(document.querySelectorAll("button,[role='button'],a,input,textarea,select"))
+      .filter((el) => {
+        if (!(el instanceof Element)) return false;
+        const rect = el.getBoundingClientRect();
+        return rect.width > 1 && rect.height > 1;
+      });
+    const hasStableAnchor = !!anchor;
+    const supportsStorage = typeof chrome !== "undefined" && !!chrome.storage?.local;
+    const supportsObserver = typeof MutationObserver !== "undefined";
+    const supportsPointerEvents = typeof window.PointerEvent !== "undefined";
+    const supportsDnDPrimitives = typeof window.DragEvent !== "undefined" || supportsPointerEvents;
+    const hasInteractiveDensity = visibleButtons.length >= 5;
+
+    const checks = [
+      { key: "stableAnchor", ok: hasStableAnchor, reason: hasStableAnchor ? "" : "No stable anchor selected." },
+      { key: "storage", ok: supportsStorage, reason: supportsStorage ? "" : "Extension storage is unavailable." },
+      { key: "observer", ok: supportsObserver, reason: supportsObserver ? "" : "DOM observer support missing." },
+      { key: "dragDrop", ok: supportsDnDPrimitives, reason: supportsDnDPrimitives ? "" : "Drag/drop primitives are unavailable." },
+      { key: "interactiveDensity", ok: hasInteractiveDensity, reason: hasInteractiveDensity ? "" : "Page has very low interactive density." }
+    ];
+
+    const failed = checks.filter((c) => !c.ok);
+    const capabilityScore = Math.max(0, Math.round(((checks.length - failed.length) / checks.length) * 100));
+    const recommendation = capabilityScore >= 75
+      ? "full_feature_generation"
+      : capabilityScore >= 45
+        ? "guided_decomposition"
+        : "simplified_ui_only";
+
+    return {
+      ok: true,
+      capability: {
+        capabilityScore,
+        recommendation,
+        checks,
+        warnings: failed.map((c) => c.reason),
+        environment: {
+          url: location.href,
+          title: document.title || "",
+          bodyTag: body?.tagName?.toLowerCase() || "unknown",
+          anchorSelector: selector || null
+        }
+      }
+    };
+  }
+
+  return { extractContext, assessCapabilities };
 })();
 
 if (typeof window !== "undefined") {
