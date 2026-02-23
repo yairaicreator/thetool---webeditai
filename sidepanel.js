@@ -215,6 +215,27 @@
     return { ok: true, spec: built.spec, capability };
   }
 
+  async function ensureRenderableAddSpec(spec, promptText, pageContext = {}, previousSpec = null) {
+    const next = spec ? { ...spec } : null;
+    if (!next || next.action !== "add") return { ok: true, spec: next };
+    const generatedHtml = next.generated_module?.html || "";
+    const generatedCss = next.generated_module?.css || "";
+    const generatedJs = next.generated_module?.js || "";
+    const hasRenderable = !!((next.html && String(next.html).trim()) || (next.content && String(next.content).trim()) || (generatedHtml && String(generatedHtml).trim()));
+    if (hasRenderable) {
+      if ((!next.html || !String(next.html).trim()) && generatedHtml) next.html = generatedHtml;
+      if ((!next.css || !String(next.css).trim()) && generatedCss) next.css = generatedCss;
+      if ((!next.js || !String(next.js).trim()) && generatedJs) next.js = generatedJs;
+      return { ok: true, spec: next };
+    }
+
+    const rebuilt = await buildAddSpecPipeline(promptText, pageContext, previousSpec || next);
+    if (!rebuilt.ok || !rebuilt.spec) {
+      return { ok: false, stage: rebuilt.stage || "generation", error: rebuilt.error || "Could not generate renderable Add code." };
+    }
+    return { ok: true, spec: rebuilt.spec };
+  }
+
   function showNotificationInChat(text) {
     addChatMessage("system", text);
   }
@@ -1019,6 +1040,17 @@
           nextSpec = aiResp.spec;
         }
 
+        if (nextSpec?.action === "add") {
+          const hydrated = await ensureRenderableAddSpec(nextSpec, text, pageContext, spec || nextSpec);
+          if (!hydrated.ok) {
+            thinking.content = `❌ ${formatStageError(hydrated, "Refinement could not generate renderable Add code.")}`;
+            renderChatMessages();
+            saveChatHistory();
+            return;
+          }
+          nextSpec = hydrated.spec;
+        }
+
         if (!nextSpec || nextSpec.action === "chat" || nextSpec.action === "undo" || nextSpec.action === "reveal") {
           thinking.content = "❌ I couldn't generate a new preview for that refinement.";
         } else {
@@ -1133,10 +1165,16 @@
           throw new Error(formatStageError(built, "Feature generation failed"));
         }
 
-        const spec = built.spec || null;
+        let spec = built.spec || null;
         if (!spec) {
           throw new Error("No feature specification returned.");
         }
+
+        const hydrated = await ensureRenderableAddSpec(spec, text, pageContext, spec);
+        if (!hydrated.ok || !hydrated.spec) {
+          throw new Error(formatStageError(hydrated, "Feature generation failed."));
+        }
+        spec = hydrated.spec;
 
         // Add flow expects an add-capable spec. If not, guide user to refine prompt.
         if (spec.action !== "add") {
@@ -1194,7 +1232,7 @@
       if (!aiResp?.ok) {
         thinking.content = `❌ ${aiResp?.error || "AI is not available right now."}`;
       } else {
-        const spec = aiResp.spec;
+        let spec = aiResp.spec;
         
         if (spec.action === "chat") {
           thinking.content = spec.content || "I couldn't generate a response.";
@@ -1209,6 +1247,20 @@
             ? `✅ Done. Revealed ${revealResp.response.count || 0} element(s).`
             : `❌ ${revealResp?.response?.error || "Reveal failed"}`;
         } else {
+          if (spec.action === "add") {
+            const hydrated = await ensureRenderableAddSpec(spec, text, pageContext, spec);
+            if (!hydrated.ok || !hydrated.spec) {
+              thinking.content = `❌ ${formatStageError(hydrated, "Add generation failed.")}`;
+              renderChatMessages();
+              saveChatHistory();
+              return;
+            }
+            spec = hydrated.spec;
+            if (lastPickedTarget?.selector) {
+              spec.targetSelector = lastPickedTarget.selector;
+              if (!spec.selector) spec.selector = lastPickedTarget.selector;
+            }
+          }
           // It's an edit command (hide, customize, add, text)
           thinking.content = "Generating a preview...";
           const previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec });

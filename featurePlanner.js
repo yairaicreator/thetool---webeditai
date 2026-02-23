@@ -124,6 +124,9 @@ const FeaturePlanner = (() => {
       selector,
       targetSelector: selector,
       position: "inside",
+      html: generated.module?.html || "",
+      css: generated.module?.css || "",
+      js: generated.module?.js || "",
       generated_module: generated.module,
       ui_components: {
         type: generated.featureClass,
@@ -172,6 +175,19 @@ const FeaturePlanner = (() => {
       confidence: generated.confidence,
       warnings: generated.warnings
     };
+
+    if (generated.featureClass === "toggleTheme") {
+      spec.behavior = {
+        type: "toggleClass",
+        triggerAttr: "data-webedit-ai-action",
+        triggerValue: "toggle",
+        targetSelector: "body",
+        className: "webedit-theme-dark",
+        expandedLabel: "Dark mode on",
+        collapsedLabel: "Dark mode off"
+      };
+    }
+
     return { ok: true, spec, confidence: generated.confidence, warnings: generated.warnings };
   }
 

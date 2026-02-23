@@ -258,9 +258,13 @@ function parseFeatureSpec(raw) {
   const targetSelector = normalizeString(raw.targetSelector);
   const description = normalizeString(raw.description);
   const content = normalizeString(raw.content);
-  const html = typeof raw.html === "string" ? raw.html : "";
-  const css = typeof raw.css === "string" ? raw.css : "";
-  const js = typeof raw.js === "string" ? raw.js : "";
+  const generatedModule = isPlainObject(raw.generated_module) ? raw.generated_module : null;
+  const moduleHtml = typeof generatedModule?.html === "string" ? generatedModule.html : "";
+  const moduleCss = typeof generatedModule?.css === "string" ? generatedModule.css : "";
+  const moduleJs = typeof generatedModule?.js === "string" ? generatedModule.js : "";
+  const html = typeof raw.html === "string" && raw.html.trim().length ? raw.html : moduleHtml;
+  const css = typeof raw.css === "string" && raw.css.trim().length ? raw.css : moduleCss;
+  const js = typeof raw.js === "string" && raw.js.trim().length ? raw.js : moduleJs;
   const behavior = normalizeBehavior(raw.behavior);
 
   let position = normalizePosition(raw.position);
@@ -301,7 +305,7 @@ function parseFeatureSpec(raw) {
     }
     if (!position) position = "inside";
 
-    const hasHtml = typeof raw.html === "string" && raw.html.trim().length > 0;
+    const hasHtml = html.trim().length > 0;
     const hasContent = content.length > 0;
     if (!hasHtml && !hasContent) {
       return { ok: false, error: "Invalid spec: add requires html or content" };
