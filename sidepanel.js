@@ -1029,32 +1029,44 @@
       isAddFeatureMode = false; // consume guided add prompt and return to normal chat mode
       const thinking = addChatMessage("assistant", "Generating your feature...");
       try {
-        const ctxResp = await sendToActiveTab({ type: "GET_ADD_CONTEXT", selector: lastPickedTarget.selector });
-        if (!ctxResp?.response?.ok) {
-          throw new Error(ctxResp?.response?.error || "Context unavailable");
+        const pageContextResp = await sendToActiveTab({ type: "GET_PAGE_CONTEXT" });
+        const pageContext = pageContextResp?.response?.pageContext || {};
+        pageContext.anchorElement = lastPickedTarget;
+
+        const aiResp = window.SupabaseClient?.generateFeatureSpec
+          ? await window.SupabaseClient.generateFeatureSpec(text, pageContext)
+          : null;
+        if (!aiResp?.ok) {
+          throw new Error(aiResp?.error || "AI feature generation is not available right now.");
         }
-        const context = ctxResp.response.context || null;
-        const planner = window.FeaturePlanner;
-        if (!planner || typeof planner.plan !== "function") {
-          throw new Error("FeaturePlanner not available");
+
+        const spec = aiResp.spec || null;
+        if (!spec) {
+          throw new Error("No feature specification returned.");
         }
-        const plan = planner.plan(text, context);
-        plan.targetSelector = lastPickedTarget.selector;
-        const previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE", plan });
+
+        // Add flow expects an add-capable spec. If not, guide user to refine prompt.
+        if (spec.action !== "add") {
+          const actionLabel = spec.action || "unknown";
+          throw new Error(`AI generated '${actionLabel}' instead of an add feature. Refine your prompt with clear UI and workflow details for a new feature.`);
+        }
+
+        const previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec });
         if (!previewResp?.response?.ok) {
           throw new Error(previewResp?.response?.error || "Preview failed");
         }
+
         addPreviewMessage({
           previewId: previewResp.response.previewId,
-          feature_type: plan.feature_type,
-          confidence: plan.confidence,
-          warnings: plan.warnings || [],
-          plan,
-          previewKind: "plan"
+          feature_type: spec.action,
+          confidence: spec.confidence,
+          warnings: spec.warnings || [],
+          spec,
+          previewKind: "spec"
         });
         thinking.content = "✅ Preview ready. Review and click Apply.";
       } catch (e) {
-        console.error("[Add Feature] Planner preview failed:", e);
+        console.error("[Add Feature] Spec preview failed:", e);
         thinking.content = `❌ I couldn't generate a preview.\nReason: ${e.message || "Unknown error"}`;
       }
       renderChatMessages();
