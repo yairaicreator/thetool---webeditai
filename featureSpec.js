@@ -160,7 +160,10 @@ function normalizeFeatureSpecV2(raw) {
         title: normalizeString(raw.generated_module.title || ""),
         html: typeof raw.generated_module.html === "string" ? raw.generated_module.html : "",
         css: typeof raw.generated_module.css === "string" ? raw.generated_module.css : "",
-        js: typeof raw.generated_module.js === "string" ? raw.generated_module.js : ""
+        js: typeof raw.generated_module.js === "string" ? raw.generated_module.js : "",
+        controller: normalizeString(raw.generated_module.controller || ""),
+        config: isPlainObject(raw.generated_module.config) ? raw.generated_module.config : undefined,
+        stateSchema: isPlainObject(raw.generated_module.stateSchema) ? raw.generated_module.stateSchema : undefined
       }
     : null;
 

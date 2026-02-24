@@ -201,6 +201,46 @@ async function renderSpecPreviewInLab(spec, previewId) {
     };
   }
 
+  function runPreviewAssertions(currentSpec, root) {
+    const controller = currentSpec?.generated_module?.controller || "";
+    const failures = [];
+    if (!root) {
+      failures.push({ code: "missing_root", message: "Preview root is unavailable." });
+      return failures;
+    }
+
+    if (controller === "themeToggleController") {
+      const trigger = root.querySelector('[data-webedit-ai-action="toggle"]');
+      if (!trigger) {
+        failures.push({ code: "missing_toggle", message: "Theme toggle control was not rendered." });
+      } else {
+        const beforePressed = trigger.getAttribute("aria-pressed") || "false";
+        try { trigger.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); } catch (_) {}
+        const afterPressed = trigger.getAttribute("aria-pressed") || "false";
+        if (beforePressed === afterPressed) {
+          failures.push({ code: "toggle_no_state_change", message: "Theme toggle did not change state on click." });
+        }
+      }
+    }
+
+    if (controller === "folderGeminiController") {
+      const addFolderBtn = root.querySelector("[data-webedit-folder-module='1'] button");
+      const folderList = root.querySelector("[data-webedit-folder-list='1']");
+      if (!addFolderBtn || !folderList) {
+        failures.push({ code: "missing_folder_ui", message: "Folder module controls were not rendered." });
+      } else {
+        const beforeCount = folderList.querySelectorAll("[data-folder-id]").length;
+        try { addFolderBtn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); } catch (_) {}
+        const afterCount = folderList.querySelectorAll("[data-folder-id]").length;
+        if (afterCount <= beforeCount) {
+          failures.push({ code: "folder_create_failed", message: "Folder creation action did not create a folder." });
+        }
+      }
+    }
+
+    return failures;
+  }
+
   // Isolated preview sanity assertions to prevent "nothing happened" outcomes.
   const mountNode = lab.getMountNode();
   const hasRenderableNode = !!(mountNode && mountNode.querySelector("*"));
@@ -210,6 +250,16 @@ async function renderSpecPreviewInLab(spec, previewId) {
       stage: "validation",
       error: "Behavior tests failed: preview rendered no new elements.",
       failures: [{ code: "empty_preview", message: "No rendered nodes in isolated preview." }]
+    };
+  }
+
+  const functionalFailures = runPreviewAssertions(previewSpec, shadowRoot);
+  if (functionalFailures.length > 0) {
+    return {
+      ok: false,
+      stage: "validation",
+      error: functionalFailures[0].message,
+      failures: functionalFailures
     };
   }
 
@@ -465,7 +515,10 @@ async function fetchActiveEditsForWebsite(websiteId) {
   const url = `${auth.url}/rest/v1/edits?${baseQs.toString()}`;
   const data = await supabaseJsonGet(url, auth.token, auth.anonKey).catch((e) => {
     // Graceful degradation: if schema differs or table missing, skip.
-    console.warn("[WebEdit] Supabase fetchActiveEdits failed:", e?.message || e);
+    const msg = String(e?.message || e || "");
+    if (!/Failed to fetch|NetworkError|fetch/i.test(msg)) {
+      console.warn("[WebEdit] Supabase fetchActiveEdits failed:", msg);
+    }
     return [];
   });
   if (!Array.isArray(data)) return [];
@@ -1623,9 +1676,15 @@ async function applyFeatureSpecFlow(spec) {
         css: generatedModule?.css || normalizedSpec?.css || "",
         js: generatedModule?.js || normalizedSpec?.js || ""
       },
+      controller: {
+        id: generatedModule?.controller || null,
+        config: generatedModule?.config || null
+      },
+      stateSchema: generatedModule?.stateSchema || normalizedSpec?.state_model || null,
       migration: {
         version: normalizedSpec?.persistence?.migrationVersion || "2",
-        strategy: normalizedSpec?.undo_strategy?.mode || "dom-revert"
+        strategy: normalizedSpec?.undo_strategy?.mode || "dom-revert",
+        persistenceKey: normalizedSpec?.persistence?.key || null
       },
       rollback: {
         type: "spec-undo",

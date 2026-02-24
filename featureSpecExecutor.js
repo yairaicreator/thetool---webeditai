@@ -7,6 +7,7 @@ const HIDE_MARKER_ATTR = "data-webedit-ai-hidden-id";
 const STYLE_MARKER_ATTR = "data-webedit-ai-style-id";
 const BOUND_MARKER_ATTR = "data-webedit-ai-bound";
 const TOGGLE_STATE_PREFIX = "webeditAiToggleState::";
+const CONTROLLER_STATE_PREFIX = "webeditAiControllerState::";
 const behaviorRegistry = new Map(); // markerId -> behavior
 let delegatedBehaviorHandlerInstalled = false;
 const delegatedBehaviorRoots = new WeakSet();
@@ -34,6 +35,10 @@ function uuid() {
 
 function getToggleStateKey(scopeKey, markerId) {
   return `${TOGGLE_STATE_PREFIX}${scopeKey}::${markerId}`;
+}
+
+function getControllerStateKey(scopeKey, markerId) {
+  return `${CONTROLLER_STATE_PREFIX}${scopeKey}::${markerId}`;
 }
 
 function safeQueryAll(selector, root = document) {
@@ -186,20 +191,210 @@ function collectValidationFailures(spec, root = document) {
 function runScopedScript(js, root = document) {
   const code = typeof js === "string" ? js.trim() : "";
   if (!code) return;
-  const scope = root && typeof root.querySelector === "function" ? root : document;
-  try {
-    const scopedDocument = new Proxy(document, {
-      get(target, prop) {
-        if (prop === "querySelector") return scope.querySelector.bind(scope);
-        if (prop === "querySelectorAll") return scope.querySelectorAll.bind(scope);
-        if (prop === "getElementById") return scope.getElementById.bind(scope);
-        return target[prop];
-      }
+  // Avoid runtime eval to remain compatible with strict CSP pages (e.g. Gemini).
+  console.info("[WebEdit AI] Skipped inline script execution due to CSP-safe mode.");
+}
+
+function bindControllerForMarker(spec, markerId, root = document, options = {}) {
+  const controller = spec?.generated_module?.controller || "";
+  if (!controller || !markerId) return;
+
+  const scopeKey = getScopeKey();
+  const stateKey = getControllerStateKey(scopeKey, markerId);
+  const containers = safeQueryAll(`[${INSERT_MARKER_ATTR}="${CSS.escape(markerId)}"]`, root);
+  const host = containers[0] || null;
+  if (!host) return;
+
+  if (controller === "themeToggleController") {
+    const triggers = [];
+    if (host.matches?.('[data-webedit-ai-action="toggle"]')) triggers.push(host);
+    triggers.push(...safeQueryAll('[data-webedit-ai-action="toggle"]', host));
+
+    triggers.forEach((trigger) => {
+      if (!(trigger instanceof Element)) return;
+      if (trigger.getAttribute(BOUND_MARKER_ATTR) === "1") return;
+      trigger.setAttribute(BOUND_MARKER_ATTR, "1");
+      trigger.setAttribute("role", trigger.getAttribute("role") || "button");
+      if (!trigger.hasAttribute("tabindex")) trigger.setAttribute("tabindex", "0");
+
+      const applyState = (enabled) => {
+        const targets = safeQueryAll("body, [data-webedit-preview-target='1']", root);
+        targets.forEach((target) => {
+          try { target.classList.toggle("webedit-theme-dark", !!enabled); } catch (_) {}
+        });
+        trigger.setAttribute("aria-pressed", enabled ? "true" : "false");
+      };
+
+      let enabled = false;
+      try {
+        const stored = localStorage.getItem(stateKey);
+        enabled = stored === "1";
+      } catch (_) {}
+      applyState(enabled);
+
+      const onToggle = () => {
+        enabled = !enabled;
+        applyState(enabled);
+        try { localStorage.setItem(stateKey, enabled ? "1" : "0"); } catch (_) {}
+      };
+
+      trigger.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onToggle();
+      }, true);
+      trigger.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        e.stopPropagation();
+        onToggle();
+      }, true);
     });
-    const fn = new Function("document", "window", "root", `"use strict";\n${code}`);
-    fn(scopedDocument, window, scope);
-  } catch (error) {
-    console.warn("[WebEdit AI] Failed to run script:", error?.message || error);
+    return;
+  }
+
+  if (controller === "folderGeminiController") {
+    const newButton = safeQueryAll("[data-webedit-folder-module='1'] button[class$='__new']", host)[0]
+      || safeQueryAll("[data-webedit-folder-module='1'] button", host)[0]
+      || null;
+    const source = safeQueryAll("[data-webedit-folder-source='1']", host)[0] || null;
+    const folderList = safeQueryAll("[data-webedit-folder-list='1']", host)[0] || null;
+    if (!(source instanceof Element) || !(folderList instanceof Element) || !(newButton instanceof Element)) return;
+
+    if (host.getAttribute(BOUND_MARKER_ATTR) === "1") return;
+    host.setAttribute(BOUND_MARKER_ATTR, "1");
+
+    const loadState = () => {
+      try {
+        const raw = localStorage.getItem(stateKey);
+        const parsed = raw ? JSON.parse(raw) : null;
+        return parsed && typeof parsed === "object" ? parsed : { folders: [], assignments: {}, selectedChat: "" };
+      } catch (_) {
+        return { folders: [], assignments: {}, selectedChat: "" };
+      }
+    };
+    const saveState = (state) => {
+      try { localStorage.setItem(stateKey, JSON.stringify(state)); } catch (_) {}
+    };
+
+    const state = loadState();
+    const seedChats = () => {
+      if (source.children.length > 0) return;
+      const labels = [];
+      const pageChats = Array.from(document.querySelectorAll("a,button,[role='button'],li"))
+        .map((el) => (el.textContent || "").replace(/\s+/g, " ").trim())
+        .filter(Boolean)
+        .slice(0, 8);
+      pageChats.forEach((name) => labels.push(name));
+      if (labels.length === 0) labels.push("Chat 1", "Chat 2", "Chat 3");
+      labels.slice(0, 8).forEach((name, i) => {
+        const item = document.createElement("li");
+        item.className = "webedit-folder-source-item";
+        item.textContent = name;
+        item.setAttribute("data-chat-id", `chat-${i + 1}`);
+        source.appendChild(item);
+      });
+    };
+
+    const renderFolders = () => {
+      folderList.innerHTML = "";
+      const folders = Array.isArray(state.folders) ? state.folders : [];
+      if (folders.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "webedit-folder-drop-empty";
+        empty.textContent = "No folders yet";
+        folderList.appendChild(empty);
+        return;
+      }
+      folders.forEach((folder) => {
+        const wrap = document.createElement("section");
+        wrap.className = "webedit-folder";
+        wrap.setAttribute("data-folder-id", folder.id);
+
+        const head = document.createElement("div");
+        head.className = "webedit-folder-head";
+        const toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.className = "webedit-folder-toggle";
+        toggle.textContent = folder.name || "Folder";
+        toggle.setAttribute("aria-expanded", folder.expanded ? "true" : "false");
+        const rename = document.createElement("button");
+        rename.type = "button";
+        rename.className = "webedit-folder-rename";
+        rename.textContent = "Rename";
+        head.appendChild(toggle);
+        head.appendChild(rename);
+
+        const drop = document.createElement("div");
+        drop.className = "webedit-folder-drop";
+        if (!folder.expanded) drop.style.display = "none";
+        const assigned = Object.entries(state.assignments || {})
+          .filter(([, folderId]) => folderId === folder.id)
+          .map(([chatId]) => chatId);
+        if (!assigned.length) {
+          const empty = document.createElement("div");
+          empty.className = "webedit-folder-drop-empty";
+          empty.textContent = "Select a chat and click here to assign";
+          drop.appendChild(empty);
+        } else {
+          assigned.forEach((chatId) => {
+            const chip = document.createElement("div");
+            chip.className = "webedit-folder-chip";
+            const sourceItem = source.querySelector(`[data-chat-id="${CSS.escape(chatId)}"]`);
+            chip.textContent = sourceItem?.textContent || chatId;
+            drop.appendChild(chip);
+          });
+        }
+
+        toggle.addEventListener("click", () => {
+          folder.expanded = !folder.expanded;
+          saveState(state);
+          renderFolders();
+        });
+        rename.addEventListener("click", () => {
+          const nextName = prompt("Folder name", folder.name || "Folder");
+          if (!nextName) return;
+          folder.name = nextName.trim();
+          saveState(state);
+          renderFolders();
+        });
+        drop.addEventListener("click", () => {
+          if (!state.selectedChat) return;
+          state.assignments[state.selectedChat] = folder.id;
+          saveState(state);
+          renderFolders();
+        });
+
+        wrap.appendChild(head);
+        wrap.appendChild(drop);
+        folderList.appendChild(wrap);
+      });
+    };
+
+    seedChats();
+    source.addEventListener("click", (e) => {
+      const target = e.target;
+      if (!(target instanceof Element)) return;
+      const item = target.closest("[data-chat-id]");
+      if (!item) return;
+      state.selectedChat = item.getAttribute("data-chat-id") || "";
+      source.querySelectorAll("[data-chat-id]").forEach((el) => {
+        el.style.outline = "";
+      });
+      item.style.outline = "2px solid #2563eb";
+      saveState(state);
+    });
+    newButton.addEventListener("click", () => {
+      const defaultName = `Folder ${state.folders.length + 1}`;
+      state.folders.push({
+        id: `folder-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        name: defaultName,
+        expanded: true
+      });
+      saveState(state);
+      renderFolders();
+    });
+    renderFolders();
   }
 }
 
@@ -592,6 +787,7 @@ async function applyFeatureSpec(spec, options = {}) {
       const already = safeQueryAll(`[${INSERT_MARKER_ATTR}="${CSS.escape(id)}"]`, root);
       if (already.length > 0) {
         try { bindBehaviorForMarker(spec, id, root); } catch (_) {}
+        try { bindControllerForMarker(spec, id, root, { preview }); } catch (_) {}
         return { ok: true, applied: { id, spec, timestamp, replayed: true } };
       }
 
@@ -625,6 +821,11 @@ async function applyFeatureSpec(spec, options = {}) {
       } catch (e) {
         console.warn("[WebEdit AI] Failed to bind behavior:", e?.message || e);
       }
+      try {
+        bindControllerForMarker(spec, id, root, { preview });
+      } catch (e) {
+        console.warn("[WebEdit AI] Failed to bind controller:", e?.message || e);
+      }
       if (js) {
         runScopedScript(js, root);
       }
@@ -654,6 +855,9 @@ async function applyFeatureSpec(spec, options = {}) {
           targetSelector: targetSel,
           position,
           hadStyle: !!injectedStyle,
+          controllerCleanup: spec?.generated_module?.controller
+            ? { controller: spec.generated_module.controller }
+            : null,
           behaviorCleanup: spec.behavior ? (
             spec.behavior.type === "toggleClass"
               ? { type: "toggleClass", targetSelector: spec.behavior.targetSelector, className: spec.behavior.className }
@@ -788,6 +992,10 @@ async function undoEntry(change) {
             });
           }
         }
+      }
+
+      if (u.action === "add" && u.controllerCleanup && u.markerId) {
+        try { localStorage.removeItem(getControllerStateKey(getScopeKey(), u.markerId)); } catch (_) {}
       }
 
       if (u.action === "add" && u.position === "replace" && typeof u.replacedOuterHTML === "string") {

@@ -279,23 +279,9 @@ const PreviewLab = (() => {
   }
 
   function runScopedScript(js) {
-    try {
-      const scopedDocument = new Proxy(document, {
-        get(target, prop) {
-          if (prop === "querySelector") return shadowRoot.querySelector.bind(shadowRoot);
-          if (prop === "querySelectorAll") return shadowRoot.querySelectorAll.bind(shadowRoot);
-          if (prop === "getElementById") return shadowRoot.getElementById.bind(shadowRoot);
-          return target[prop];
-        }
-      });
-      const fn = new Function("document", "window", "shadowRoot", `"use strict";\n${js}`);
-      fn(scopedDocument, window, shadowRoot);
-      contentScriptEl = document.createElement("script");
-      contentScriptEl.setAttribute("data-webedit-preview-script", "1");
-      shadowRoot.appendChild(contentScriptEl);
-    } catch (error) {
-      console.warn("[WebEdit PreviewLab] Script failed:", error?.message || error);
-    }
+    // Preview lab intentionally skips eval-based JS execution to avoid CSP violations.
+    // Functional behaviors are bound through extension controllers in content scripts.
+    console.info("[WebEdit PreviewLab] Skipped inline script execution in CSP-safe mode.");
   }
 
   function open(previewId, title, nextHandlers = {}) {

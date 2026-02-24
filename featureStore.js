@@ -119,6 +119,11 @@ const FeatureStore = (() => {
         version: "2",
         strategy: "applyFeature-v2"
       },
+      controller: base.controller || {
+        id: null,
+        config: null
+      },
+      stateSchema: base.stateSchema || null,
       featureArtifact: base.featureArtifact || {
         html: base.html || "",
         css: base.css || "",

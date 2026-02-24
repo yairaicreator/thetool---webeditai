@@ -67,6 +67,7 @@
   let lastPickedTarget = null; // { selector, description }
   let pendingAiAnchorRequest = null; // { text } waiting for Pick Element anchor
   let pendingPreviewRefine = null; // { previewId, plan }
+  let pendingComplexDecomposition = null; // { awaiting: "confirm"|"pick_step", steps: string[] }
 
   // References shown after picking an element should be ephemeral.
   const PICK_REFERENCE_TTL_MS = 8000;
@@ -161,6 +162,8 @@
       parse: "parse failure",
       capability: "capability mismatch",
       generation: "generation failed",
+      complexity: "complexity gate",
+      decomposition: "decomposition needed",
       validation: "behavior tests failed",
       apply: "apply migration failed"
     };
@@ -201,7 +204,13 @@
 
     const built = planner.buildAddSpecFromModule(promptText, plannerCtx, capability);
     if (!built?.ok || !built?.spec) {
-      return { ok: false, stage: "generation", error: built?.error || "Could not generate module artifacts." };
+      return {
+        ok: false,
+        stage: built?.stage || "generation",
+        code: built?.code || null,
+        error: built?.error || "Could not generate module artifacts.",
+        decompositionSteps: Array.isArray(built?.decompositionSteps) ? built.decompositionSteps : []
+      };
     }
 
     built.spec.targetSelector = anchorSelector;
@@ -213,6 +222,30 @@
     };
 
     return { ok: true, spec: built.spec, capability };
+  }
+
+  function isYesText(text) {
+    const t = String(text || "").trim().toLowerCase();
+    return t === "yes" || t === "y" || t === "sure" || t === "ok" || t === "okay";
+  }
+
+  function isNoText(text) {
+    const t = String(text || "").trim().toLowerCase();
+    return t === "no" || t === "n" || t === "cancel" || t === "stop";
+  }
+
+  function beginComplexityDecomposition(decompositionSteps = []) {
+    const steps = Array.isArray(decompositionSteps) ? decompositionSteps.filter(Boolean).slice(0, 4) : [];
+    if (!steps.length) return false;
+    pendingComplexDecomposition = {
+      awaiting: "confirm",
+      steps
+    };
+    addChatMessage(
+      "assistant",
+      "This request is too complex for one reliable step. Would you like me to break it into smaller reliable steps? (yes/no)"
+    );
+    return true;
   }
 
   async function ensureRenderableAddSpec(spec, promptText, pageContext = {}, previousSpec = null) {
@@ -1016,6 +1049,45 @@
     if (!requireAuth("use WebEdit")) return;
     if (typeof textOverride !== "string") els.chatInput.value = "";
 
+    if (pendingComplexDecomposition) {
+      const state = pendingComplexDecomposition;
+      if (state.awaiting === "confirm") {
+        addChatMessage("user", text);
+        if (isYesText(text)) {
+          state.awaiting = "pick_step";
+          const lines = state.steps.map((s, i) => `${i + 1}. ${s}`).join("\n");
+          addChatMessage("assistant", `Great. Choose the first step to implement by number:\n${lines}`);
+        } else if (isNoText(text)) {
+          pendingComplexDecomposition = null;
+          addChatMessage("assistant", "Understood. I won't break it down now.");
+        } else {
+          addChatMessage("assistant", "Please reply yes or no.");
+        }
+        renderChatMessages();
+        saveChatHistory();
+        return;
+      }
+
+      if (state.awaiting === "pick_step") {
+        addChatMessage("user", text);
+        const stepNumber = Number.parseInt(text, 10);
+        if (Number.isInteger(stepNumber) && stepNumber >= 1 && stepNumber <= state.steps.length) {
+          const chosenStep = state.steps[stepNumber - 1];
+          pendingComplexDecomposition = null;
+          addChatMessage("assistant", `Implementing step ${stepNumber}: ${chosenStep}`);
+          isAddFeatureMode = true;
+          renderChatMessages();
+          saveChatHistory();
+          handleSend(chosenStep);
+          return;
+        }
+        addChatMessage("assistant", `Please pick a number between 1 and ${state.steps.length}.`);
+        renderChatMessages();
+        saveChatHistory();
+        return;
+      }
+    }
+
     if (pendingPreviewRefine) {
       const { previewId, plan, spec, mode } = pendingPreviewRefine;
       pendingPreviewRefine = null;
@@ -1035,6 +1107,12 @@
         if (spec?.action === "add") {
           const built = await buildAddSpecPipeline(text, pageContext, spec);
           if (!built.ok) {
+            if (built.stage === "complexity" && beginComplexityDecomposition(built.decompositionSteps || [])) {
+              thinking.content = "⚠️ Request needs decomposition before reliable implementation.";
+              renderChatMessages();
+              saveChatHistory();
+              return;
+            }
             thinking.content = `❌ ${formatStageError(built, "Refinement failed")}`;
             renderChatMessages();
             saveChatHistory();
@@ -1184,6 +1262,12 @@
 
         const built = await buildAddSpecPipeline(text, pageContext, null);
         if (!built.ok) {
+          if (built.stage === "complexity" && beginComplexityDecomposition(built.decompositionSteps || [])) {
+            thinking.content = "⚠️ Request needs decomposition before reliable implementation.";
+            renderChatMessages();
+            saveChatHistory();
+            return;
+          }
           throw new Error(formatStageError(built, "Feature generation failed"));
         }
 

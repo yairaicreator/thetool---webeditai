@@ -31,9 +31,19 @@ const MessageTypes = {
 const FeaturePipelineStages = {
   PARSE: "parse",
   CAPABILITY: "capability",
+  COMPLEXITY: "complexity",
+  DECOMPOSITION: "decomposition",
   GENERATION: "generation",
   VALIDATION: "validation",
   APPLY: "apply"
+};
+
+const FeatureComplexityReasons = {
+  CROSS_SURFACE: "cross_surface",
+  REQUIRES_INTERNAL_API: "requires_internal_api",
+  REQUIRES_DRAGDROP: "requires_dragdrop",
+  HIGH_RUNTIME_RISK: "high_runtime_risk",
+  LOW_PAGE_CAPABILITY: "low_page_capability"
 };
 
 /**
@@ -51,6 +61,7 @@ const FeaturePipelineStages = {
 if (typeof window !== 'undefined') {
   window.MessageTypes = MessageTypes;
   window.FeaturePipelineStages = FeaturePipelineStages;
+  window.FeatureComplexityReasons = FeatureComplexityReasons;
   console.log('✅ MessageTypes loaded');
 }
 

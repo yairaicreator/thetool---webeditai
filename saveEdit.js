@@ -115,10 +115,37 @@ async function dbRequest(endpoint, method, body = null) {
     'Prefer': 'return=representation' // Ask Supabase to return the inserted row
   };
 
+  const hasBody = body !== null && typeof body !== 'undefined';
+  let serializedBody = undefined;
+  if (hasBody) {
+    try {
+      serializedBody = JSON.stringify(body);
+    } catch (_) {
+      const sanitize = (value, seen = new WeakSet()) => {
+        if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value;
+        if (Array.isArray(value)) return value.map((v) => sanitize(v, seen));
+        if (typeof value !== 'object') return undefined;
+        if (seen.has(value)) return undefined;
+        seen.add(value);
+        const out = {};
+        Object.entries(value).forEach(([k, v]) => {
+          if (typeof v === 'function' || typeof v === 'symbol') return;
+          const next = sanitize(v, seen);
+          if (typeof next !== 'undefined') out[k] = next;
+        });
+        return out;
+      };
+      serializedBody = JSON.stringify(sanitize(body));
+    }
+    if (method !== 'GET' && (!serializedBody || serializedBody === 'undefined')) {
+      serializedBody = '{}';
+    }
+  }
+
   const response = await fetch(`${client.url}${endpoint}`, {
     method,
     headers,
-    body: body ? JSON.stringify(body) : undefined
+    body: serializedBody
   });
 
   if (!response.ok) {
@@ -603,7 +630,11 @@ async function saveEditToSupabase(params) {
 
   } catch (error) {
     console.error('[SaveEdit] Failed to save edit:', error);
-    return { ok: false, error: error?.message || String(error) };
+    const message =
+      (error && typeof error.message === 'string' && error.message) ||
+      (typeof error === 'object' ? JSON.stringify(error) : String(error)) ||
+      'Unknown save error';
+    return { ok: false, error: message };
   }
 }
 
@@ -638,10 +669,16 @@ async function saveAddFeature(spec) {
         css: generatedModule?.css || spec?.css || '',
         js: generatedModule?.js || spec?.js || ''
       },
+      controller: {
+        id: generatedModule?.controller || null,
+        config: generatedModule?.config || null
+      },
+      stateSchema: generatedModule?.stateSchema || spec?.state_model || null,
       migration: {
         schemaVersion: spec?.metadata?.schemaVersion || '2',
         persistenceKey: spec?.persistence?.key || null,
-        undoStrategy: spec?.undo_strategy?.mode || 'dom-revert'
+        undoStrategy: spec?.undo_strategy?.mode || 'dom-revert',
+        controllerId: generatedModule?.controller || null
       },
       rollback: {
         type: 'spec-undo',
