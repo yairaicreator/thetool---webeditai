@@ -1,12 +1,12 @@
 # ai-generate-feature-spec
 
-Supabase Edge Function that generates structured feature specifications from natural language prompts using OpenAI.
+Supabase Edge Function that generates structured feature specifications from natural language prompts using Gemini.
 
 ## Setup
 
-1. Set the `OPENAI_API_KEY` environment variable in your Supabase project:
+1. Set the `GEMINI_API_KEY` environment variable in your Supabase project:
    ```bash
-   supabase secrets set OPENAI_API_KEY=your-api-key-here
+   supabase secrets set GEMINI_API_KEY=your-api-key-here
    ```
 
 ## Testing with curl

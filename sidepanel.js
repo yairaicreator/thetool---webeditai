@@ -164,6 +164,7 @@
       generation: "generation failed",
       complexity: "complexity gate",
       decomposition: "decomposition needed",
+      generation_quality_failed: "generation quality failed",
       validation: "behavior tests failed",
       apply: "apply migration failed"
     };
@@ -259,6 +260,19 @@
       if ((!next.html || !String(next.html).trim()) && generatedHtml) next.html = generatedHtml;
       if ((!next.css || !String(next.css).trim()) && generatedCss) next.css = generatedCss;
       if ((!next.js || !String(next.js).trim()) && generatedJs) next.js = generatedJs;
+      const htmlText = String(next.html || "").toLowerCase();
+      const contentText = String(next.content || "").toLowerCase();
+      const isPlaceholder =
+        htmlText.includes("feature request:") ||
+        contentText.startsWith("feature request:") ||
+        contentText === String(promptText || "").trim().toLowerCase();
+      if (isPlaceholder) {
+        return {
+          ok: false,
+          stage: "generation_quality_failed",
+          error: "Generated output is placeholder text, not a functional feature implementation."
+        };
+      }
       return { ok: true, spec: next };
     }
 

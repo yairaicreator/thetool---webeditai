@@ -34,6 +34,7 @@ const FeaturePipelineStages = {
   COMPLEXITY: "complexity",
   DECOMPOSITION: "decomposition",
   GENERATION: "generation",
+  GENERATION_QUALITY_FAILED: "generation_quality_failed",
   VALIDATION: "validation",
   APPLY: "apply"
 };

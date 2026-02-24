@@ -10,8 +10,8 @@ type DenoLikeGlobal = typeof globalThis & {
   };
 };
 
-const COHERE_CHAT_URL = "https://api.cohere.com/v1/chat";
-const COHERE_MODEL = "command-a-vision-07-2025";
+const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
+const GEMINI_MODEL = "gemini-3.1-pro-preview";
 
 interface FeatureSpec {
   action: "hide" | "customize" | "add" | "text" | "chat" | "undo" | "reveal";
@@ -140,10 +140,10 @@ if (typeof denoServe !== "function") {
 
   try {
     // Validate API key
-    const apiKey = getEnvVar("COHERE_API_KEY");
+    const apiKey = getEnvVar("GEMINI_API_KEY");
     if (!apiKey) {
-      console.error("[ai-generate-feature-spec] Missing COHERE_API_KEY");
-      return buildJsonResponse({ ok: false, error: "COHERE_API_KEY not set" }, 500);
+      console.error("[ai-generate-feature-spec] Missing GEMINI_API_KEY");
+      return buildJsonResponse({ ok: false, error: "GEMINI_API_KEY not set" }, 500);
     }
 
     // Parse request body
@@ -155,40 +155,49 @@ if (typeof denoServe !== "function") {
 
     const userMessage = buildUserMessage(prompt, context);
 
-    const coherePayload = {
-      model: COHERE_MODEL,
-      message: userMessage,
-      preamble: SYSTEM_PROMPT,
-      temperature: 0.2,
-      max_output_tokens: 600,
+    const geminiPayload = {
+      system_instruction: {
+        parts: [{ text: SYSTEM_PROMPT }],
+      },
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: userMessage }],
+        },
+      ],
+      generationConfig: {
+        temperature: 0.2,
+        maxOutputTokens: 1200,
+      },
     };
 
-    const cohereResponse = await fetch(COHERE_CHAT_URL, {
+    const geminiResponse = await fetch(
+      `${GEMINI_API_BASE}/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(apiKey)}`,
+      {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
       },
-      body: JSON.stringify(coherePayload),
+      body: JSON.stringify(geminiPayload),
     });
 
-    const raw = await cohereResponse.text();
+    const raw = await geminiResponse.text();
     let spec: FeatureSpec;
 
-    if (!cohereResponse.ok) {
-      console.error("[ai-generate-feature-spec] Cohere API error:", cohereResponse.status, raw);
+    if (!geminiResponse.ok) {
+      console.error("[ai-generate-feature-spec] Gemini API error:", geminiResponse.status, raw);
       return buildJsonResponse(
-        { ok: false, error: `Cohere request failed: ${cohereResponse.status}` },
+        { ok: false, error: `Gemini request failed: ${geminiResponse.status}` },
         500,
       );
     }
 
     const parsedResponse = safeJsonParse(raw);
-    let content = extractCohereReply(parsedResponse);
+    let content = extractGeminiReply(parsedResponse);
 
     if (!content) {
-      console.error("[ai-generate-feature-spec] Empty response from Cohere");
-      return buildJsonResponse({ ok: false, error: "Empty response from Cohere" }, 500);
+      console.error("[ai-generate-feature-spec] Empty response from Gemini");
+      return buildJsonResponse({ ok: false, error: "Empty response from Gemini" }, 500);
     }
 
     // Extract JSON from markdown code fences if present
@@ -213,7 +222,7 @@ if (typeof denoServe !== "function") {
     try {
       spec = JSON.parse(content);
     } catch (error) {
-      console.error("[ai-generate-feature-spec] Failed to parse Cohere JSON:", content, error);
+      console.error("[ai-generate-feature-spec] Failed to parse Gemini JSON:", content, error);
       return buildJsonResponse(
         { ok: false, error: "Failed to parse AI output as JSON" },
         500,
@@ -328,33 +337,18 @@ function safeJsonParse(value: string) {
   }
 }
 
-function extractCohereReply(data: unknown): string | null {
+function extractGeminiReply(data: unknown): string | null {
   if (!data || typeof data !== "object") return null;
 
-  const text = (data as { text?: string }).text;
-  if (typeof text === "string" && text.trim()) {
-    return text.trim();
-  }
+  const candidates = (data as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> }).candidates;
+  if (!Array.isArray(candidates) || candidates.length === 0) return null;
 
-  const message = (data as { message?: { content?: Array<{ text?: string }> } }).message;
-  if (message?.content?.length) {
-    const combined = message.content
-      .map((chunk) => (typeof chunk?.text === "string" ? chunk.text : ""))
-      .join("")
-      .trim();
-    if (combined) return combined;
-  }
-
-  const generations = (data as { generations?: Array<{ text?: string }> }).generations;
-  if (generations?.length) {
-    const combined = generations
-      .map((chunk) => (typeof chunk?.text === "string" ? chunk.text : ""))
-      .join("")
-      .trim();
-    if (combined) return combined;
-  }
-
-  return null;
+  const parts = candidates[0]?.content?.parts || [];
+  const combined = parts
+    .map((chunk) => (typeof chunk?.text === "string" ? chunk.text : ""))
+    .join("")
+    .trim();
+  return combined || null;
 }
 
 function buildJsonResponse(body: unknown, status = 200) {

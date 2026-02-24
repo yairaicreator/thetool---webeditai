@@ -164,9 +164,19 @@ async function renderSpecPreviewInLab(spec, previewId) {
   let previewTarget = null;
 
   if (normalizedSpec.action === "add") {
-    previewTarget = document.createElement("div");
-    previewTarget.setAttribute(PREVIEW_LAB_TARGET_ATTR, "1");
-    mount.appendChild(previewTarget);
+    let target = null;
+    try { target = selector ? document.querySelector(selector) : null; } catch (_) { target = null; }
+    if (target) {
+      const clone = target.cloneNode(true);
+      clone.setAttribute(PREVIEW_LAB_TARGET_ATTR, "1");
+      mount.appendChild(clone);
+      previewTarget = shadowRoot.querySelector(`[${PREVIEW_LAB_TARGET_ATTR}="1"]`);
+    } else {
+      // Fallback debug mode if anchor cannot be cloned.
+      previewTarget = document.createElement("div");
+      previewTarget.setAttribute(PREVIEW_LAB_TARGET_ATTR, "1");
+      mount.appendChild(previewTarget);
+    }
   } else {
     let target = null;
     try { target = selector ? document.querySelector(selector) : null; } catch (_) { target = null; }
@@ -1969,6 +1979,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     if (type === "COMMIT_FEATURE_SPEC") {
       (async () => {
+        const store = window.FeatureStore;
         const previewId = payload.previewId || null;
         const handle = previewId ? previewLabPreviews.get(previewId) : null;
         const fallbackSpec = payload.spec || null;
@@ -2006,6 +2017,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         const result = await applyFeatureSpecFlow(specToApply);
         if (result?.ok) {
+          if (store && typeof store.addCommittedFeature === "function" && result.record) {
+            await store.addCommittedFeature(result.record);
+          }
           if (previewId) {
             previewLabPreviews.delete(previewId);
             clearGhostHighlight(previewId);
