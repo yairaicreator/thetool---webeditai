@@ -83,6 +83,25 @@ function openPreviewLab(previewId, title) {
   });
 }
 
+function lockPreviewContextInteractivity(previewTarget, markerId) {
+  if (!previewTarget || !markerId) return;
+  const markerSelector = `[data-webedit-ai-insert-id="${CSS.escape(markerId)}"]`;
+  const interactiveSelector = "a, button, input, textarea, select, details, summary, [role='button'], [contenteditable='true']";
+  const nodes = previewTarget.querySelectorAll(interactiveSelector);
+  nodes.forEach((el) => {
+    if (!(el instanceof Element)) return;
+    if (el.closest(markerSelector)) return;
+    el.setAttribute("data-webedit-preview-static", "1");
+    if (!el.hasAttribute("tabindex")) {
+      el.setAttribute("tabindex", "-1");
+    }
+    if ("disabled" in el && el.tagName !== "A") {
+      try { el.disabled = true; } catch (_) {}
+    }
+    try { el.style.pointerEvents = "none"; } catch (_) {}
+  });
+}
+
 function applyPlanPreviewToElement(el, plan) {
   if (!el || !plan) return;
   const type = plan.feature_type;
@@ -169,6 +188,7 @@ async function renderSpecPreviewInLab(spec, previewId) {
     if (target) {
       const clone = target.cloneNode(true);
       clone.setAttribute(PREVIEW_LAB_TARGET_ATTR, "1");
+      clone.setAttribute("data-webedit-preview-context", "1");
       mount.appendChild(clone);
       previewTarget = shadowRoot.querySelector(`[${PREVIEW_LAB_TARGET_ATTR}="1"]`);
     } else {
@@ -209,6 +229,38 @@ async function renderSpecPreviewInLab(spec, previewId) {
       error: result?.error || "Preview failed",
       failures: Array.isArray(result?.failures) ? result.failures : []
     };
+  }
+
+  if (normalizedSpec.action === "add") {
+    lockPreviewContextInteractivity(previewTarget, String(previewId));
+    if (typeof lab.setInsertionPositionControl === "function") {
+      lab.setInsertionPositionControl({
+        visible: true,
+        value: normalizedSpec.position || "inside",
+        onChange: async (nextPosition) => {
+          const nextPos = typeof nextPosition === "string" && nextPosition ? nextPosition : "inside";
+          const currentHandle = previewLabPreviews.get(previewId);
+          const baseSpec = currentHandle?.type === "spec" && currentHandle.spec
+            ? currentHandle.spec
+            : normalizedSpec;
+          if ((baseSpec.position || "inside") === nextPos) return;
+          const updatedSpec = { ...baseSpec, position: nextPos };
+          const refreshed = await renderSpecPreviewInLab(updatedSpec, previewId);
+          if (!refreshed?.ok) return;
+          previewLabPreviews.set(previewId, {
+            type: "spec",
+            spec: updatedSpec,
+            selector: updatedSpec.targetSelector || updatedSpec.selector || ""
+          });
+          chrome.runtime.sendMessage({
+            type: "WEBEDIT_PREVIEW_SPEC_UPDATED",
+            payload: { previewId, spec: updatedSpec }
+          }).catch(() => {});
+        }
+      });
+    }
+  } else if (typeof lab.setInsertionPositionControl === "function") {
+    lab.setInsertionPositionControl({ visible: false });
   }
 
   function runPreviewAssertions(currentSpec, root) {
@@ -1990,8 +2042,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const content = lab?.getContent?.() || {};
           const shadowRoot = lab?.getShadowRoot?.();
           const previewTarget = shadowRoot?.querySelector(`[${PREVIEW_LAB_TARGET_ATTR}="1"]`);
+          const isAddSpec = handle.spec?.action === "add";
           let html = content.html || "";
-          if (previewTarget && previewTarget.innerHTML.trim()) {
+          if (isAddSpec && previewTarget) {
+            const insertedNodes = Array.from(
+              previewTarget.querySelectorAll(`[data-webedit-ai-insert-id="${CSS.escape(previewId)}"]`)
+            );
+            const insertedHtml = insertedNodes
+              .map((node) => (node instanceof Element ? node.outerHTML : ""))
+              .join("\n")
+              .trim();
+            html = insertedHtml || handle.spec.html || "";
+          } else if (previewTarget && previewTarget.innerHTML.trim()) {
             html = previewTarget.innerHTML;
           } else if (previewTarget) {
             const mount = lab?.getMountNode?.();

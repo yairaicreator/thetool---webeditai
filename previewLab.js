@@ -12,6 +12,9 @@ const PreviewLab = (() => {
   let titleEl = null;
   let bodyEl = null;
   let actionsEl = null;
+  let positionControlWrap = null;
+  let positionSelectEl = null;
+  let onPositionChange = null;
   let styleCloneEl = null;
   let contentStyleEl = null;
   let contentScriptEl = null;
@@ -95,7 +98,24 @@ const PreviewLab = (() => {
         padding: 10px 12px;
         background: #f9fafb;
         border-top: 1px solid rgba(0,0,0,0.08);
-        justify-content: flex-end;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .webedit-preview-position-wrap {
+        display: none;
+        align-items: center;
+        gap: 6px;
+      }
+      .webedit-preview-position-label {
+        font-size: 12px;
+        color: #374151;
+      }
+      .webedit-preview-position-select {
+        font-size: 12px;
+        padding: 4px 6px;
+        border-radius: 6px;
+        border: 1px solid rgba(0,0,0,0.18);
+        background: #fff;
       }
       .webedit-preview-btn {
         font-size: 12px;
@@ -144,6 +164,36 @@ const PreviewLab = (() => {
     actionsEl = document.createElement("div");
     actionsEl.className = "webedit-preview-footer";
 
+    positionControlWrap = document.createElement("div");
+    positionControlWrap.className = "webedit-preview-position-wrap";
+    const positionLabel = document.createElement("span");
+    positionLabel.className = "webedit-preview-position-label";
+    positionLabel.textContent = "Placement:";
+    positionSelectEl = document.createElement("select");
+    positionSelectEl.className = "webedit-preview-position-select";
+    const placementOptions = [
+      { value: "before", label: "Before" },
+      { value: "inside", label: "Inside" },
+      { value: "after", label: "After" },
+      { value: "replace", label: "Replace" }
+    ];
+    placementOptions.forEach((opt) => {
+      const option = document.createElement("option");
+      option.value = opt.value;
+      option.textContent = opt.label;
+      positionSelectEl.appendChild(option);
+    });
+    positionSelectEl.addEventListener("change", () => {
+      const nextValue = positionSelectEl?.value || "inside";
+      try { onPositionChange?.(nextValue); } catch (_) {}
+    });
+    positionControlWrap.appendChild(positionLabel);
+    positionControlWrap.appendChild(positionSelectEl);
+
+    const actionButtonsWrap = document.createElement("div");
+    actionButtonsWrap.style.display = "flex";
+    actionButtonsWrap.style.gap = "8px";
+
     const applyBtn = document.createElement("button");
     applyBtn.className = "webedit-preview-btn webedit-preview-btn-primary";
     applyBtn.textContent = "Apply";
@@ -159,9 +209,11 @@ const PreviewLab = (() => {
     undoBtn.textContent = "Undo";
     undoBtn.addEventListener("click", () => handlers.onUndo?.());
 
-    actionsEl.appendChild(applyBtn);
-    actionsEl.appendChild(refineBtn);
-    actionsEl.appendChild(undoBtn);
+    actionButtonsWrap.appendChild(applyBtn);
+    actionButtonsWrap.appendChild(refineBtn);
+    actionButtonsWrap.appendChild(undoBtn);
+    actionsEl.appendChild(positionControlWrap);
+    actionsEl.appendChild(actionButtonsWrap);
 
     frame.appendChild(header);
     frame.appendChild(bodyEl);
@@ -297,7 +349,20 @@ const PreviewLab = (() => {
     if (!host) return;
     host.style.display = "none";
     clearContent();
+    setInsertionPositionControl({ visible: false });
     currentPreviewId = null;
+  }
+
+  function setInsertionPositionControl(config = {}) {
+    if (!positionControlWrap || !positionSelectEl) return;
+    const visible = !!config.visible;
+    onPositionChange = typeof config.onChange === "function" ? config.onChange : null;
+    positionControlWrap.style.display = visible ? "inline-flex" : "none";
+    if (!visible) return;
+    const value = typeof config.value === "string" && config.value
+      ? config.value
+      : "inside";
+    positionSelectEl.value = value;
   }
 
   function getContent() {
@@ -324,6 +389,7 @@ const PreviewLab = (() => {
     close,
     clearContent,
     setContent,
+    setInsertionPositionControl,
     getContent,
     getMountNode,
     getShadowRoot

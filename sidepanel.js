@@ -1427,6 +1427,17 @@
       refreshAuthorization();
       return;
     }
+    if (message?.type === "WEBEDIT_PREVIEW_SPEC_UPDATED") {
+      const previewId = message?.payload?.previewId;
+      const spec = message?.payload?.spec || null;
+      if (!previewId || !spec) return;
+      const msg = chatMessages.find((m) => m.type === "preview" && m.content?.previewId === previewId);
+      if (!msg || !msg.content) return;
+      msg.content.spec = spec;
+      renderChatMessages();
+      saveChatHistory();
+      return;
+    }
     if (message?.type === "WEBEDIT_TAB_EVENT") {
       // placeholder
       return;
