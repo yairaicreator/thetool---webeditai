@@ -908,7 +908,7 @@
 
     try {
       if (client?.getSession) {
-        const sessionResp = await client.getSession();
+        const sessionResp = await client.getSession({ allowRefresh: false });
         session = sessionResp?.data?.session || null;
       }
     } catch (_) {

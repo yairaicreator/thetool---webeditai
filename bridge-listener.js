@@ -16,6 +16,23 @@ function isContextInvalidMessage(message) {
   );
 }
 
+function coerceSessionCandidate(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  if (raw.access_token && raw.user) return raw;
+  const nested = raw.currentSession || raw.session || raw.data?.session || null;
+  if (nested && typeof nested === "object" && nested.access_token && nested.user) {
+    return nested;
+  }
+  return null;
+}
+
+function isSessionExpiredOrNearExpiry(session, leewaySec = 30) {
+  const expiresAt = Number(session?.expires_at || 0);
+  if (!Number.isFinite(expiresAt) || expiresAt <= 0) return false;
+  const nowSec = Math.floor(Date.now() / 1000);
+  return expiresAt <= (nowSec + Math.max(0, leewaySec));
+}
+
 function normalizeSessionPayload(raw, context = "unknown") {
   if (raw === null) {
     return { session: null, valid: true, explicitSignOut: true };
@@ -24,11 +41,17 @@ function normalizeSessionPayload(raw, context = "unknown") {
     console.warn(`⚠️ [Bridge] Ignoring malformed session from ${context}: expected object`, raw);
     return { session: null, valid: false, explicitSignOut: false };
   }
-  if (!raw.access_token || !raw.user) {
+  const session = coerceSessionCandidate(raw);
+  if (!session) {
     console.warn(`⚠️ [Bridge] Session missing access_token/user from ${context}`, raw);
     return { session: null, valid: false, explicitSignOut: false };
   }
-  return { session: raw, valid: true, explicitSignOut: false };
+  if (isSessionExpiredOrNearExpiry(session)) {
+    const expiresAt = Number(session?.expires_at || 0);
+    console.warn(`⚠️ [Bridge] Ignoring expired/near-expiry session from ${context} (expires_at=${expiresAt})`);
+    return { session: null, valid: false, explicitSignOut: false };
+  }
+  return { session, valid: true, explicitSignOut: false };
 }
 
 // Helper to send session (including sign-out) to background

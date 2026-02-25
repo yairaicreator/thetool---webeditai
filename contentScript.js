@@ -367,6 +367,10 @@ function getSpaKey() {
 }
 
 function scheduleSpaReapply(reason = "spa") {
+  if (shouldBypassAuthRuntimeOnPage()) {
+    stopCloudEditsRuntime();
+    return;
+  }
   try { if (spaReapplyTimer) clearTimeout(spaReapplyTimer); } catch (_) {}
   spaReapplyTimer = setTimeout(() => {
     console.log("[WebEdit] SPA reapply triggered:", reason);
@@ -407,6 +411,18 @@ function isProbablyWebEditAppPage() {
   }
 }
 
+function shouldBypassAuthRuntimeOnPage() {
+  if (!isProbablyWebEditAppPage()) return false;
+  const pathname = String(location.pathname || "").toLowerCase();
+  const hash = String(location.hash || "").toLowerCase();
+  const search = String(location.search || "").toLowerCase();
+  const hasAuthCode = /(?:\?|&)code=/.test(search);
+  const hasAuthError = /(?:\?|&)(error|error_description)=/.test(search);
+  const authPath = pathname.includes("/auth/callback") || hash.includes("auth/callback");
+  const authRoute = hash.includes("/signup") || hash.includes("/login") || hash.includes("/auth");
+  return hasAuthCode || hasAuthError || authPath || authRoute;
+}
+
 function setAuthState(nextState, email = null) {
   authState = nextState;
   authStateEmail = email || null;
@@ -427,7 +443,7 @@ async function resolveAuthorizationState(force = false) {
 
   let session = null;
   try {
-    const sessionResp = await client.getSession();
+    const sessionResp = await client.getSession({ allowRefresh: false });
     session = sessionResp?.data?.session || null;
   } catch (_) {
     session = null;
@@ -794,6 +810,10 @@ async function rebuildCloudEdits(reason = "unknown") {
   if (cloudRebuildInFlight) return cloudRebuildInFlight;
   cloudRebuildInFlight = (async () => {
     try {
+      if (shouldBypassAuthRuntimeOnPage()) {
+        stopCloudEditsRuntime();
+        return { ok: false, skipped: true, reason: "webedit-auth-flow" };
+      }
       const auth = await getSupabaseAuth();
       if (!auth?.userId) return { ok: false, skipped: true, reason: "no-auth" };
       if (isProbablyWebEditAppPage()) return { ok: false, skipped: true, reason: "webedit-app" };
@@ -1068,6 +1088,10 @@ async function refreshCurrentUser() {
 }
 
 async function applySavedEditsForUser() {
+  if (shouldBypassAuthRuntimeOnPage()) {
+    stopCloudEditsRuntime();
+    return;
+  }
   const authorized = await isAuthenticated();
   if (!authorized) {
     stopCloudEditsRuntime();

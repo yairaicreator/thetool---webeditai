@@ -12,7 +12,9 @@ const SESSION_STORAGE_KEY = "webeditSupabaseSession";
 const SESSION_TIMESTAMP_KEY = "webeditSessionTimestamp";
 const REFRESH_BACKOFF_MS = 60 * 1000;
 const REFRESH_ERROR_BACKOFF_MS = 15 * 1000;
+const REFRESH_MIN_INTERVAL_MS = 5000;
 const refreshInFlightByToken = new Map();
+const refreshLastAttemptByToken = new Map();
 let refreshCooldownUntil = 0;
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY || SUPABASE_URL.includes("YOUR_SUPABASE_URL")) {
@@ -158,7 +160,7 @@ async function fetchAuthUser() {
     return { ok: false, error: "Supabase not configured", user: null };
   }
   try {
-    const { data: { session } } = await SupabaseClient.getSession();
+    const { data: { session } } = await SupabaseClient.getSession({ allowRefresh: false });
     const accessToken = session?.access_token;
     if (!accessToken) {
       return { ok: true, user: null };
@@ -200,6 +202,15 @@ const SupabaseClient = {
     if (existingRefresh) {
       return existingRefresh;
     }
+    const now = Date.now();
+    const lastAttempt = Number(refreshLastAttemptByToken.get(refreshToken) || 0);
+    if (lastAttempt && (now - lastAttempt) < REFRESH_MIN_INTERVAL_MS) {
+      const retryAfterMs = Math.max(0, REFRESH_MIN_INTERVAL_MS - (now - lastAttempt));
+      return {
+        data: { session: null },
+        error: `Refresh throttled. Retry in ${Math.ceil(retryAfterMs / 1000)}s.`
+      };
+    }
     if (Date.now() < refreshCooldownUntil) {
       const retryAfterMs = Math.max(0, refreshCooldownUntil - Date.now());
       return {
@@ -209,6 +220,7 @@ const SupabaseClient = {
     }
 
     const refreshPromise = (async () => {
+    refreshLastAttemptByToken.set(refreshToken, Date.now());
     try {
       const response = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
         method: 'POST',
@@ -274,7 +286,8 @@ const SupabaseClient = {
   /**
    * Get the current session from chrome.storage.local
    */
-  async getSession() {
+  async getSession(options = {}) {
+    const allowRefresh = options?.allowRefresh !== false;
     return new Promise((resolve) => {
       chrome.storage.local.get([SESSION_STORAGE_KEY], (result) => {
         const session = result[SESSION_STORAGE_KEY] || null;
@@ -282,7 +295,7 @@ const SupabaseClient = {
         console.log(email ? `🔐 [SupabaseClient] Loaded session for ${email}` : "🔐 [SupabaseClient] No stored session");
 
         // Auto-refresh expired sessions so SaveEdit can write to Supabase.
-        if (session && this.isSessionExpired(session) && session.refresh_token) {
+        if (allowRefresh && session && this.isSessionExpired(session) && session.refresh_token) {
           console.log("🔄 [SupabaseClient] Session expired; attempting refresh...");
           this.refreshSession(session.refresh_token).then((res) => {
             resolve(res?.data?.session ? res : { data: { session: null }, error: res?.error || null });
@@ -328,7 +341,7 @@ const SupabaseClient = {
    * Get the current user from the stored session
    */
   async getUser() {
-    const { data: { session } } = await this.getSession();
+    const { data: { session } } = await this.getSession({ allowRefresh: false });
     if (session && session.user) {
       return { data: { user: session.user }, error: null };
     }
@@ -340,7 +353,7 @@ const SupabaseClient = {
    */
   async signOut() {
     try {
-      const { data: { session } } = await this.getSession();
+      const { data: { session } } = await this.getSession({ allowRefresh: false });
       const accessToken = session?.access_token || null;
 
       // Supabase Auth (GoTrue) logout endpoint (equivalent to supabase.auth.signOut()).
