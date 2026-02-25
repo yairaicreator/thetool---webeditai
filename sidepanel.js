@@ -1462,7 +1462,11 @@
         })();
       } else if (pickedTool === "customize" && lastPickedTarget?.selector) {
         (async () => {
-          await sendToActiveTab({ type: "START_CUSTOMIZE_SESSION", selector: lastPickedTarget.selector });
+          const resp = await sendToActiveTab({ type: "START_CUSTOMIZE_SESSION", selector: lastPickedTarget.selector });
+          if (!resp?.response?.ok) {
+            els.customizePanel?.classList.remove("visible");
+            return;
+          }
           customizeReviewApplied = false;
           els.customizePanel?.classList.add("visible");
           showNotificationInChat(`Element picked for customize: ${lastPickedTarget.description || lastPickedTarget.selector}`);

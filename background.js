@@ -191,9 +191,10 @@ async function resolveTargetTabContext(senderTabId = null) {
     await clearStoredActiveTabId();
   }
 
-  if (activeTab?.id) {
-    await storeActiveTabId(activeTab.id);
-    return { tab: activeTab, source: "active-query-fallback" };
+  const fallbackActiveTab = await queryActiveTabInCurrentWindow();
+  if (fallbackActiveTab?.id && !isWebEditDomainUrl(fallbackActiveTab.url || "")) {
+    await storeActiveTabId(fallbackActiveTab.id);
+    return { tab: fallbackActiveTab, source: "active-query-fallback" };
   }
   return { tab: null, source: "none" };
 }

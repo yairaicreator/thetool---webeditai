@@ -10,6 +10,10 @@ const SUPABASE_URL = "https://eqfjkvjwsswjxkmomxax.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVxZmprdmp3c3N3anhrbW9teGF4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYxMTU1MDYsImV4cCI6MjA3MTY5MTUwNn0.sh5d5Hj5hshIOndyAodK_rlP0K1pERYyWyNqNxp-E7k";
 const SESSION_STORAGE_KEY = "webeditSupabaseSession";
 const SESSION_TIMESTAMP_KEY = "webeditSessionTimestamp";
+const REFRESH_BACKOFF_MS = 60 * 1000;
+const REFRESH_ERROR_BACKOFF_MS = 15 * 1000;
+const refreshInFlightByToken = new Map();
+let refreshCooldownUntil = 0;
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY || SUPABASE_URL.includes("YOUR_SUPABASE_URL")) {
   console.warn("⚠️ WebEdit AI: Supabase URL or Anon Key is missing. Edits will not be saved.");
@@ -192,6 +196,19 @@ const SupabaseClient = {
     if (!refreshToken) {
       return { data: { session: null }, error: 'Missing refresh token' };
     }
+    const existingRefresh = refreshInFlightByToken.get(refreshToken);
+    if (existingRefresh) {
+      return existingRefresh;
+    }
+    if (Date.now() < refreshCooldownUntil) {
+      const retryAfterMs = Math.max(0, refreshCooldownUntil - Date.now());
+      return {
+        data: { session: null },
+        error: `Refresh paused after recent failure. Retry in ${Math.ceil(retryAfterMs / 1000)}s.`
+      };
+    }
+
+    const refreshPromise = (async () => {
     try {
       const response = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
         method: 'POST',
@@ -206,7 +223,24 @@ const SupabaseClient = {
       const payload = await response.json().catch(() => null);
       if (!response.ok || !payload) {
         const msg = payload?.msg || payload?.error_description || payload?.error || response.statusText;
-        return { data: { session: null }, error: `Refresh failed: ${msg}` };
+        const errorText = String(msg || "");
+        const isInvalidRefresh = (
+          response.status === 400 ||
+          response.status === 401 ||
+          response.status === 403 ||
+          response.status === 422 ||
+          /invalid.*refresh|refresh token.*invalid|refresh token.*expired|jwt/i.test(errorText.toLowerCase())
+        );
+
+        if (isInvalidRefresh) {
+          // Prevent infinite refresh loops on stale/rotated refresh tokens.
+          await this.setSession(null);
+          refreshCooldownUntil = 0;
+          return { data: { session: null }, error: `Refresh failed (${response.status}): ${msg}` };
+        }
+
+        refreshCooldownUntil = Date.now() + (response.status === 429 ? REFRESH_BACKOFF_MS : REFRESH_ERROR_BACKOFF_MS);
+        return { data: { session: null }, error: `Refresh failed (${response.status}): ${msg}` };
       }
 
       const expiresIn = Number(payload.expires_in || 0);
@@ -221,12 +255,20 @@ const SupabaseClient = {
         user: payload.user
       };
 
+      refreshCooldownUntil = 0;
       await this.setSession(session);
       return { data: { session }, error: null };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      refreshCooldownUntil = Date.now() + REFRESH_ERROR_BACKOFF_MS;
       return { data: { session: null }, error: message || 'Refresh failed' };
+    } finally {
+      refreshInFlightByToken.delete(refreshToken);
     }
+    })();
+
+    refreshInFlightByToken.set(refreshToken, refreshPromise);
+    return refreshPromise;
   },
 
   /**
@@ -244,6 +286,13 @@ const SupabaseClient = {
           console.log("🔄 [SupabaseClient] Session expired; attempting refresh...");
           this.refreshSession(session.refresh_token).then((res) => {
             resolve(res?.data?.session ? res : { data: { session: null }, error: res?.error || null });
+          });
+          return;
+        }
+
+        if (session && this.isSessionExpired(session) && !session.refresh_token) {
+          this.setSession(null).finally(() => {
+            resolve({ data: { session: null }, error: "Session expired and no refresh token available" });
           });
           return;
         }
