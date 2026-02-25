@@ -2,6 +2,9 @@
 // Handles DOM interactions (pick/remove/customize/apply/add) on the active page.
 
 console.log("[WebEdit] contentScript loaded on", location.href);
+// #region agent log
+fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e76c3f'},body:JSON.stringify({sessionId:'e76c3f',runId:'auth-debug-1',hypothesisId:'H0',location:'contentScript.js:top-level',message:'contentScript loaded',data:{href:location.href},timestamp:Date.now()})}).catch(()=>{});
+// #endregion
 
 let isPickMode = false;
 let isRemoveMode = false;
@@ -420,7 +423,13 @@ function shouldBypassAuthRuntimeOnPage() {
   const hasAuthError = /(?:\?|&)(error|error_description)=/.test(search);
   const authPath = pathname.includes("/auth/callback") || hash.includes("auth/callback");
   const authRoute = hash.includes("/signup") || hash.includes("/login") || hash.includes("/auth");
-  return hasAuthCode || hasAuthError || authPath || authRoute;
+  const bypass = hasAuthCode || hasAuthError || authPath || authRoute;
+  // #region agent log
+  if (bypass) {
+    fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e76c3f'},body:JSON.stringify({sessionId:'e76c3f',runId:'auth-debug-1',hypothesisId:'H3',location:'contentScript.js:shouldBypassAuthRuntimeOnPage:true',message:'Auth runtime bypass active',data:{pathname,hash,hasAuthCode,hasAuthError,authPath,authRoute},timestamp:Date.now()})}).catch(()=>{});
+  }
+  // #endregion
+  return bypass;
 }
 
 function setAuthState(nextState, email = null) {
@@ -479,10 +488,16 @@ async function isAuthenticated(force = false) {
 async function getSupabaseAuth() {
   try {
     const authorized = await isAuthenticated();
+    // #region agent log
+    fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e76c3f'},body:JSON.stringify({sessionId:'e76c3f',runId:'auth-debug-1',hypothesisId:'H4',location:'contentScript.js:getSupabaseAuth:authorizedCheck',message:'Evaluated isAuthenticated in getSupabaseAuth',data:{authorized,href:location.href},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     if (!authorized) return null;
     const client = window.SupabaseClient;
     if (!client) return null;
     const { data: { session } } = await client.getSession();
+    // #region agent log
+    fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e76c3f'},body:JSON.stringify({sessionId:'e76c3f',runId:'auth-debug-1',hypothesisId:'H4',location:'contentScript.js:getSupabaseAuth:sessionLoaded',message:'Loaded session in getSupabaseAuth',data:{hasSession:!!session,hasToken:!!session?.access_token,hasRefreshToken:!!session?.refresh_token,isExpired:!!(session&&typeof client.isSessionExpired==='function'&&client.isSessionExpired(session))},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     const token = session?.access_token || null;
     const userId = session?.user?.id || null;
     if (!token || !userId) return null;

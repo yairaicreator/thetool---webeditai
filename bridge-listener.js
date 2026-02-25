@@ -5,6 +5,9 @@
 
 const SESSION_MESSAGE_TYPE = "WEBEDIT_SUPABASE_SESSION";
 const SESSION_MESSAGE_SOURCE = "webedit-website";
+// #region agent log
+fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e76c3f'},body:JSON.stringify({sessionId:'e76c3f',runId:'auth-debug-1',hypothesisId:'H0',location:'bridge-listener.js:top-level',message:'bridge-listener loaded',data:{href:typeof location!=='undefined'?location.href:'n/a'},timestamp:Date.now()})}).catch(()=>{});
+// #endregion
 
 function isContextInvalidMessage(message) {
   const text = String(message || "");
@@ -35,6 +38,9 @@ function isSessionExpiredOrNearExpiry(session, leewaySec = 30) {
 
 function normalizeSessionPayload(raw, context = "unknown") {
   if (raw === null) {
+    // #region agent log
+    fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e76c3f'},body:JSON.stringify({sessionId:'e76c3f',runId:'auth-debug-1',hypothesisId:'H2',location:'bridge-listener.js:normalizeSessionPayload:null',message:'Bridge received explicit sign-out payload',data:{context},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     return { session: null, valid: true, explicitSignOut: true };
   }
   if (typeof raw !== "object") {
@@ -43,14 +49,23 @@ function normalizeSessionPayload(raw, context = "unknown") {
   }
   const session = coerceSessionCandidate(raw);
   if (!session) {
+    // #region agent log
+    fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e76c3f'},body:JSON.stringify({sessionId:'e76c3f',runId:'auth-debug-1',hypothesisId:'H2',location:'bridge-listener.js:normalizeSessionPayload:invalidShape',message:'Bridge rejected malformed session shape',data:{context},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     console.warn(`⚠️ [Bridge] Session missing access_token/user from ${context}`, raw);
     return { session: null, valid: false, explicitSignOut: false };
   }
   if (isSessionExpiredOrNearExpiry(session)) {
     const expiresAt = Number(session?.expires_at || 0);
+    // #region agent log
+    fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e76c3f'},body:JSON.stringify({sessionId:'e76c3f',runId:'auth-debug-1',hypothesisId:'H2',location:'bridge-listener.js:normalizeSessionPayload:nearExpiry',message:'Bridge rejected near-expiry session',data:{context,expiresAt},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     console.warn(`⚠️ [Bridge] Ignoring expired/near-expiry session from ${context} (expires_at=${expiresAt})`);
     return { session: null, valid: false, explicitSignOut: false };
   }
+  // #region agent log
+  fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e76c3f'},body:JSON.stringify({sessionId:'e76c3f',runId:'auth-debug-1',hypothesisId:'H2',location:'bridge-listener.js:normalizeSessionPayload:accepted',message:'Bridge accepted session payload',data:{context,expiresAt:Number(session?.expires_at||0),hasRefreshToken:!!session?.refresh_token},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
   return { session, valid: true, explicitSignOut: false };
 }
 
@@ -73,6 +88,9 @@ function forwardSessionToBackground(session, source, attempt = 0) {
   }
 
   console.log(`🔐 [Bridge:${prefix}] ${isSignedIn ? "SIGNED-IN" : "SIGNED-OUT"} session from ${source}`, isSignedIn ? email : "");
+  // #region agent log
+  fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e76c3f'},body:JSON.stringify({sessionId:'e76c3f',runId:'auth-debug-1',hypothesisId:'H2',location:'bridge-listener.js:forwardSessionToBackground:send',message:'Bridge forwarding session to background',data:{source,attempt,isSignedIn},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
 
   const retry = (reason) => {
     const isContextInvalid = isContextInvalidMessage(reason) || String(reason || "").includes("extension context unavailable");
