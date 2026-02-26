@@ -2238,7 +2238,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const result = await applyFeatureSpecFlow(specToApply);
         if (result?.ok) {
           if (store && typeof store.addCommittedFeature === "function" && result.record) {
-            await store.addCommittedFeature(result.record);
+            const isCloudOnlyGeminiFolder =
+              String(specToApply?.metadata?.persistenceMode || "").toLowerCase() === "cloud_only" ||
+              String(specToApply?.metadata?.featureClass || "").toLowerCase() === "gemini-folder" ||
+              String(specToApply?.generated_module?.controller || "").toLowerCase() === "foldergeminicontroller";
+            if (!isCloudOnlyGeminiFolder) {
+              await store.addCommittedFeature(result.record);
+            }
           }
           if (previewId) {
             previewLabPreviews.delete(previewId);

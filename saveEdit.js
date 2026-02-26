@@ -665,6 +665,11 @@ async function saveAddFeature(spec) {
     payload: {
       action: "add",
       ...spec,
+      metadata: {
+        ...(spec?.metadata || {}),
+        featureClass: (generatedModule?.controller === "folderGeminiController" ? "gemini-folder" : (spec?.metadata?.featureClass || null)),
+        persistenceMode: (generatedModule?.controller === "folderGeminiController" ? "cloud_only" : (spec?.metadata?.persistenceMode || null))
+      },
       featureArtifact: {
         html: generatedModule?.html || spec?.html || '',
         css: generatedModule?.css || spec?.css || '',

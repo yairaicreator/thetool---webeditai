@@ -1265,6 +1265,12 @@ async function restoreAndReplay() {
   for (const entry of entries) {
     const spec = entry?.spec;
     if (!spec) continue;
+    const persistenceMode = String(spec?.metadata?.persistenceMode || "").toLowerCase();
+    const featureClass = String(spec?.metadata?.featureClass || "").toLowerCase();
+    if (persistenceMode === "cloud_only" || featureClass === "gemini-folder") {
+      // Cloud-authoritative features are restored by cloud replay path only.
+      continue;
+    }
     // Replay mode: do not push onto stacks or persist again.
     // Validation happens in contentScript before persistence, but keep guard here.
     const parsed = typeof window.parseFeatureSpec === "function" ? window.parseFeatureSpec(spec) : { ok: true, spec };
