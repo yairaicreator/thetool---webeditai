@@ -303,41 +303,25 @@ async function pingTab(tabId) {
 }
 
 async function injectPageRuntime(tabId) {
-  // NOTE: We only inject when the content script is missing (ping fails).
-  // This avoids double-injecting scripts and causing duplicate listeners.
-  const jsFiles = [
-    "supabaseClient.js",
-    "editRules.js",
-    "saveEdit.js",
-    "featureSpec.js",
-    "featureSpecExecutor.js",
-    "contextExtractor.js",
-    "featureRegistry.js",
-    "featureEngine.js",
-    "featureStore.js",
-    "previewLab.js",
-    "messages.js",
-    "contentScript.js"
-  ];
-  const cssFiles = ["contentStyles.css"];
-
-  try {
-    await chrome.scripting.insertCSS({
-      target: { tabId },
-      files: cssFiles
-    });
-  } catch (error) {
-    // Some pages may block CSS injection; continue anyway.
-    console.warn("[WebEdit] Failed to inject CSS:", error);
-  }
-
-  await chrome.scripting.executeScript({
-    target: { tabId },
-    files: jsFiles
-  });
-
-  return { ok: true };
+  // Scripts are manifest-managed content scripts on <all_urls>.
+  // Re-injecting here can redeclare top-level identifiers and break persistence.
+  return { ok: false, error: "Content scripts are managed by manifest; reload the page if script context is missing." };
 }
+
+const MANIFEST_MANAGED_SCRIPT_FILES = new Set([
+  "supabaseClient.js",
+  "editRules.js",
+  "saveEdit.js",
+  "featureSpec.js",
+  "featureSpecExecutor.js",
+  "contextExtractor.js",
+  "featureRegistry.js",
+  "featureEngine.js",
+  "featureStore.js",
+  "previewLab.js",
+  "messages.js",
+  "contentScript.js"
+]);
 
 // Message relay: sidepanel.js -> background.js -> contentScript.js (active tab)
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -378,10 +362,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return;
       }
       try {
-        await chrome.scripting.executeScript({
-          target: { tabId },
-          files
-        });
+        const unmanagedFiles = files.filter((file) => !MANIFEST_MANAGED_SCRIPT_FILES.has(file));
+        if (unmanagedFiles.length > 0) {
+          await chrome.scripting.executeScript({
+            target: { tabId },
+            files: unmanagedFiles
+          });
+        }
         sendResponse({ ok: true });
       } catch (error) {
         sendResponse({ ok: false, error: error?.message || String(error) });
@@ -408,12 +395,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       // PING first; inject runtime if missing; then retry command once.
       const ping = await pingTab(tabId);
       if (!ping.ok && typeof ping.error === "string" && ping.error.includes("Receiving end does not exist")) {
-        try {
-          await injectPageRuntime(tabId);
-        } catch (error) {
-          sendResponse({ ok: false, error: error?.message || String(error) });
-          return;
-        }
+        sendResponse({
+          ok: false,
+          error: "Page script context is unavailable. Reload the page, then try again."
+        });
+        return;
       }
 
       const relayResult = await sendMessageToTab(tabId, {

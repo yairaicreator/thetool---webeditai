@@ -353,6 +353,8 @@ let cloudRebuildTimer = null;
 let cloudRebuildInFlight = null;
 let cloudRuntimeStarted = false;
 let cloudPollTimer = null;
+let applySavedEditsInFlight = null;
+let pendingApplySavedReason = null;
 let lastSpaKey = null; // origin+pathname
 let spaReapplyTimer = null;
 const CUSTOMIZE_STYLE_PROPS = [
@@ -381,9 +383,8 @@ function scheduleSpaReapply(reason = "spa") {
   try { if (spaReapplyTimer) clearTimeout(spaReapplyTimer); } catch (_) {}
   spaReapplyTimer = setTimeout(() => {
     console.log("[WebEdit] SPA reapply triggered:", reason);
-    // Re-run both cloud and local rehydration
-    rebuildCloudEdits(`spa:${reason}`).catch(() => {});
-    applySavedEditsForUser().catch(() => {});
+    // Re-run deterministic rehydration pipeline once per burst.
+    applySavedEditsForUser(`spa:${reason}`).catch(() => {});
   }, 250);
 }
 
@@ -404,8 +405,7 @@ function handleSpaUrlChange(reason = "url-change") {
   try { cloudRealtime?.close?.(); } catch (_) {}
   cloudRealtime = null;
 
-  // Re-init cloud runtime for the new route and reapply.
-  initCloudEditsRuntime().catch(() => {});
+  // Re-run deterministic rehydration for the new route.
   scheduleSpaReapply(reason);
 }
 
@@ -597,7 +597,7 @@ function pickCssFromPayload(payload) {
 
 async function fetchActiveEditsForWebsite(websiteId) {
   const auth = await getSupabaseAuth();
-  if (!auth || !websiteId) return [];
+  if (!auth || !websiteId) return null;
 
   const baseQs = new URLSearchParams({
     website_id: `eq.${websiteId}`,
@@ -611,14 +611,14 @@ async function fetchActiveEditsForWebsite(websiteId) {
 
   const url = `${auth.url}/rest/v1/edits?${baseQs.toString()}`;
   const data = await supabaseJsonGet(url, auth.token, auth.anonKey).catch((e) => {
-    // Graceful degradation: if schema differs or table missing, skip.
+    // Graceful degradation: if schema differs or table missing, skip destructive rebuild.
     const msg = String(e?.message || e || "");
     if (!/Failed to fetch|NetworkError|fetch/i.test(msg)) {
       console.warn("[WebEdit] Supabase fetchActiveEdits failed:", msg);
     }
-    return [];
+    return null;
   });
-  if (!Array.isArray(data)) return [];
+  if (!Array.isArray(data)) return null;
 
   console.log("[WebEdit] Loaded active edits", { websiteId, count: data.length });
 
@@ -629,11 +629,27 @@ async function fetchActiveEditsForWebsite(websiteId) {
 }
 
 function clearAppliedCloudEdits() {
+  const summary = {
+    removedNodes: 0,
+    removedStyles: 0,
+    restoredManagedNodes: 0
+  };
+  const isCloudInjectedArtifact = (node) => {
+    if (!(node instanceof Element)) return false;
+    return node.classList.contains("webedit-added-feature") ||
+      node.hasAttribute("data-webedit-feature-id") ||
+      node.hasAttribute("data-webedit-ai-insert-id");
+  };
+
   // 1) Remove injected "Add" features (cloud-managed only)
   try {
     const injected = Array.from(document.querySelectorAll(`[${WEBEDIT_CLOUD_EDIT_ATTR}]`));
     injected.forEach((node) => {
-      try { node.remove(); } catch (_) {}
+      if (!isCloudInjectedArtifact(node)) return;
+      try {
+        node.remove();
+        summary.removedNodes += 1;
+      } catch (_) {}
     });
   } catch (_) {}
 
@@ -645,7 +661,10 @@ function clearAppliedCloudEdits() {
       // If it doesn't have the new attr, it might be local-only (featureSpec undo stack).
       // Keep it to avoid breaking local Undo/Redo.
       if (!node.hasAttribute(WEBEDIT_CLOUD_EDIT_ATTR)) return;
-      try { node.remove(); } catch (_) {}
+      try {
+        node.remove();
+        summary.removedNodes += 1;
+      } catch (_) {}
     });
   } catch (_) {}
 
@@ -657,7 +676,10 @@ function clearAppliedCloudEdits() {
     styleEls.forEach((el) => {
       const isFeatureSpecStyle = el.hasAttribute("data-webedit-ai-style-id");
       if (isFeatureSpecStyle) return;
-      try { el.remove(); } catch (_) {}
+      try {
+        el.remove();
+        summary.removedStyles += 1;
+      } catch (_) {}
     });
   } catch (_) {}
 
@@ -690,9 +712,12 @@ function clearAppliedCloudEdits() {
         try { el.removeAttribute(WEBEDIT_ORIG_DISPLAY_ATTR); } catch (_) {}
         try { el.removeAttribute(WEBEDIT_ORIG_DISPLAY_PRIO_ATTR); } catch (_) {}
         try { el.removeAttribute(WEBEDIT_MANAGED_ATTR); } catch (_) {}
+        summary.restoredManagedNodes += 1;
       }
     });
   } catch (_) {}
+
+  return summary;
 }
 
 function cssPropToKebab(prop) {
@@ -892,12 +917,23 @@ async function rebuildCloudEdits(reason = "unknown") {
       cloudWebsiteId = websiteId;
       if (!websiteId) return { ok: false, skipped: true, reason: "no-website-id" };
 
-      // Deterministic correctness: clear everything we manage, then reapply ACTIVE edits in order.
-      clearAppliedCloudEdits();
       const edits = await fetchActiveEditsForWebsite(websiteId);
+      if (!Array.isArray(edits)) {
+        console.warn("[WebEdit] Cloud rebuild skipped (fetch unavailable)", { reason, websiteId });
+        return { ok: false, skipped: true, reason: "fetch-unavailable" };
+      }
+      // Deterministic correctness: clear everything we manage, then reapply ACTIVE edits in order.
+      const clearSummary = clearAppliedCloudEdits();
       // stable order (server orders by created_at asc, but keep client-side fallback)
       edits.sort((a, b) => String(a?.created_at || "").localeCompare(String(b?.created_at || "")));
       const result = await applyActiveEditsInOrder(edits);
+      console.log("[WebEdit] Cloud rebuild applied", {
+        reason,
+        websiteId,
+        fetched: edits.length,
+        applied: result?.applied || 0,
+        clearSummary
+      });
       
       // Check for discrepancies (e.g. edits applied by legacy system but missing from Cloud)
       try {
@@ -1059,7 +1095,8 @@ function startCloudRealtimeSubscription(userId, websiteId) {
     });
 }
 
-async function initCloudEditsRuntime() {
+async function initCloudEditsRuntime(options = {}) {
+  const skipInitialRebuild = !!options?.skipInitialRebuild;
   try {
     if (cloudRuntimeStarted) return;
     const auth = await getSupabaseAuth();
@@ -1071,7 +1108,9 @@ async function initCloudEditsRuntime() {
 
     cloudRuntimeStarted = true;
     startCloudRealtimeSubscription(auth.userId, cloudWebsiteId);
-    scheduleCloudRebuild("init", 50);
+    if (!skipInitialRebuild) {
+      scheduleCloudRebuild("init", 50);
+    }
 
     // Polling fallback (covers cases where websockets are blocked)
     cloudPollTimer = setInterval(() => {
@@ -1157,7 +1196,22 @@ async function refreshCurrentUser() {
   return currentUser;
 }
 
-async function applySavedEditsForUser() {
+async function applySavedEditsForUser(reason = "manual") {
+  pendingApplySavedReason = reason || "manual";
+  if (applySavedEditsInFlight) return applySavedEditsInFlight;
+  applySavedEditsInFlight = (async () => {
+    while (pendingApplySavedReason) {
+      const passReason = pendingApplySavedReason;
+      pendingApplySavedReason = null;
+      await applySavedEditsForUserOnce(passReason);
+    }
+  })().finally(() => {
+    applySavedEditsInFlight = null;
+  });
+  return applySavedEditsInFlight;
+}
+
+async function applySavedEditsForUserOnce(reason = "manual") {
   if (shouldBypassAuthRuntimeOnPage()) {
     stopCloudEditsRuntime();
     return;
@@ -1173,14 +1227,11 @@ async function applySavedEditsForUser() {
   }
 
   console.log("[WebEdit] applySavedEditsForUser start", {
+    reason,
     origin: location.origin,
     pathname: location.pathname,
     href: location.href
   });
-
-  // Cloud edits (Supabase `edits` table) apply + realtime undo/redo sync.
-  // Await the initial runtime setup so local replay does not race against cloud cleanup.
-  await initCloudEditsRuntime().catch(() => {});
 
   if (!window.EditRules) {
     return;
@@ -1222,6 +1273,10 @@ async function applySavedEditsForUser() {
   } catch (e) {
     console.warn("[WebEdit] FeatureStore restoreCommittedFeatures failed:", e?.message || e);
   }
+
+  // Cloud edits apply last so local restore and cloud cleanup do not overlap.
+  await initCloudEditsRuntime({ skipInitialRebuild: true }).catch(() => {});
+  await rebuildCloudEdits(`rehydrate:${reason}`).catch(() => {});
 }
 
 async function ensureEditRulesReady() {
@@ -1975,7 +2030,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           clearSelected();
           stopCloudEditsRuntime();
         }
-        await applySavedEditsForUser();
+        await applySavedEditsForUser("session-updated");
         sendResponse({ ok: true });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -2478,7 +2533,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // Re-apply saved edits on each page load, but yield to main thread first
 // to avoid conflicts with hydration (e.g. React error #418).
 if (typeof requestIdleCallback === "function") {
-  requestIdleCallback(() => applySavedEditsForUser(), { timeout: 3000 });
+  requestIdleCallback(() => applySavedEditsForUser("initial-load"), { timeout: 3000 });
 } else {
-  setTimeout(() => applySavedEditsForUser(), 500);
+  setTimeout(() => applySavedEditsForUser("initial-load"), 500);
 }
