@@ -189,7 +189,11 @@ async function renderSpecPreviewInLab(spec, previewId) {
     let target = null;
     try { target = selector ? document.querySelector(selector) : null; } catch (_) { target = null; }
     if (target) {
-      const clone = target.cloneNode(true);
+      // For inside placement previews, use a shallow clone so insertion is visually
+      // unambiguous inside the selected section instead of blending with full copied content.
+      const clone = (normalizedSpec.position || "inside") === "inside"
+        ? target.cloneNode(false)
+        : target.cloneNode(true);
       clone.setAttribute(PREVIEW_LAB_TARGET_ATTR, "1");
       clone.setAttribute("data-webedit-preview-context", "1");
       mount.appendChild(clone);
@@ -645,10 +649,14 @@ function clearAppliedCloudEdits() {
     });
   } catch (_) {}
 
-  // 2) Remove injected style tags for Customize edits
+  // 2) Remove injected style tags for cloud Customize edits only.
+  // Preserve local FeatureSpec styles (`data-webedit-ai-style-id`) so local replayed
+  // add features do not flicker/disappear after cloud rebuild.
   try {
     const styleEls = Array.from(document.querySelectorAll(`style[id^="${WEBEDIT_STYLE_ID_PREFIX}"]`));
     styleEls.forEach((el) => {
+      const isFeatureSpecStyle = el.hasAttribute("data-webedit-ai-style-id");
+      if (isFeatureSpecStyle) return;
       try { el.remove(); } catch (_) {}
     });
   } catch (_) {}
@@ -1170,9 +1178,9 @@ async function applySavedEditsForUser() {
     href: location.href
   });
 
-  // Cloud edits (Supabase `edits` table) apply + realtime undo/redo sync
-  // This is separate from EditRules and is driven only by Supabase (Realtime + polling).
-  initCloudEditsRuntime().catch(() => {});
+  // Cloud edits (Supabase `edits` table) apply + realtime undo/redo sync.
+  // Await the initial runtime setup so local replay does not race against cloud cleanup.
+  await initCloudEditsRuntime().catch(() => {});
 
   if (!window.EditRules) {
     return;

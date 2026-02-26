@@ -471,7 +471,12 @@ function bindControllerForMarker(spec, markerId, root = document, options = {}) 
             chips.appendChild(chip);
             moveAssignedNode(chatId, movedNodes, candidates);
           });
+          const unassignHint = document.createElement("div");
+          unassignHint.className = "webedit-folder-drop-empty";
+          unassignHint.textContent = "Tip: click a chip to unassign.";
+          unassignHint.style.marginTop = "4px";
           drop.appendChild(chips);
+          drop.appendChild(unassignHint);
           drop.appendChild(movedNodes);
         }
 
@@ -513,8 +518,18 @@ function bindControllerForMarker(spec, markerId, root = document, options = {}) 
 
     const renderAll = () => {
       const candidates = collectChatCandidates();
+      if (state.selectedChat && !candidates.some((c) => c.id === state.selectedChat)) {
+        state.selectedChat = "";
+      }
+      const validChatIds = new Set(candidates.map((c) => c.id));
+      Object.keys(state.assignments || {}).forEach((chatId) => {
+        if (!validChatIds.has(chatId)) {
+          delete state.assignments[chatId];
+        }
+      });
       renderSourceList(candidates);
       renderFolders(candidates);
+      saveState(state);
     };
 
     source.addEventListener("click", (e) => {
@@ -543,14 +558,8 @@ function bindControllerForMarker(spec, markerId, root = document, options = {}) 
 function insertNodes(target, nodes, position) {
   const pos = position || "inside";
   if (pos === "inside") {
-    // Deterministic "inside": insert at top so repeated previews keep stable placement.
-    nodes.forEach((n) => {
-      if (target.firstChild) {
-        target.insertBefore(n, target.firstChild);
-      } else {
-        target.appendChild(n);
-      }
-    });
+    // Keep "inside" behavior intuitive: append within the selected section.
+    nodes.forEach((n) => target.appendChild(n));
     return;
   }
 

@@ -73,11 +73,20 @@ const FeaturePlanner = (() => {
           background:#0b1220 !important;
           color:#e2e8f0 !important;
         }
+        body.webedit-theme-dark *,
+        body.webedit-theme-dark *::before,
+        body.webedit-theme-dark *::after {
+          color: inherit;
+        }
         body.webedit-theme-dark main,
         body.webedit-theme-dark section,
         body.webedit-theme-dark article,
         body.webedit-theme-dark aside,
         body.webedit-theme-dark nav,
+        body.webedit-theme-dark div,
+        body.webedit-theme-dark form,
+        body.webedit-theme-dark header,
+        body.webedit-theme-dark footer,
         body.webedit-theme-dark [role="main"],
         body.webedit-theme-dark [role="complementary"] {
           background-color:#0f172a !important;
@@ -89,7 +98,13 @@ const FeaturePlanner = (() => {
         body.webedit-theme-dark h1,
         body.webedit-theme-dark h2,
         body.webedit-theme-dark h3,
-        body.webedit-theme-dark h4 {
+        body.webedit-theme-dark h4,
+        body.webedit-theme-dark h5,
+        body.webedit-theme-dark h6,
+        body.webedit-theme-dark label,
+        body.webedit-theme-dark li,
+        body.webedit-theme-dark td,
+        body.webedit-theme-dark th {
           color:#e2e8f0 !important;
         }
         body.webedit-theme-dark button,
@@ -99,6 +114,12 @@ const FeaturePlanner = (() => {
           background:#111827 !important;
           color:#e5e7eb !important;
           border-color:#334155 !important;
+        }
+        body.webedit-theme-dark [aria-selected="true"],
+        body.webedit-theme-dark .active,
+        body.webedit-theme-dark [data-active="true"] {
+          background-color:#1f2937 !important;
+          color:#f8fafc !important;
         }
       `,
       js: ""
