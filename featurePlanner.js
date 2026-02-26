@@ -6,6 +6,10 @@ const FeaturePlanner = (() => {
     return String(prompt || "").trim();
   }
 
+  function normalizePlannerString(value) {
+    return String(value || "").trim();
+  }
+
   function classifyComplexity(prompt, context, capability) {
     const text = normalizePrompt(prompt).toLowerCase();
     const reasons = [];
@@ -232,7 +236,7 @@ const FeaturePlanner = (() => {
     const text = normalizePrompt(prompt).toLowerCase();
     const anchorSelector = context?.selector || context?.anchorElement?.selector || "";
     const warnings = [];
-    const forcedClass = normalizeString(options?.forcedFeatureClass || "");
+    const forcedClass = normalizePlannerString(options?.forcedFeatureClass || "");
     const routedClass = routeFeatureClass(prompt, context, capability);
     let featureClass = forcedClass || routedClass || "genericAdd";
     let module = null;

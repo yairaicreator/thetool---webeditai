@@ -555,6 +555,12 @@
     addChatMessage("system", text);
   }
 
+  function commandSucceeded(resp) {
+    if (!resp?.ok) return false;
+    if (resp?.response && resp.response.ok === false) return false;
+    return true;
+  }
+
   async function handlePreviewApply(previewId) {
     if (!previewId) return;
     const msg = chatMessages.find(m => m.type === "preview" && m.content?.previewId === previewId);
@@ -1229,7 +1235,6 @@
     if (tool === "add" && !requireAuth("add features")) return;
 
     setActiveTool(tool);
-    pendingFeaturePickMode = tool;
     pendingPreviewRefine = null;
     isAddFeatureMode = false;
     customizeReviewApplied = false;
@@ -1248,10 +1253,21 @@
       showModeIndicator("Add: pick an anchor element");
     }
 
-    const resp = await sendToActiveTab({ type: "START_PICK_MODE", reason: tool });
-    if (!resp?.ok) {
+    pendingFeaturePickMode = tool;
+
+    // Best-effort reset to avoid stale mode races before starting a new pick cycle.
+    await sendToActiveTab({ type: "EXIT_FEATURES" });
+
+    let resp = await sendToActiveTab({ type: "START_PICK_MODE", reason: tool });
+    if (!commandSucceeded(resp)) {
+      await new Promise((resolve) => setTimeout(resolve, 180));
+      resp = await sendToActiveTab({ type: "START_PICK_MODE", reason: tool });
+    }
+    if (!commandSucceeded(resp)) {
       hideModeIndicator();
       pendingFeaturePickMode = null;
+      const detail = formatStageError(resp, "Could not enter pick mode");
+      showNotificationInChat(`Pick mode failed: ${detail}`);
       return;
     }
     showModeIndicator("Pick mode active - Click an element to select it");
@@ -1757,6 +1773,8 @@
       return;
     }
     if (message?.type === "WEBEDIT_MODE_EXITED") {
+      // Ignore stale exit events while a pick flow is actively pending.
+      if (pendingFeaturePickMode) return;
       hideModeIndicator();
       return;
     }
