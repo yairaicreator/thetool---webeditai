@@ -825,6 +825,18 @@ function serializeReplayError(errorLike) {
   }
 }
 
+function summarizeError(errorLike) {
+  if (!errorLike) return "unknown";
+  if (typeof errorLike === "string") return errorLike;
+  if (errorLike instanceof Error) return errorLike.message || String(errorLike);
+  try {
+    const json = JSON.stringify(errorLike);
+    return json && json !== "{}" ? json : String(errorLike);
+  } catch (_) {
+    return String(errorLike);
+  }
+}
+
 function normalizeAddPayloadToSpec(payload = {}) {
   if (!payload || typeof payload !== "object") return null;
   const directAction = String(payload.action || "").toLowerCase();
@@ -916,7 +928,7 @@ async function applyActiveEditsInOrder(edits) {
         // Ignore unknown edit types for now (future-proof).
       }
     } catch (e) {
-      console.warn("[WebEdit] Failed to apply cloud edit", editId, e);
+      console.info(`[WebEdit] Failed to apply cloud edit id=${String(editId || "unknown")} reason=${summarizeError(e)}`);
     }
   }
   return { applied };
@@ -963,8 +975,9 @@ async function rebuildCloudEdits(reason = "unknown") {
 
       return { ok: true, ...result, reason };
     } catch (e) {
-      console.warn("[WebEdit] Cloud rebuild failed:", e?.message || e);
-      return { ok: false, error: e?.message || String(e) };
+      const reason = summarizeError(e);
+      console.info(`[WebEdit] Cloud rebuild failed reason=${reason}`);
+      return { ok: false, error: reason };
     } finally {
       // allow next rebuild
       cloudRebuildInFlight = null;

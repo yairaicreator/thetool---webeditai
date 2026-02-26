@@ -271,6 +271,7 @@ function bindControllerForMarker(spec, markerId, root = document, options = {}) 
       || null;
     const source = safeQueryAll("[data-webedit-folder-source='1']", host)[0] || null;
     const folderList = safeQueryAll("[data-webedit-folder-list='1']", host)[0] || null;
+    const panel = safeQueryAll("[data-webedit-folder-panel='1']", host)[0] || null;
     if (!(source instanceof Element) || !(folderList instanceof Element) || !(newButton instanceof Element)) return;
 
     if (host.getAttribute(BOUND_MARKER_ATTR) === "1") return;
@@ -297,9 +298,9 @@ function bindControllerForMarker(spec, markerId, root = document, options = {}) 
     };
     const getHostState = () => {
       if (!host.__webeditFolderState) host.__webeditFolderState = {
-        original: {},
         signatureToId: {},
-        lastCreateAt: 0
+        lastCreateAt: 0,
+        panelOpen: false
       };
       return host.__webeditFolderState;
     };
@@ -358,28 +359,6 @@ function bindControllerForMarker(spec, markerId, root = document, options = {}) 
       return Array.from(map.values()).slice(0, 30);
     };
 
-    const rememberOriginalPlacement = (chatId, node) => {
-      if (!chatId || !(node instanceof Element) || hostState.original[chatId]) return;
-      hostState.original[chatId] = {
-        parent: node.parentNode || null,
-        nextSibling: node.nextSibling || null
-      };
-    };
-
-    const restoreToOriginal = (chatId, node) => {
-      const placement = hostState.original[chatId];
-      if (!placement || !(node instanceof Element)) return;
-      const parent = placement.parent;
-      if (!parent) return;
-      try {
-        if (placement.nextSibling && placement.nextSibling.parentNode === parent) {
-          parent.insertBefore(node, placement.nextSibling);
-        } else {
-          parent.appendChild(node);
-        }
-      } catch (_) {}
-    };
-
     const renderSourceList = (candidates) => {
       source.innerHTML = "";
       const assignedSet = new Set(Object.keys(state.assignments || {}));
@@ -401,27 +380,9 @@ function bindControllerForMarker(spec, markerId, root = document, options = {}) 
       });
     };
 
-    const moveAssignedNode = (chatId, targetContainer, candidates) => {
-      const chat = candidates.find((c) => c.id === chatId);
-      const node = chat?.node || document.querySelector(`[data-webedit-folder-chat-id="${escapeForSelector(chatId)}"]`);
-      if (!(node instanceof Element) || !(targetContainer instanceof Element)) return false;
-      rememberOriginalPlacement(chatId, node);
-      try {
-        targetContainer.appendChild(node);
-        return true;
-      } catch (_) {
-        return false;
-      }
-    };
-
     const unassignChat = (chatId, candidates) => {
       if (!chatId) return;
       delete state.assignments[chatId];
-      const chat = candidates.find((c) => c.id === chatId);
-      const node = chat?.node || document.querySelector(`[data-webedit-folder-chat-id="${escapeForSelector(chatId)}"]`);
-      if (node instanceof Element) {
-        restoreToOriginal(chatId, node);
-      }
       saveState(state);
       renderAll();
     };
@@ -473,12 +434,6 @@ function bindControllerForMarker(spec, markerId, root = document, options = {}) 
         chips.style.display = "flex";
         chips.style.flexWrap = "wrap";
         chips.style.gap = "6px";
-        const movedNodes = document.createElement("div");
-        movedNodes.setAttribute("data-webedit-folder-real-list", folder.id);
-        movedNodes.style.display = "flex";
-        movedNodes.style.flexDirection = "column";
-        movedNodes.style.gap = "4px";
-
         const assigned = Object.entries(state.assignments || {})
           .filter(([, folderId]) => folderId === folder.id)
           .map(([chatId]) => chatId);
@@ -501,7 +456,6 @@ function bindControllerForMarker(spec, markerId, root = document, options = {}) 
               unassignChat(chatId, candidates);
             });
             chips.appendChild(chip);
-            moveAssignedNode(chatId, movedNodes, candidates);
           });
           const unassignHint = document.createElement("div");
           unassignHint.className = "webedit-folder-drop-empty";
@@ -509,7 +463,6 @@ function bindControllerForMarker(spec, markerId, root = document, options = {}) 
           unassignHint.style.marginTop = "4px";
           drop.appendChild(chips);
           drop.appendChild(unassignHint);
-          drop.appendChild(movedNodes);
         }
 
         toggle.addEventListener("click", () => {
@@ -581,6 +534,10 @@ function bindControllerForMarker(spec, markerId, root = document, options = {}) 
       renderAll();
     });
     newButton.addEventListener("click", () => {
+      if (panel instanceof HTMLElement) {
+        hostState.panelOpen = true;
+        panel.hidden = false;
+      }
       const now = Date.now();
       if (now - Number(hostState.lastCreateAt || 0) < 250) return;
       hostState.lastCreateAt = now;
@@ -593,6 +550,9 @@ function bindControllerForMarker(spec, markerId, root = document, options = {}) 
       saveState(state);
       renderAll();
     });
+    if (panel instanceof HTMLElement) {
+      panel.hidden = !hostState.panelOpen;
+    }
     renderAll();
   }
 }

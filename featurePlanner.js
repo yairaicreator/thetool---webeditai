@@ -148,9 +148,9 @@ const FeaturePlanner = (() => {
       html: `
         <section class="${scopeClass}" data-webedit-folder-module="1">
           <div class="${scopeClass}__toolbar">
-            <button type="button" class="${scopeClass}__new">New Folder+</button>
+            <button type="button" class="${scopeClass}__new" data-webedit-folder-toggle-panel="1">New Folder+</button>
           </div>
-          <div class="${scopeClass}__columns">
+          <div class="${scopeClass}__panel" data-webedit-folder-panel="1" hidden>
             <div class="${scopeClass}__source-wrap">
               <div class="${scopeClass}__label">Chats</div>
               <ul class="${scopeClass}__source" data-webedit-folder-source="1"></ul>
@@ -163,13 +163,40 @@ const FeaturePlanner = (() => {
         </section>
       `,
       css: `
-        .${scopeClass} { border:1px solid #d1d5db; border-radius:10px; padding:10px; background:#fff; }
-        .${scopeClass}__toolbar { display:flex; justify-content:flex-end; margin-bottom:8px; }
-        .${scopeClass}__new { border:1px solid #374151; background:#111827; color:#fff; border-radius:8px; padding:6px 10px; cursor:pointer; }
-        .${scopeClass}__columns { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+        .${scopeClass} { position:relative; display:flex; justify-content:flex-end; margin:6px 0; }
+        .${scopeClass}__toolbar { display:flex; justify-content:flex-end; }
+        .${scopeClass}__new {
+          width:80px;
+          min-width:80px;
+          height:20px;
+          border:1px solid #374151;
+          background:#111827;
+          color:#fff;
+          border-radius:8px;
+          padding:0 6px;
+          cursor:pointer;
+          font-size:11px;
+          line-height:18px;
+          text-align:center;
+        }
+        .${scopeClass}__panel {
+          position:absolute;
+          top:26px;
+          right:0;
+          width:min(440px, 92vw);
+          border:1px solid #d1d5db;
+          border-radius:10px;
+          padding:10px;
+          background:#fff;
+          box-shadow:0 10px 24px rgba(15, 23, 42, 0.16);
+          z-index:2147483647;
+          display:grid;
+          grid-template-columns:1fr 1fr;
+          gap:8px;
+        }
         .${scopeClass}__label { font-size:12px; font-weight:600; color:#374151; margin-bottom:6px; }
         .${scopeClass}__source { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; min-height:120px; max-height:280px; overflow:auto; }
-        .${scopeClass}__source-item { border:1px solid #e5e7eb; border-radius:8px; padding:8px; background:#f9fafb; cursor:grab; }
+        .${scopeClass}__source-item { border:1px solid #e5e7eb; border-radius:8px; padding:8px; background:#f9fafb; cursor:pointer; user-select:none; }
         .${scopeClass}__list { display:flex; flex-direction:column; gap:8px; min-height:120px; }
         .${scopeClass}__folder { border:1px solid #d1d5db; border-radius:8px; background:#f8fafc; }
         .${scopeClass}__folder-head { display:flex; align-items:center; justify-content:space-between; gap:6px; padding:7px 8px; }
@@ -186,8 +213,8 @@ const FeaturePlanner = (() => {
         .webedit-folder-delete { border:none; background:transparent; font-size:12px; color:#dc2626; cursor:pointer; }
         .webedit-folder-drop { border-top:1px dashed #cbd5e1; padding:8px; min-height:40px; display:flex; flex-direction:column; gap:6px; }
         .webedit-folder-drop-empty { color:#94a3b8; font-size:12px; }
-        .webedit-folder-source-item { border:1px solid #e5e7eb; border-radius:8px; padding:8px; background:#f9fafb; cursor:grab; }
-        .webedit-folder-chip { border:1px solid #bfdbfe; border-radius:999px; background:#eff6ff; color:#1e3a8a; padding:4px 8px; font-size:12px; display:inline-flex; width:fit-content; cursor:grab; }
+        .webedit-folder-source-item { border:1px solid #e5e7eb; border-radius:8px; padding:8px; background:#f9fafb; cursor:pointer; user-select:none; }
+        .webedit-folder-chip { border:1px solid #bfdbfe; border-radius:999px; background:#eff6ff; color:#1e3a8a; padding:4px 8px; font-size:12px; display:inline-flex; width:fit-content; cursor:pointer; }
       `,
       js: "",
       controller: "folderGeminiController",
