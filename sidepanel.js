@@ -69,6 +69,64 @@
   let pendingPreviewRefine = null; // { previewId, plan }
   let pendingComplexDecomposition = null; // { awaiting: "confirm"|"pick_step", steps: string[] }
 
+  function ensureFeatureControlsLayout() {
+    const legacySelectors = [
+      ".webedit-visual-edit",
+      ".webedit-tool-label",
+      ".webedit-hamburger-btn",
+      ".webedit-tools-menu",
+      ".webedit-tool-btn",
+      ".webedit-pick-btn-bottom",
+      ".pick-btn",
+      ".tool-label"
+    ];
+    legacySelectors.forEach((selector) => {
+      document.querySelectorAll(selector).forEach((node) => {
+        try { node.remove(); } catch (_) {}
+      });
+    });
+
+    const bottomControls = document.querySelector(".webedit-bottom-controls");
+    if (!bottomControls) return;
+
+    let controls = bottomControls.querySelector(".webedit-feature-controls");
+    if (!controls) {
+      controls = document.createElement("div");
+      controls.className = "webedit-feature-controls";
+      bottomControls.prepend(controls);
+    }
+
+    const buttonDefs = [
+      { id: "webedit-remove-btn", tool: "remove", label: "Remove" },
+      { id: "webedit-add-btn", tool: "add", label: "Add" },
+      { id: "webedit-customize-btn", tool: "customize", label: "Customize" }
+    ];
+
+    buttonDefs.forEach((def) => {
+      let btn = controls.querySelector(`#${def.id}`);
+      if (!btn) {
+        btn = document.createElement("button");
+        btn.id = def.id;
+        controls.appendChild(btn);
+      }
+      btn.type = "button";
+      btn.className = "webedit-feature-btn";
+      btn.dataset.tool = def.tool;
+      btn.textContent = def.label;
+    });
+
+    const orderedButtons = buttonDefs
+      .map((def) => controls.querySelector(`#${def.id}`))
+      .filter(Boolean);
+    controls.innerHTML = "";
+    orderedButtons.forEach((btn) => controls.appendChild(btn));
+
+    els.featureButtons = orderedButtons;
+    els.removeBtn = controls.querySelector("#webedit-remove-btn");
+    els.addBtn = controls.querySelector("#webedit-add-btn");
+    els.customizeBtn = controls.querySelector("#webedit-customize-btn");
+  }
+
   // References shown after picking an element should be ephemeral.
   const PICK_REFERENCE_TTL_MS = 8000;
   let pickReferenceDismissTimeout = null;
@@ -1588,6 +1646,7 @@
 
   // Init
   (async () => {
+    ensureFeatureControlsLayout();
     await refreshAuthorization();
     initializeFeatureHandlers();
     setActiveTool("add");

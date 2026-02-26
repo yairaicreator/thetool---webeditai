@@ -132,10 +132,56 @@ async function queryActiveTabInCurrentWindow() {
   });
 }
 
+async function queryActiveTabInLastFocusedWindow() {
+  return new Promise((resolve) => {
+    try {
+      chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+        if (chrome.runtime.lastError) {
+          resolve(null);
+          return;
+        }
+        const activeTab = Array.isArray(tabs) && tabs.length > 0 ? tabs[0] : null;
+        resolve(activeTab?.id ? activeTab : null);
+      });
+    } catch (_) {
+      resolve(null);
+    }
+  });
+}
+
 async function queryBestEditableTabInCurrentWindow() {
   return new Promise((resolve) => {
     try {
       chrome.tabs.query({ currentWindow: true }, (tabs) => {
+        if (chrome.runtime.lastError || !Array.isArray(tabs) || tabs.length === 0) {
+          resolve(null);
+          return;
+        }
+        const candidates = tabs.filter((tab) => tab?.id && !isWebEditDomainUrl(tab.url || ""));
+        if (!candidates.length) {
+          resolve(null);
+          return;
+        }
+        const activeCandidate = candidates.find((tab) => tab.active);
+        if (activeCandidate) {
+          resolve(activeCandidate);
+          return;
+        }
+        const sorted = candidates
+          .slice()
+          .sort((a, b) => Number(b.lastAccessed || 0) - Number(a.lastAccessed || 0));
+        resolve(sorted[0] || null);
+      });
+    } catch (_) {
+      resolve(null);
+    }
+  });
+}
+
+async function queryBestEditableTabAnyWindow() {
+  return new Promise((resolve) => {
+    try {
+      chrome.tabs.query({}, (tabs) => {
         if (chrome.runtime.lastError || !Array.isArray(tabs) || tabs.length === 0) {
           resolve(null);
           return;
@@ -176,10 +222,22 @@ async function resolveTargetTabContext(senderTabId = null) {
     return { tab: activeTab, source: "active-query" };
   }
 
+  const focusedActiveTab = await queryActiveTabInLastFocusedWindow();
+  if (focusedActiveTab?.id && !isWebEditDomainUrl(focusedActiveTab.url || "")) {
+    await storeActiveTabId(focusedActiveTab.id);
+    return { tab: focusedActiveTab, source: "active-last-focused" };
+  }
+
   const bestEditableTab = await queryBestEditableTabInCurrentWindow();
   if (bestEditableTab?.id) {
     await storeActiveTabId(bestEditableTab.id);
     return { tab: bestEditableTab, source: "best-editable" };
+  }
+
+  const bestEditableAnyWindow = await queryBestEditableTabAnyWindow();
+  if (bestEditableAnyWindow?.id) {
+    await storeActiveTabId(bestEditableAnyWindow.id);
+    return { tab: bestEditableAnyWindow, source: "best-editable-any-window" };
   }
 
   const storedTabId = await getStoredActiveTabId();
@@ -195,6 +253,12 @@ async function resolveTargetTabContext(senderTabId = null) {
   if (fallbackActiveTab?.id && !isWebEditDomainUrl(fallbackActiveTab.url || "")) {
     await storeActiveTabId(fallbackActiveTab.id);
     return { tab: fallbackActiveTab, source: "active-query-fallback" };
+  }
+
+  const fallbackFocusedTab = await queryActiveTabInLastFocusedWindow();
+  if (fallbackFocusedTab?.id && !isWebEditDomainUrl(fallbackFocusedTab.url || "")) {
+    await storeActiveTabId(fallbackFocusedTab.id);
+    return { tab: fallbackFocusedTab, source: "active-last-focused-fallback" };
   }
   return { tab: null, source: "none" };
 }
