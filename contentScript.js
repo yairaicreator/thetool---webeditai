@@ -771,12 +771,55 @@ function cssEscapeSafe(value) {
   return String(value || "").replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`);
 }
 
+function normalizeAddPayloadToSpec(payload = {}) {
+  if (!payload || typeof payload !== "object") return null;
+  const directAction = String(payload.action || "").toLowerCase();
+  const looksLikeAddSpec =
+    directAction === "add" ||
+    !!payload.generated_module ||
+    !!payload.featureArtifact ||
+    typeof payload.html === "string" ||
+    typeof payload.content === "string";
+  if (!looksLikeAddSpec) return null;
+
+  const targetSelector =
+    payload.targetSelector ||
+    payload.selector ||
+    payload?.selectors?.anchor ||
+    payload?.rollback?.selector ||
+    null;
+  if (!targetSelector) return null;
+
+  const artifact = payload.featureArtifact || {};
+  const generatedModule = payload.generated_module || {};
+  return {
+    ...payload,
+    action: "add",
+    targetSelector,
+    selector: payload.selector || targetSelector,
+    position: payload.position || payload?.parameters?.position || "inside",
+    html: payload.html || artifact.html || generatedModule.html || "",
+    css: payload.css || artifact.css || generatedModule.css || "",
+    js: payload.js || artifact.js || generatedModule.js || "",
+    generated_module: {
+      ...generatedModule,
+      html: generatedModule.html || artifact.html || payload.html || "",
+      css: generatedModule.css || artifact.css || payload.css || "",
+      js: generatedModule.js || artifact.js || payload.js || "",
+      controller: generatedModule.controller || payload?.controller?.id || null,
+      config: generatedModule.config || payload?.controller?.config || null,
+      stateSchema: generatedModule.stateSchema || payload?.stateSchema || null
+    }
+  };
+}
+
 async function applyAddEdit(editId, payload) {
   if (!editId || !payload || typeof payload !== "object") return false;
 
   // If this is a FeatureSpec-style add (html/css/behavior), apply via FeatureSpecExecutor so interactivity persists.
-  if (payload.action === "add" && window.FeatureSpecExecutor && typeof window.FeatureSpecExecutor.applyFeatureSpec === "function") {
-    const res = await window.FeatureSpecExecutor.applyFeatureSpec(payload, { replay: true, id: editId, skipPersist: true });
+  const addSpec = normalizeAddPayloadToSpec(payload);
+  if (addSpec && window.FeatureSpecExecutor && typeof window.FeatureSpecExecutor.applyFeatureSpec === "function") {
+    const res = await window.FeatureSpecExecutor.applyFeatureSpec(addSpec, { replay: true, id: editId, skipPersist: true });
     if (res?.ok) {
       try {
         const nodes = document.querySelectorAll(`[data-webedit-ai-insert-id="${cssEscapeSafe(editId)}"]`);
@@ -786,6 +829,10 @@ async function applyAddEdit(editId, payload) {
       } catch (_) {}
       return true;
     }
+    console.warn("[WebEdit] Failed to replay add edit via FeatureSpecExecutor", {
+      editId,
+      reason: res?.error || "unknown"
+    });
     return false;
   }
 

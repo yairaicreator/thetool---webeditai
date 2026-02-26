@@ -217,6 +217,7 @@
     const detail = resp?.response?.error || resp?.error || fallback;
     if (!stage) return detail;
     const labels = {
+      auth: "authorization required",
       parse: "parse failure",
       capability: "capability mismatch",
       generation: "generation failed",
@@ -229,6 +230,10 @@
     return `${labels[stage] || stage}: ${detail}`;
   }
 
+  function isFolderIntent(text) {
+    return /folder|organize chat|group chat|chat folder|new folder/i.test(String(text || ""));
+  }
+
   async function buildAddSpecPipeline(promptText, baseContext, previousSpec = null) {
     const anchorSelector = lastPickedTarget?.selector || previousSpec?.targetSelector || previousSpec?.selector || "";
     if (!anchorSelector) {
@@ -238,15 +243,28 @@
     const capabilityResp = await sendToActiveTab({ type: "GET_SITE_CAPABILITIES", selector: anchorSelector });
     const capability = capabilityResp?.response?.capability || null;
     if (!capabilityResp?.response?.ok || !capability) {
-      return { ok: false, stage: "capability", error: capabilityResp?.response?.error || "Capability check failed." };
+      const authLikeError = String(capabilityResp?.error || "").toLowerCase();
+      if (authLikeError.includes("not authorized")) {
+        return { ok: false, stage: "auth", error: "Please sign in before generating Add features." };
+      }
+      return {
+        ok: false,
+        stage: "capability",
+        error: capabilityResp?.response?.error || capabilityResp?.error || "Capability check failed."
+      };
     }
 
     if (capability.recommendation === "simplified_ui_only") {
+      const folderIntent = isFolderIntent(promptText);
+      if (folderIntent && (capability.capabilityScore || 0) >= 30) {
+        // Allow folder flows in DOM-reorganization mode on medium capability pages.
+      } else {
       return {
         ok: false,
         stage: "capability",
         error: "This page cannot safely run a complex generated module. Try a simpler feature or pick a more stable section."
       };
+      }
     }
 
     const planner = window.FeaturePlanner;
@@ -308,6 +326,36 @@
   }
 
   async function ensureRenderableAddSpec(spec, promptText, pageContext = {}, previousSpec = null) {
+    const isDarkModePrompt = /dark mode|night mode|theme/i.test(String(promptText || ""));
+    const isLinkPrompt = /youtube|link|url|hyperlink|open\s+https?:\/\//i.test(String(promptText || ""));
+    const hasDarkModeCoverage = (cssText = "") => {
+      const css = String(cssText || "").toLowerCase();
+      const hasBackground = css.includes("background");
+      const hasTextColor = css.includes("color:");
+      const hasInteractive = /button|input|textarea|select|a\s*\{/.test(css);
+      return hasBackground && hasTextColor && hasInteractive;
+    };
+    const buildLinkFallback = (base = {}) => {
+      const firstUrlMatch = String(promptText || "").match(/https?:\/\/[^\s)]+/i);
+      const href = firstUrlMatch?.[0] || (/youtube|youtu\.be/i.test(String(promptText || "")) ? "https://www.youtube.com/" : "https://example.com/");
+      return {
+        ...base,
+        action: "add",
+        targetSelector: base.targetSelector || base.selector || lastPickedTarget?.selector || "",
+        selector: base.selector || base.targetSelector || lastPickedTarget?.selector || "",
+        position: base.position || "inside",
+        html: `<div data-webedit-generated-module="1" style="border:1px solid #cbd5e1;border-radius:10px;padding:10px;background:#f8fafc;display:flex;align-items:center;gap:8px;">
+          <a href="${href}" target="_blank" rel="noopener noreferrer"
+             style="display:inline-flex;align-items:center;gap:6px;background:#111827;color:#fff;border-radius:8px;padding:6px 10px;text-decoration:none;font-size:13px;font-weight:600;">
+            Open Link
+          </a>
+          <span style="font-size:12px;color:#334155;overflow-wrap:anywhere;">${href}</span>
+        </div>`,
+        css: base.css || "",
+        js: base.js || ""
+      };
+    };
+
     const next = spec ? { ...spec } : null;
     if (!next || next.action !== "add") return { ok: true, spec: next };
     const generatedHtml = next.generated_module?.html || "";
@@ -325,17 +373,33 @@
         contentText.startsWith("feature request:") ||
         contentText === String(promptText || "").trim().toLowerCase();
       if (isPlaceholder) {
+        if (isLinkPrompt) {
+          return { ok: true, spec: buildLinkFallback(next) };
+        }
         return {
           ok: false,
           stage: "generation_quality_failed",
           error: "Generated output is placeholder text, not a functional feature implementation."
         };
       }
+      if (isDarkModePrompt) {
+        const combinedCss = `${next.css || ""}\n${generatedCss || ""}`;
+        if (!hasDarkModeCoverage(combinedCss)) {
+          return {
+            ok: false,
+            stage: "generation_quality_failed",
+            error: "Dark mode output is incomplete. It must update background, text, and interactive surfaces."
+          };
+        }
+      }
       return { ok: true, spec: next };
     }
 
     const rebuilt = await buildAddSpecPipeline(promptText, pageContext, previousSpec || next);
     if (!rebuilt.ok || !rebuilt.spec) {
+      if (isLinkPrompt) {
+        return { ok: true, spec: buildLinkFallback(next || {}) };
+      }
       return { ok: false, stage: rebuilt.stage || "generation", error: rebuilt.error || "Could not generate renderable Add code." };
     }
     return { ok: true, spec: rebuilt.spec };

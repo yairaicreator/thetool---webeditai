@@ -295,6 +295,12 @@ const PreviewLab = (() => {
     if (!bodyEl) return;
     const mount = bodyEl.querySelector(`.webedit-preview-mount`);
     if (mount) mount.innerHTML = "";
+    if (shadowRoot) {
+      const insertedNodes = shadowRoot.querySelectorAll("[data-webedit-ai-insert-id]");
+      insertedNodes.forEach((node) => {
+        try { node.remove(); } catch (_) {}
+      });
+    }
     if (contentStyleEl) {
       contentStyleEl.remove();
       contentStyleEl = null;

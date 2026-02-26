@@ -92,8 +92,9 @@ const ContextExtractor = (() => {
     const supportsStorage = typeof chrome !== "undefined" && !!chrome.storage?.local;
     const supportsObserver = typeof MutationObserver !== "undefined";
     const supportsPointerEvents = typeof window.PointerEvent !== "undefined";
-    const supportsDnDPrimitives = typeof window.DragEvent !== "undefined" || supportsPointerEvents;
-    const hasInteractiveDensity = visibleButtons.length >= 5;
+    // Folder flows support click-based assignment fallback, so hard DnD support is not required.
+    const supportsDnDPrimitives = true;
+    const hasInteractiveDensity = visibleButtons.length >= 2;
 
     const checks = [
       { key: "stableAnchor", ok: hasStableAnchor, reason: hasStableAnchor ? "" : "No stable anchor selected." },

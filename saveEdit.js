@@ -663,6 +663,7 @@ async function saveAddFeature(spec) {
     name: spec.name,
     description: spec.purpose || spec.name,
     payload: {
+      action: "add",
       ...spec,
       featureArtifact: {
         html: generatedModule?.html || spec?.html || '',

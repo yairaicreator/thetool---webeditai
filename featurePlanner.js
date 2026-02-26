@@ -10,6 +10,7 @@ const FeaturePlanner = (() => {
     const text = normalizePrompt(prompt).toLowerCase();
     const reasons = [];
     const score = capability?.capabilityScore || 0;
+    const isFolderRequest = /folder|organize chat|group chat|chat folder|new folder/.test(text);
 
     const crossSurfaceHints = /(sidebar|header|footer|multiple sections|across page|across tabs|cross page|different areas)/i;
     const deepIntegrationHints = /(integrate|sync with|gemini internals|existing app state|server state|api integration|backend)/i;
@@ -18,9 +19,9 @@ const FeaturePlanner = (() => {
 
     if (crossSurfaceHints.test(text)) reasons.push("cross_surface");
     if (deepIntegrationHints.test(text)) reasons.push("requires_internal_api");
-    if (dragDropHints.test(text)) reasons.push("requires_dragdrop");
+    if (dragDropHints.test(text) && !isFolderRequest) reasons.push("requires_dragdrop");
     if (advancedRuntimeHints.test(text)) reasons.push("high_runtime_risk");
-    if (score < 45) reasons.push("low_page_capability");
+    if (score < (isFolderRequest ? 30 : 45)) reasons.push("low_page_capability");
 
     const classification = reasons.length ? "too_complex" : "supported";
     return {
@@ -72,6 +73,33 @@ const FeaturePlanner = (() => {
           background:#0b1220 !important;
           color:#e2e8f0 !important;
         }
+        body.webedit-theme-dark main,
+        body.webedit-theme-dark section,
+        body.webedit-theme-dark article,
+        body.webedit-theme-dark aside,
+        body.webedit-theme-dark nav,
+        body.webedit-theme-dark [role="main"],
+        body.webedit-theme-dark [role="complementary"] {
+          background-color:#0f172a !important;
+          color:#e2e8f0 !important;
+        }
+        body.webedit-theme-dark a,
+        body.webedit-theme-dark p,
+        body.webedit-theme-dark span,
+        body.webedit-theme-dark h1,
+        body.webedit-theme-dark h2,
+        body.webedit-theme-dark h3,
+        body.webedit-theme-dark h4 {
+          color:#e2e8f0 !important;
+        }
+        body.webedit-theme-dark button,
+        body.webedit-theme-dark input,
+        body.webedit-theme-dark textarea,
+        body.webedit-theme-dark select {
+          background:#111827 !important;
+          color:#e5e7eb !important;
+          border-color:#334155 !important;
+        }
       `,
       js: ""
       ,
@@ -83,6 +111,14 @@ const FeaturePlanner = (() => {
     };
   }
 
+  function extractFirstUrl(prompt) {
+    const text = normalizePrompt(prompt);
+    const match = text.match(/https?:\/\/[^\s)]+/i);
+    if (match && match[0]) return match[0];
+    if (/youtube|youtu\.be/i.test(text)) return "https://www.youtube.com/";
+    return "";
+  }
+
   function buildFolderModule(anchorSelector, promptText) {
     const scopeClass = `webedit-folder-module-${Date.now()}`;
     return {
@@ -91,7 +127,7 @@ const FeaturePlanner = (() => {
       html: `
         <section class="${scopeClass}" data-webedit-folder-module="1">
           <div class="${scopeClass}__toolbar">
-            <button type="button" class="${scopeClass}__new">+ Folder</button>
+            <button type="button" class="${scopeClass}__new">New Folder+</button>
           </div>
           <div class="${scopeClass}__columns">
             <div class="${scopeClass}__source-wrap">
@@ -118,6 +154,7 @@ const FeaturePlanner = (() => {
         .${scopeClass}__folder-head { display:flex; align-items:center; justify-content:space-between; gap:6px; padding:7px 8px; }
         .${scopeClass}__folder-toggle { border:none; background:transparent; cursor:pointer; font-weight:600; color:#111827; text-align:left; flex:1; }
         .${scopeClass}__folder-rename { border:none; background:transparent; font-size:12px; color:#2563eb; cursor:pointer; }
+        .${scopeClass}__folder-delete { border:none; background:transparent; font-size:12px; color:#dc2626; cursor:pointer; }
         .${scopeClass}__drop { border-top:1px dashed #cbd5e1; padding:8px; min-height:40px; display:flex; flex-direction:column; gap:6px; }
         .${scopeClass}__drop-empty { color:#94a3b8; font-size:12px; }
         .${scopeClass}__chip { border:1px solid #bfdbfe; border-radius:999px; background:#eff6ff; color:#1e3a8a; padding:4px 8px; font-size:12px; display:inline-flex; width:fit-content; }
@@ -125,6 +162,7 @@ const FeaturePlanner = (() => {
         .webedit-folder-head { display:flex; align-items:center; justify-content:space-between; gap:6px; padding:7px 8px; }
         .webedit-folder-toggle { border:none; background:transparent; cursor:pointer; font-weight:600; color:#111827; text-align:left; flex:1; }
         .webedit-folder-rename { border:none; background:transparent; font-size:12px; color:#2563eb; cursor:pointer; }
+        .webedit-folder-delete { border:none; background:transparent; font-size:12px; color:#dc2626; cursor:pointer; }
         .webedit-folder-drop { border-top:1px dashed #cbd5e1; padding:8px; min-height:40px; display:flex; flex-direction:column; gap:6px; }
         .webedit-folder-drop-empty { color:#94a3b8; font-size:12px; }
         .webedit-folder-source-item { border:1px solid #e5e7eb; border-radius:8px; padding:8px; background:#f9fafb; cursor:grab; }
@@ -155,6 +193,25 @@ const FeaturePlanner = (() => {
     } else if (/folder|organize chat|drag|drop|group chat/.test(text)) {
       featureClass = "folderSystem";
       module = buildFolderModule(anchorSelector, text);
+    } else if (/link|url|youtube|cta|button/.test(text)) {
+      const href = extractFirstUrl(prompt);
+      const safeHref = href || "https://example.com/";
+      featureClass = "linkCard";
+      module = {
+        moduleId: `link-card-${Date.now()}`,
+        title: "Quick Link",
+        html: `
+          <div data-webedit-generated-module="1" style="border:1px solid #cbd5e1;border-radius:10px;padding:10px;background:#f8fafc;display:flex;align-items:center;gap:8px;">
+            <a href="${safeHref}" target="_blank" rel="noopener noreferrer"
+               style="display:inline-flex;align-items:center;gap:6px;background:#111827;color:#fff;border-radius:8px;padding:6px 10px;text-decoration:none;font-size:13px;font-weight:600;">
+              Open Link
+            </a>
+            <span style="font-size:12px;color:#334155;overflow-wrap:anywhere;">${safeHref}</span>
+          </div>
+        `,
+        css: "",
+        js: ""
+      };
     } else {
       module = {
         moduleId: `generic-module-${Date.now()}`,

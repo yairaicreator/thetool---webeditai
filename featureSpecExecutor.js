@@ -277,26 +277,124 @@ function bindControllerForMarker(spec, markerId, root = document, options = {}) 
       try { localStorage.setItem(stateKey, JSON.stringify(state)); } catch (_) {}
     };
 
+    const escapeForSelector = (value) => {
+      try {
+        if (typeof CSS !== "undefined" && typeof CSS.escape === "function") return CSS.escape(String(value));
+      } catch (_) {}
+      return String(value || "").replace(/[^a-zA-Z0-9_-]/g, "\\$&");
+    };
+    const getHostState = () => {
+      if (!host.__webeditFolderState) host.__webeditFolderState = { original: {} };
+      return host.__webeditFolderState;
+    };
     const state = loadState();
-    const seedChats = () => {
-      if (source.children.length > 0) return;
-      const labels = [];
-      const pageChats = Array.from(document.querySelectorAll("a,button,[role='button'],li"))
-        .map((el) => (el.textContent || "").replace(/\s+/g, " ").trim())
-        .filter(Boolean)
-        .slice(0, 8);
-      pageChats.forEach((name) => labels.push(name));
-      if (labels.length === 0) labels.push("Chat 1", "Chat 2", "Chat 3");
-      labels.slice(0, 8).forEach((name, i) => {
+    const hostState = getHostState();
+
+    const assignChatId = (el, index) => {
+      if (!(el instanceof Element)) return "";
+      const existing = el.getAttribute("data-webedit-folder-chat-id");
+      if (existing) return existing;
+      const nextId = `chat-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`;
+      el.setAttribute("data-webedit-folder-chat-id", nextId);
+      return nextId;
+    };
+
+    const collectChatCandidates = () => {
+      const hostExclusion = `[${INSERT_MARKER_ATTR}="${escapeForSelector(markerId)}"]`;
+      const selectors = [
+        "nav a, nav button, nav [role='button']",
+        "aside a, aside button, aside [role='button']",
+        "[aria-label*='chat' i] a, [aria-label*='chat' i] button, [aria-label*='chat' i] [role='button']",
+        "a, button, [role='button']"
+      ];
+      const map = new Map();
+      selectors.forEach((sel) => {
+        safeQueryAll(sel, document).forEach((node) => {
+          if (!(node instanceof Element)) return;
+          if (!isVisibleElement(node)) return;
+          if (node.closest(hostExclusion)) return;
+          const text = (node.textContent || "").replace(/\s+/g, " ").trim();
+          if (!text || text.length < 2) return;
+          if (/new folder\+|rename|delete|undo|apply|refine/i.test(text)) return;
+          const id = assignChatId(node, map.size + 1);
+          if (!id) return;
+          if (!map.has(id)) {
+            map.set(id, { id, text, node });
+          }
+        });
+      });
+      return Array.from(map.values()).slice(0, 30);
+    };
+
+    const rememberOriginalPlacement = (chatId, node) => {
+      if (!chatId || !(node instanceof Element) || hostState.original[chatId]) return;
+      hostState.original[chatId] = {
+        parent: node.parentNode || null,
+        nextSibling: node.nextSibling || null
+      };
+    };
+
+    const restoreToOriginal = (chatId, node) => {
+      const placement = hostState.original[chatId];
+      if (!placement || !(node instanceof Element)) return;
+      const parent = placement.parent;
+      if (!parent) return;
+      try {
+        if (placement.nextSibling && placement.nextSibling.parentNode === parent) {
+          parent.insertBefore(node, placement.nextSibling);
+        } else {
+          parent.appendChild(node);
+        }
+      } catch (_) {}
+    };
+
+    const renderSourceList = (candidates) => {
+      source.innerHTML = "";
+      const assignedSet = new Set(Object.keys(state.assignments || {}));
+      const unassigned = candidates.filter((c) => !assignedSet.has(c.id));
+      if (unassigned.length === 0) {
+        const empty = document.createElement("li");
+        empty.className = "webedit-folder-drop-empty";
+        empty.textContent = "No unassigned chats";
+        source.appendChild(empty);
+        return;
+      }
+      unassigned.forEach((chat) => {
         const item = document.createElement("li");
         item.className = "webedit-folder-source-item";
-        item.textContent = name;
-        item.setAttribute("data-chat-id", `chat-${i + 1}`);
+        item.textContent = chat.text;
+        item.setAttribute("data-chat-id", chat.id);
+        item.style.outline = state.selectedChat === chat.id ? "2px solid #2563eb" : "";
         source.appendChild(item);
       });
     };
 
-    const renderFolders = () => {
+    const moveAssignedNode = (chatId, targetContainer, candidates) => {
+      const chat = candidates.find((c) => c.id === chatId);
+      const node = chat?.node || document.querySelector(`[data-webedit-folder-chat-id="${escapeForSelector(chatId)}"]`);
+      if (!(node instanceof Element) || !(targetContainer instanceof Element)) return false;
+      rememberOriginalPlacement(chatId, node);
+      try {
+        targetContainer.appendChild(node);
+        return true;
+      } catch (_) {
+        return false;
+      }
+    };
+
+    const unassignChat = (chatId, candidates) => {
+      if (!chatId) return;
+      delete state.assignments[chatId];
+      const chat = candidates.find((c) => c.id === chatId);
+      const node = chat?.node || document.querySelector(`[data-webedit-folder-chat-id="${escapeForSelector(chatId)}"]`);
+      if (node instanceof Element) {
+        restoreToOriginal(chatId, node);
+      }
+      saveState(state);
+      renderAll();
+    };
+
+    const renderFolders = (candidates) => {
       folderList.innerHTML = "";
       const folders = Array.isArray(state.folders) ? state.folders : [];
       if (folders.length === 0) {
@@ -318,16 +416,37 @@ function bindControllerForMarker(spec, markerId, root = document, options = {}) 
         toggle.className = "webedit-folder-toggle";
         toggle.textContent = folder.name || "Folder";
         toggle.setAttribute("aria-expanded", folder.expanded ? "true" : "false");
+
+        const actions = document.createElement("div");
+        actions.style.display = "inline-flex";
+        actions.style.gap = "6px";
         const rename = document.createElement("button");
         rename.type = "button";
         rename.className = "webedit-folder-rename";
         rename.textContent = "Rename";
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "webedit-folder-delete";
+        remove.textContent = "Delete";
+        actions.appendChild(rename);
+        actions.appendChild(remove);
         head.appendChild(toggle);
-        head.appendChild(rename);
+        head.appendChild(actions);
 
         const drop = document.createElement("div");
         drop.className = "webedit-folder-drop";
         if (!folder.expanded) drop.style.display = "none";
+
+        const chips = document.createElement("div");
+        chips.style.display = "flex";
+        chips.style.flexWrap = "wrap";
+        chips.style.gap = "6px";
+        const movedNodes = document.createElement("div");
+        movedNodes.setAttribute("data-webedit-folder-real-list", folder.id);
+        movedNodes.style.display = "flex";
+        movedNodes.style.flexDirection = "column";
+        movedNodes.style.gap = "4px";
+
         const assigned = Object.entries(state.assignments || {})
           .filter(([, folderId]) => folderId === folder.id)
           .map(([chatId]) => chatId);
@@ -338,31 +457,52 @@ function bindControllerForMarker(spec, markerId, root = document, options = {}) 
           drop.appendChild(empty);
         } else {
           assigned.forEach((chatId) => {
-            const chip = document.createElement("div");
+            const chat = candidates.find((c) => c.id === chatId);
+            const chip = document.createElement("button");
+            chip.type = "button";
             chip.className = "webedit-folder-chip";
-            const sourceItem = source.querySelector(`[data-chat-id="${CSS.escape(chatId)}"]`);
-            chip.textContent = sourceItem?.textContent || chatId;
-            drop.appendChild(chip);
+            chip.textContent = `${chat?.text || chatId} ×`;
+            chip.title = "Remove from folder";
+            chip.addEventListener("click", (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              unassignChat(chatId, candidates);
+            });
+            chips.appendChild(chip);
+            moveAssignedNode(chatId, movedNodes, candidates);
           });
+          drop.appendChild(chips);
+          drop.appendChild(movedNodes);
         }
 
         toggle.addEventListener("click", () => {
           folder.expanded = !folder.expanded;
           saveState(state);
-          renderFolders();
+          renderAll();
         });
         rename.addEventListener("click", () => {
           const nextName = prompt("Folder name", folder.name || "Folder");
           if (!nextName) return;
           folder.name = nextName.trim();
           saveState(state);
-          renderFolders();
+          renderAll();
+        });
+        remove.addEventListener("click", () => {
+          const removingId = folder.id;
+          Object.entries(state.assignments || {}).forEach(([chatId, folderId]) => {
+            if (folderId === removingId) {
+              unassignChat(chatId, candidates);
+            }
+          });
+          state.folders = state.folders.filter((f) => f.id !== removingId);
+          saveState(state);
+          renderAll();
         });
         drop.addEventListener("click", () => {
           if (!state.selectedChat) return;
           state.assignments[state.selectedChat] = folder.id;
           saveState(state);
-          renderFolders();
+          renderAll();
         });
 
         wrap.appendChild(head);
@@ -371,18 +511,20 @@ function bindControllerForMarker(spec, markerId, root = document, options = {}) 
       });
     };
 
-    seedChats();
+    const renderAll = () => {
+      const candidates = collectChatCandidates();
+      renderSourceList(candidates);
+      renderFolders(candidates);
+    };
+
     source.addEventListener("click", (e) => {
       const target = e.target;
       if (!(target instanceof Element)) return;
       const item = target.closest("[data-chat-id]");
       if (!item) return;
       state.selectedChat = item.getAttribute("data-chat-id") || "";
-      source.querySelectorAll("[data-chat-id]").forEach((el) => {
-        el.style.outline = "";
-      });
-      item.style.outline = "2px solid #2563eb";
       saveState(state);
+      renderAll();
     });
     newButton.addEventListener("click", () => {
       const defaultName = `Folder ${state.folders.length + 1}`;
@@ -392,16 +534,23 @@ function bindControllerForMarker(spec, markerId, root = document, options = {}) 
         expanded: true
       });
       saveState(state);
-      renderFolders();
+      renderAll();
     });
-    renderFolders();
+    renderAll();
   }
 }
 
 function insertNodes(target, nodes, position) {
   const pos = position || "inside";
   if (pos === "inside") {
-    nodes.forEach((n) => target.appendChild(n));
+    // Deterministic "inside": insert at top so repeated previews keep stable placement.
+    nodes.forEach((n) => {
+      if (target.firstChild) {
+        target.insertBefore(n, target.firstChild);
+      } else {
+        target.appendChild(n);
+      }
+    });
     return;
   }
 
@@ -783,12 +932,21 @@ async function applyFeatureSpec(spec, options = {}) {
       const el = targetOverride || pickBestElement(nodes);
       if (!el) return { ok: false, error: `Could not find target for selector: ${targetSel}` };
 
-      // Idempotency: if this spec has already inserted nodes for this id, do not insert again.
+      // If this spec already rendered for this id, remove stale nodes/styles first.
+      // This is required for preview placement changes (before/inside/after/replace).
       const already = safeQueryAll(`[${INSERT_MARKER_ATTR}="${CSS.escape(id)}"]`, root);
       if (already.length > 0) {
-        try { bindBehaviorForMarker(spec, id, root); } catch (_) {}
-        try { bindControllerForMarker(spec, id, root, { preview }); } catch (_) {}
-        return { ok: true, applied: { id, spec, timestamp, replayed: true } };
+        already.forEach((node) => {
+          try {
+            if (node && node.parentNode) node.parentNode.removeChild(node);
+          } catch (_) {}
+        });
+        const styleEls = safeQueryAll(`style[${STYLE_MARKER_ATTR}="${CSS.escape(id)}"]`, root);
+        styleEls.forEach((elStyle) => {
+          try {
+            if (elStyle && elStyle.parentNode) elStyle.parentNode.removeChild(elStyle);
+          } catch (_) {}
+        });
       }
 
       const position = spec.position || "inside";
