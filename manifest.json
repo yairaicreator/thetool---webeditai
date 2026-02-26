@@ -19,6 +19,7 @@
     "https://eqfjkvjwsswjxkmomxax.supabase.co/*",
     "https://webeditai.com/*",
     "https://www.webeditai.com/*",
+    "http://127.0.0.1/*",
     "<all_urls>"
   ],
   "side_panel": {

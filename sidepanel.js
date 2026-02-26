@@ -335,7 +335,7 @@
       return { ok: false, stage: "generation", error: "Feature module generator is not available." };
     }
     // #region agent log
-    fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'dd92ff'},body:JSON.stringify({sessionId:'dd92ff',runId:'normstr-debug-1',hypothesisId:'H1',location:'sidepanel.js:buildAddSpecPipeline:plannerReady',message:'Planner object ready before buildAddSpecFromModule',data:{hasPlanner:!!planner,hasBuild:typeof planner?.buildAddSpecFromModule==='function',hasRoute:typeof planner?.routeFeatureClass==='function',plannerKeys:Object.keys(planner||{}).slice(0,12)},timestamp:Date.now()})}).catch(()=>{});
+    fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'dd92ff'},body:JSON.stringify({sessionId:'dd92ff',runId:'normstr-debug-2',hypothesisId:'H1',location:'sidepanel.js:buildAddSpecPipeline:plannerReady',message:'Planner object ready before buildAddSpecFromModule',data:{hasPlanner:!!planner,hasBuild:typeof planner?.buildAddSpecFromModule==='function',hasRoute:typeof planner?.routeFeatureClass==='function',plannerVersion:String(planner?.__plannerVersion||''),plannerKeys:Object.keys(planner||{}).slice(0,12)},timestamp:Date.now()})}).catch(()=>{});
     // #endregion
 
     const plannerCtx = {
@@ -351,14 +351,14 @@
       : null;
 
     // #region agent log
-    fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'dd92ff'},body:JSON.stringify({sessionId:'dd92ff',runId:'normstr-debug-1',hypothesisId:'H2',location:'sidepanel.js:buildAddSpecPipeline:beforeBuild',message:'Calling buildAddSpecFromModule',data:{traceId:resolvedTraceId,forcedFeatureClass:String(forcedFeatureClass||''),anchorSelector:String(anchorSelector||'')},timestamp:Date.now()})}).catch(()=>{});
+    fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'dd92ff'},body:JSON.stringify({sessionId:'dd92ff',runId:'normstr-debug-2',hypothesisId:'H2',location:'sidepanel.js:buildAddSpecPipeline:beforeBuild',message:'Calling buildAddSpecFromModule',data:{traceId:resolvedTraceId,forcedFeatureClass:String(forcedFeatureClass||''),anchorSelector:String(anchorSelector||'')},timestamp:Date.now()})}).catch(()=>{});
     // #endregion
     let built;
     try {
       built = planner.buildAddSpecFromModule(promptText, plannerCtx, capability, { forcedFeatureClass });
     } catch (error) {
       // #region agent log
-      fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'dd92ff'},body:JSON.stringify({sessionId:'dd92ff',runId:'normstr-debug-1',hypothesisId:'H3',location:'sidepanel.js:buildAddSpecPipeline:buildError',message:'buildAddSpecFromModule threw',data:{traceId:resolvedTraceId,errorName:String(error?.name||''),errorMessage:String(error?.message||''),stackTop:String(error?.stack||'').split('\n').slice(0,4).join(' | ')},timestamp:Date.now()})}).catch(()=>{});
+      fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'dd92ff'},body:JSON.stringify({sessionId:'dd92ff',runId:'normstr-debug-2',hypothesisId:'H3',location:'sidepanel.js:buildAddSpecPipeline:buildError',message:'buildAddSpecFromModule threw',data:{traceId:resolvedTraceId,errorName:String(error?.name||''),errorMessage:String(error?.message||''),stackTop:String(error?.stack||'').split('\n').slice(0,4).join(' | ')},timestamp:Date.now()})}).catch(()=>{});
       // #endregion
       return {
         ok: false,
@@ -1618,7 +1618,7 @@
         thinking.content = "✅ Preview ready. Review and click Apply.";
       } catch (e) {
         // #region agent log
-        fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'dd92ff'},body:JSON.stringify({sessionId:'dd92ff',runId:'normstr-debug-1',hypothesisId:'H5',location:'sidepanel.js:handleSend:addCatch',message:'Add flow failed in handleSend catch',data:{errorName:String(e?.name||''),errorMessage:String(e?.message||''),stackTop:String(e?.stack||'').split('\n').slice(0,4).join(' | '),hasPickedSelector:!!lastPickedTarget?.selector},timestamp:Date.now()})}).catch(()=>{});
+        fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'dd92ff'},body:JSON.stringify({sessionId:'dd92ff',runId:'normstr-debug-2',hypothesisId:'H5',location:'sidepanel.js:handleSend:addCatch',message:'Add flow failed in handleSend catch',data:{errorName:String(e?.name||''),errorMessage:String(e?.message||''),stackTop:String(e?.stack||'').split('\n').slice(0,4).join(' | '),hasPickedSelector:!!lastPickedTarget?.selector},timestamp:Date.now()})}).catch(()=>{});
         // #endregion
         console.error("[Add Feature] Spec preview failed:", e);
         thinking.content = `❌ I couldn't generate a preview.\nReason: ${e.message || "Unknown error"}`;
