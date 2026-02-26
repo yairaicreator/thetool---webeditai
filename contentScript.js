@@ -808,6 +808,23 @@ function cssEscapeSafe(value) {
   return String(value || "").replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`);
 }
 
+const GEMINI_FOLDER_CONTROLLER_ID = "folderGeminiController";
+
+function isFolderGeminiController(controllerId) {
+  return String(controllerId || "").trim().toLowerCase() === GEMINI_FOLDER_CONTROLLER_ID.toLowerCase();
+}
+
+function serializeReplayError(errorLike) {
+  if (!errorLike) return "unknown";
+  if (typeof errorLike === "string") return errorLike;
+  if (errorLike instanceof Error) return errorLike.message || String(errorLike);
+  try {
+    return JSON.stringify(errorLike);
+  } catch (_) {
+    return String(errorLike);
+  }
+}
+
 function normalizeAddPayloadToSpec(payload = {}) {
   if (!payload || typeof payload !== "object") return null;
   const directAction = String(payload.action || "").toLowerCase();
@@ -866,7 +883,7 @@ async function applyAddEdit(editId, payload) {
       } catch (_) {}
       return true;
     }
-    const reason = String(res?.error || "unknown");
+    const reason = serializeReplayError(res?.error);
     console.info(`[WebEdit] FeatureSpec replay unavailable for edit ${editId}; using legacy fallback. reason=${reason}`);
     // Fallback keeps older/partial payloads visible instead of disappearing.
     const fallback = injectFeatureCard({ ...(payload || {}), editId });
@@ -2241,7 +2258,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             const isCloudOnlyGeminiFolder =
               String(specToApply?.metadata?.persistenceMode || "").toLowerCase() === "cloud_only" ||
               String(specToApply?.metadata?.featureClass || "").toLowerCase() === "gemini-folder" ||
-              String(specToApply?.generated_module?.controller || "").toLowerCase() === "foldergeminicontroller";
+              isFolderGeminiController(specToApply?.generated_module?.controller);
             if (!isCloudOnlyGeminiFolder) {
               await store.addCommittedFeature(result.record);
             }

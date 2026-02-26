@@ -73,6 +73,12 @@ function getClient() {
   return null;
 }
 
+const GEMINI_FOLDER_CONTROLLER_ID = "folderGeminiController";
+
+function isFolderGeminiController(controllerId) {
+  return String(controllerId || "").trim().toLowerCase() === GEMINI_FOLDER_CONTROLLER_ID.toLowerCase();
+}
+
 /**
  * Get Auth Token and User ID
  */
@@ -646,6 +652,7 @@ async function saveAddFeature(spec) {
   const selector = spec?.selector;
   const targetElement = selector ? querySelectorSafe(selector) : null;
   const generatedModule = spec?.generated_module || {};
+  const isGeminiFolderController = isFolderGeminiController(generatedModule?.controller);
   const metadataContext = {
     editType: 'add',
     payload: spec,
@@ -667,8 +674,8 @@ async function saveAddFeature(spec) {
       ...spec,
       metadata: {
         ...(spec?.metadata || {}),
-        featureClass: (generatedModule?.controller === "folderGeminiController" ? "gemini-folder" : (spec?.metadata?.featureClass || null)),
-        persistenceMode: (generatedModule?.controller === "folderGeminiController" ? "cloud_only" : (spec?.metadata?.persistenceMode || null))
+        featureClass: (isGeminiFolderController ? "gemini-folder" : (spec?.metadata?.featureClass || null)),
+        persistenceMode: (isGeminiFolderController ? "cloud_only" : (spec?.metadata?.persistenceMode || null))
       },
       featureArtifact: {
         html: generatedModule?.html || spec?.html || '',
