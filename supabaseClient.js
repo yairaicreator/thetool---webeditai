@@ -16,9 +16,6 @@ const REFRESH_MIN_INTERVAL_MS = 5000;
 const refreshInFlightByToken = new Map();
 const refreshLastAttemptByToken = new Map();
 let refreshCooldownUntil = 0;
-// #region agent log
-fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e76c3f'},body:JSON.stringify({sessionId:'e76c3f',runId:'auth-debug-1',hypothesisId:'H0',location:'supabaseClient.js:top-level',message:'supabaseClient loaded',data:{href:typeof location!=='undefined'?location.href:'n/a'},timestamp:Date.now()})}).catch(()=>{});
-// #endregion
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY || SUPABASE_URL.includes("YOUR_SUPABASE_URL")) {
   console.warn("⚠️ WebEdit AI: Supabase URL or Anon Key is missing. Edits will not be saved.");
@@ -198,17 +195,11 @@ const SupabaseClient = {
   fetchAuthUser,
 
   async refreshSession(refreshToken) {
-    // #region agent log
-    fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e76c3f'},body:JSON.stringify({sessionId:'e76c3f',runId:'auth-debug-1',hypothesisId:'H1',location:'supabaseClient.js:refreshSession:entry',message:'refreshSession called',data:{hasRefreshToken:!!refreshToken,inFlightSize:refreshInFlightByToken.size,cooldownActive:Date.now()<refreshCooldownUntil},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     if (!refreshToken) {
       return { data: { session: null }, error: 'Missing refresh token' };
     }
     const existingRefresh = refreshInFlightByToken.get(refreshToken);
     if (existingRefresh) {
-      // #region agent log
-      fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e76c3f'},body:JSON.stringify({sessionId:'e76c3f',runId:'auth-debug-1',hypothesisId:'H1',location:'supabaseClient.js:refreshSession:reuse',message:'refreshSession reused in-flight promise',data:{inFlightSize:refreshInFlightByToken.size},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       return existingRefresh;
     }
     const now = Date.now();
@@ -245,9 +236,6 @@ const SupabaseClient = {
       if (!response.ok || !payload) {
         const msg = payload?.msg || payload?.error_description || payload?.error || response.statusText;
         const errorText = String(msg || "");
-        // #region agent log
-        fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e76c3f'},body:JSON.stringify({sessionId:'e76c3f',runId:'auth-debug-1',hypothesisId:'H1',location:'supabaseClient.js:refreshSession:nonOk',message:'refreshSession failed response',data:{status:response.status,hasPayload:!!payload,errorText:errorText.slice(0,120)},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
         const isInvalidRefresh = (
           response.status === 400 ||
           response.status === 401 ||
@@ -281,9 +269,6 @@ const SupabaseClient = {
 
       refreshCooldownUntil = 0;
       await this.setSession(session);
-      // #region agent log
-      fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e76c3f'},body:JSON.stringify({sessionId:'e76c3f',runId:'auth-debug-1',hypothesisId:'H1',location:'supabaseClient.js:refreshSession:success',message:'refreshSession succeeded',data:{hasAccessToken:!!session.access_token,hasRefreshToken:!!session.refresh_token,expiresAt:session.expires_at||null},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       return { data: { session }, error: null };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -306,17 +291,11 @@ const SupabaseClient = {
     return new Promise((resolve) => {
       chrome.storage.local.get([SESSION_STORAGE_KEY], (result) => {
         const session = result[SESSION_STORAGE_KEY] || null;
-        // #region agent log
-        fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e76c3f'},body:JSON.stringify({sessionId:'e76c3f',runId:'auth-debug-1',hypothesisId:'H1',location:'supabaseClient.js:getSession:loaded',message:'getSession loaded storage value',data:{allowRefresh,hasSession:!!session,expiresAt:session?.expires_at||null,hasRefreshToken:!!session?.refresh_token,isExpired:!!(session&&this.isSessionExpired(session))},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
         const email = session?.user?.email;
         console.log(email ? `🔐 [SupabaseClient] Loaded session for ${email}` : "🔐 [SupabaseClient] No stored session");
 
         // Auto-refresh expired sessions so SaveEdit can write to Supabase.
         if (allowRefresh && session && this.isSessionExpired(session) && session.refresh_token) {
-          // #region agent log
-          fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e76c3f'},body:JSON.stringify({sessionId:'e76c3f',runId:'auth-debug-1',hypothesisId:'H1',location:'supabaseClient.js:getSession:refreshBranch',message:'getSession entering refresh branch',data:{allowRefresh,hasSession:true,isExpired:true,hasRefreshToken:true},timestamp:Date.now()})}).catch(()=>{});
-          // #endregion
           console.log("🔄 [SupabaseClient] Session expired; attempting refresh...");
           this.refreshSession(session.refresh_token).then((res) => {
             resolve(res?.data?.session ? res : { data: { session: null }, error: res?.error || null });

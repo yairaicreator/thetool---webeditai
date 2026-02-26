@@ -1,0 +1,5 @@
+1. Don't try to execute the same thing more then 3 times. When that happens tell to switch strategy
+2. Never connect between the Auth aspect of the extension and the features in the extension.
+3. Always explain plans in plain English for a non-technical founder before writing code.
+4. If a session is found, setLoading(false) must be called immediately.
+5. Use @Codebase to find files; do not guess file names.

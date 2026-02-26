@@ -2,10 +2,6 @@
 // Returns {feature_type, targetSelector, parameters, confidence, warnings}
 
 const FeaturePlanner = (() => {
-  const __WEBEDIT_PLANNER_VERSION = "planner-v2026-02-10-normalizePlannerString";
-  // #region agent log
-  fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'dd92ff'},body:JSON.stringify({sessionId:'dd92ff',runId:'normstr-debug-2',hypothesisId:'H6',location:'featurePlanner.js:moduleInit',message:'FeaturePlanner module evaluated',data:{plannerVersion:__WEBEDIT_PLANNER_VERSION,href:String(location.href||''),legacyNormalizeStringType:typeof normalizeString},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
   function normalizePrompt(prompt) {
     return String(prompt || "").trim();
   }
@@ -245,14 +241,8 @@ const FeaturePlanner = (() => {
     const text = normalizePrompt(prompt).toLowerCase();
     const anchorSelector = context?.selector || context?.anchorElement?.selector || "";
     const warnings = [];
-    // #region agent log
-    fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'dd92ff'},body:JSON.stringify({sessionId:'dd92ff',runId:'normstr-debug-1',hypothesisId:'H4',location:'featurePlanner.js:generateModuleArtifacts:entry',message:'Entered generateModuleArtifacts',data:{hasAnchor:!!anchorSelector,forcedClassRaw:String(options?.forcedFeatureClass||''),hasNormalizePlannerString:typeof normalizePlannerString==='function',legacyNormalizeStringType:typeof normalizeString},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     const forcedClass = normalizePlannerString(options?.forcedFeatureClass || "");
     const routedClass = routeFeatureClass(prompt, context, capability);
-    // #region agent log
-    fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'dd92ff'},body:JSON.stringify({sessionId:'dd92ff',runId:'normstr-debug-1',hypothesisId:'H4',location:'featurePlanner.js:generateModuleArtifacts:classRouting',message:'Resolved feature classes in generateModuleArtifacts',data:{forcedClass:String(forcedClass||''),routedClass:String(routedClass||'')},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     let featureClass = forcedClass || routedClass || "genericAdd";
     let module = null;
 
@@ -448,7 +438,7 @@ const FeaturePlanner = (() => {
     return { feature_type, targetSelector, parameters, confidence, warnings };
   }
 
-  return { plan, generateModuleArtifacts, buildAddSpecFromModule, classifyComplexity, proposeDecompositionSteps, routeFeatureClass, __plannerVersion: __WEBEDIT_PLANNER_VERSION };
+  return { plan, generateModuleArtifacts, buildAddSpecFromModule, classifyComplexity, proposeDecompositionSteps, routeFeatureClass };
 })();
 
 if (typeof window !== "undefined") {

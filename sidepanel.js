@@ -2,9 +2,6 @@
 // Implements the full panel UI and relays actions to the active tab content script.
 
 (() => {
-  // #region agent log
-  fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'dd92ff'},body:JSON.stringify({sessionId:'dd92ff',runId:'normstr-debug-1',hypothesisId:'H0',location:'sidepanel.js:iifeStart',message:'Sidepanel script initialized',data:{href:String(location.href||'')},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
   const els = {
     headerHamburger: document.getElementById("webedit-header-hamburger"),
     homeBtn: document.getElementById("webedit-home-btn"),
@@ -290,6 +287,55 @@
     return `add-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   }
 
+  async function buildAddSpecViaAiFallback(promptText, baseContext, anchorSelector, traceId = "") {
+    const aiClient = window.SupabaseClient;
+    if (!aiClient || typeof aiClient.generateFeatureSpec !== "function") {
+      return {
+        ok: false,
+        stage: "generation",
+        error: "Fallback generator is unavailable. Please reload the extension.",
+        traceId
+      };
+    }
+
+    const aiContext = {
+      ...(baseContext || {}),
+      selector: anchorSelector,
+      targetSelector: anchorSelector,
+      anchorElement: lastPickedTarget || undefined
+    };
+    const aiResp = await aiClient.generateFeatureSpec(promptText, aiContext);
+    if (!aiResp?.ok || !aiResp?.spec) {
+      return {
+        ok: false,
+        stage: "generation",
+        error: aiResp?.error || "Fallback generation failed.",
+        traceId
+      };
+    }
+
+    const spec = { ...(aiResp.spec || {}) };
+    if (spec.action !== "add") {
+      spec.action = "add";
+      if (!spec.content) spec.content = String(promptText || "").trim();
+    }
+    spec.targetSelector = anchorSelector;
+    if (!spec.selector) spec.selector = anchorSelector;
+
+    const generatedHtml = spec.generated_module?.html || "";
+    if ((!spec.html || !String(spec.html).trim()) && generatedHtml) {
+      spec.html = generatedHtml;
+    }
+
+    spec.metadata = {
+      ...(spec.metadata || {}),
+      stage: "generation-fallback",
+      traceId
+    };
+
+    return { ok: true, spec, traceId };
+  }
+
   async function buildAddSpecPipeline(promptText, baseContext, previousSpec = null, traceId = "") {
     const anchorSelector = lastPickedTarget?.selector || previousSpec?.targetSelector || previousSpec?.selector || "";
     if (!anchorSelector) {
@@ -332,11 +378,10 @@
 
     const planner = window.FeaturePlanner;
     if (!planner || typeof planner.buildAddSpecFromModule !== "function") {
-      return { ok: false, stage: "generation", error: "Feature module generator is not available." };
+      const fallback = await buildAddSpecViaAiFallback(promptText, baseContext, anchorSelector, resolvedTraceId);
+      if (fallback.ok) return { ...fallback, capability, domContext, traceId: resolvedTraceId };
+      return { ok: false, stage: "generation", error: fallback.error || "Feature module generator is not available." };
     }
-    // #region agent log
-    fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'dd92ff'},body:JSON.stringify({sessionId:'dd92ff',runId:'normstr-debug-2',hypothesisId:'H1',location:'sidepanel.js:buildAddSpecPipeline:plannerReady',message:'Planner object ready before buildAddSpecFromModule',data:{hasPlanner:!!planner,hasBuild:typeof planner?.buildAddSpecFromModule==='function',hasRoute:typeof planner?.routeFeatureClass==='function',plannerVersion:String(planner?.__plannerVersion||''),plannerKeys:Object.keys(planner||{}).slice(0,12)},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
 
     const plannerCtx = {
       ...(baseContext || {}),
@@ -350,16 +395,15 @@
       ? planner.routeFeatureClass(promptText, plannerCtx, capability)
       : null;
 
-    // #region agent log
-    fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'dd92ff'},body:JSON.stringify({sessionId:'dd92ff',runId:'normstr-debug-2',hypothesisId:'H2',location:'sidepanel.js:buildAddSpecPipeline:beforeBuild',message:'Calling buildAddSpecFromModule',data:{traceId:resolvedTraceId,forcedFeatureClass:String(forcedFeatureClass||''),anchorSelector:String(anchorSelector||'')},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     let built;
     try {
       built = planner.buildAddSpecFromModule(promptText, plannerCtx, capability, { forcedFeatureClass });
     } catch (error) {
-      // #region agent log
-      fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'dd92ff'},body:JSON.stringify({sessionId:'dd92ff',runId:'normstr-debug-2',hypothesisId:'H3',location:'sidepanel.js:buildAddSpecPipeline:buildError',message:'buildAddSpecFromModule threw',data:{traceId:resolvedTraceId,errorName:String(error?.name||''),errorMessage:String(error?.message||''),stackTop:String(error?.stack||'').split('\n').slice(0,4).join(' | ')},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
+      const msg = String(error?.message || "");
+      if (/normalizeString is not defined/i.test(msg)) {
+        const fallback = await buildAddSpecViaAiFallback(promptText, plannerCtx, anchorSelector, resolvedTraceId);
+        if (fallback.ok) return { ...fallback, capability, domContext, traceId: resolvedTraceId };
+      }
       return {
         ok: false,
         stage: "generation",
@@ -1617,9 +1661,6 @@
         });
         thinking.content = "✅ Preview ready. Review and click Apply.";
       } catch (e) {
-        // #region agent log
-        fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'dd92ff'},body:JSON.stringify({sessionId:'dd92ff',runId:'normstr-debug-2',hypothesisId:'H5',location:'sidepanel.js:handleSend:addCatch',message:'Add flow failed in handleSend catch',data:{errorName:String(e?.name||''),errorMessage:String(e?.message||''),stackTop:String(e?.stack||'').split('\n').slice(0,4).join(' | '),hasPickedSelector:!!lastPickedTarget?.selector},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
         console.error("[Add Feature] Spec preview failed:", e);
         thinking.content = `❌ I couldn't generate a preview.\nReason: ${e.message || "Unknown error"}`;
       }
