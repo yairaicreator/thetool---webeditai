@@ -182,8 +182,21 @@
   }
 
   async function sendToActiveTab(payload) {
+    const commandType = String(payload?.type || "");
+    const stateChangingCommands = new Set([
+      "COMMIT_FEATURE_SPEC",
+      "COMMIT_FEATURE",
+      "APPLY_STYLES",
+      "REMOVE_ELEMENT",
+      "UNDO_LAST",
+      "REDO_LAST",
+      "UNDO_BY_ID",
+      "RESET_STYLES"
+    ]);
+    const shouldUseStrongAuthRefresh = stateChangingCommands.has(commandType);
+
     if (!isAuthenticated()) {
-      await refreshAuthorization();
+      await refreshAuthorization({ forceRefresh: shouldUseStrongAuthRefresh });
       if (!isAuthenticated()) {
         return { ok: false, stage: "auth", error: "Not authorized" };
       }
@@ -199,7 +212,7 @@
         responseError.includes("not authorized") ||
         directError.includes("not authorized");
       if (isAuthError) {
-        await refreshAuthorization();
+        await refreshAuthorization({ forceRefresh: true });
         if (isAuthenticated()) {
           // One retry after auth refresh for transient session desync.
           resp = await chrome.runtime.sendMessage({
@@ -1055,14 +1068,15 @@
     });
   }
 
-  async function refreshAuthorization() {
+  async function refreshAuthorization(options = {}) {
     const client = window.SupabaseClient;
     let session = null;
     let user = null;
+    const forceRefresh = !!options?.forceRefresh;
 
     try {
       if (client?.getSession) {
-        const sessionResp = await client.getSession({ allowRefresh: false });
+        const sessionResp = await client.getSession({ allowRefresh: forceRefresh });
         session = sessionResp?.data?.session || null;
       }
     } catch (_) {
@@ -1075,6 +1089,9 @@
         user = authResp?.ok ? authResp.user : null;
       } else {
         user = session?.user || null;
+      }
+      if (!user && session?.user) {
+        user = session.user;
       }
     } catch (_) {
       user = null;

@@ -442,6 +442,10 @@ function setAuthState(nextState, email = null) {
   authStateCheckedAt = Date.now();
 }
 
+function authWaitMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
+}
+
 async function resolveAuthorizationState(force = false) {
   const now = Date.now();
   if (!force && authStateCheckedAt && (now - authStateCheckedAt) < AUTH_STATE_TTL_MS) {
@@ -456,7 +460,7 @@ async function resolveAuthorizationState(force = false) {
 
   let session = null;
   try {
-    const sessionResp = await client.getSession({ allowRefresh: false });
+    const sessionResp = await client.getSession({ allowRefresh: force });
     session = sessionResp?.data?.session || null;
   } catch (_) {
     session = null;
@@ -2041,7 +2045,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message?.type === "WEBEDIT_SIDEPANEL_COMMAND") {
     (async () => {
-      const authorized = await isAuthenticated();
+      let authorized = await isAuthenticated();
+      if (!authorized) {
+        // Brief grace window for auth propagation after recent sign-in/refresh.
+        await authWaitMs(220);
+        authorized = await isAuthenticated(true);
+      }
       if (!authorized) {
         stopPickMode();
         stopRemoveMode();

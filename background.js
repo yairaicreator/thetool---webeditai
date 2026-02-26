@@ -282,6 +282,21 @@ async function shouldDeferPageMessaging(tab) {
   };
 }
 
+function isUnsupportedMessagingUrl(url) {
+  if (!url) return false;
+  const value = String(url).toLowerCase();
+  return value.startsWith("chrome://") ||
+    value.startsWith("chrome-extension://") ||
+    value.startsWith("edge://") ||
+    value.startsWith("about:") ||
+    value.startsWith("devtools://") ||
+    value.startsWith("view-source:");
+}
+
+function waitMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
+}
+
 async function sendMessageToTab(tabId, message) {
   return new Promise((resolve) => {
     try {
@@ -322,6 +337,54 @@ const MANIFEST_MANAGED_SCRIPT_FILES = new Set([
   "messages.js",
   "contentScript.js"
 ]);
+
+async function resolveReadyTabContext(senderTabId = null) {
+  const retryDelays = [120, 260, 420];
+  let lastPingError = "";
+
+  for (let i = 0; i < retryDelays.length; i += 1) {
+    const tabContext = await resolveTargetTabContext(senderTabId);
+    const tab = tabContext?.tab || null;
+    if (!tab?.id) {
+      await waitMs(retryDelays[i]);
+      continue;
+    }
+    if (isUnsupportedMessagingUrl(tab.url || "")) {
+      return {
+        ok: false,
+        error: "This page type cannot be edited. Open a regular website tab and try again."
+      };
+    }
+
+    const deferState = await shouldDeferPageMessaging(tab);
+    if (deferState.defer) {
+      return { ok: false, error: deferState.error };
+    }
+
+    const ping = await pingTab(tab.id);
+    if (ping.ok) {
+      return { ok: true, tabContext };
+    }
+
+    lastPingError = String(ping.error || "");
+    const shouldRetry =
+      lastPingError.includes("Receiving end does not exist") ||
+      lastPingError.includes("The message port closed before a response was received");
+    if (!shouldRetry) {
+      return {
+        ok: false,
+        error: ping.error || "Failed to contact page context."
+      };
+    }
+
+    await waitMs(retryDelays[i]);
+  }
+
+  return {
+    ok: false,
+    error: "Page script context is still initializing. Wait a moment and try again."
+  };
+}
 
 // Message relay: sidepanel.js -> background.js -> contentScript.js (active tab)
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -379,28 +442,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === "WEBEDIT_SIDEPANEL_COMMAND") {
     (async () => {
-      const tabContext = await resolveTargetTabContext(sender?.tab?.id || null);
-      const tabId = tabContext?.tab?.id || null;
-      if (!tabId) {
-        sendResponse({ ok: false, error: "No active tab found" });
-        return;
-      }
-
-      const deferState = await shouldDeferPageMessaging(tabContext.tab);
-      if (deferState.defer) {
-        sendResponse({ ok: false, error: deferState.error });
-        return;
-      }
-
-      // PING first; inject runtime if missing; then retry command once.
-      const ping = await pingTab(tabId);
-      if (!ping.ok && typeof ping.error === "string" && ping.error.includes("Receiving end does not exist")) {
+      const resolved = await resolveReadyTabContext(sender?.tab?.id || null);
+      if (!resolved?.ok || !resolved?.tabContext?.tab?.id) {
         sendResponse({
           ok: false,
-          error: "Page script context is unavailable. Reload the page, then try again."
+          error: resolved?.error || "No active tab found"
         });
         return;
       }
+      const tabId = resolved.tabContext.tab.id;
 
       const relayResult = await sendMessageToTab(tabId, {
         type: "WEBEDIT_SIDEPANEL_COMMAND",
