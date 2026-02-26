@@ -236,8 +236,14 @@ const FeaturePlanner = (() => {
     const text = normalizePrompt(prompt).toLowerCase();
     const anchorSelector = context?.selector || context?.anchorElement?.selector || "";
     const warnings = [];
+    // #region agent log
+    fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'dd92ff'},body:JSON.stringify({sessionId:'dd92ff',runId:'normstr-debug-1',hypothesisId:'H4',location:'featurePlanner.js:generateModuleArtifacts:entry',message:'Entered generateModuleArtifacts',data:{hasAnchor:!!anchorSelector,forcedClassRaw:String(options?.forcedFeatureClass||''),hasNormalizePlannerString:typeof normalizePlannerString==='function',legacyNormalizeStringType:typeof normalizeString},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     const forcedClass = normalizePlannerString(options?.forcedFeatureClass || "");
     const routedClass = routeFeatureClass(prompt, context, capability);
+    // #region agent log
+    fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'dd92ff'},body:JSON.stringify({sessionId:'dd92ff',runId:'normstr-debug-1',hypothesisId:'H4',location:'featurePlanner.js:generateModuleArtifacts:classRouting',message:'Resolved feature classes in generateModuleArtifacts',data:{forcedClass:String(forcedClass||''),routedClass:String(routedClass||'')},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     let featureClass = forcedClass || routedClass || "genericAdd";
     let module = null;
 
