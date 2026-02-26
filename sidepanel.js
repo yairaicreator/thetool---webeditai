@@ -223,10 +223,28 @@
       }
       if (!resp?.ok) {
         const errorText = String(resp?.error || "unknown");
+        const isTransientRuntimeIssue =
+          errorText.includes("Page is still initializing") ||
+          errorText.includes("Receiving end does not exist");
+        if (isTransientRuntimeIssue) {
+          // One light client-side retry to smooth SW/content-script startup races.
+          await new Promise((resolve) => setTimeout(resolve, 260));
+          const retryResp = await chrome.runtime.sendMessage({
+            type: "WEBEDIT_SIDEPANEL_COMMAND",
+            payload
+          });
+          if (retryResp?.ok) {
+            resp = retryResp;
+          }
+        }
+      }
+      if (!resp?.ok) {
+        const errorText = String(resp?.error || "unknown");
         const isTabContextIssue =
           errorText.includes("No active tab found") ||
           errorText.includes("Authentication in progress on webeditai.com") ||
-          errorText.includes("You're currently on webeditai.com");
+          errorText.includes("You're currently on webeditai.com") ||
+          errorText.includes("Page is still initializing");
         if (isTabContextIssue) {
           showNotificationInChat(errorText);
         } else {

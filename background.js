@@ -297,6 +297,18 @@ function waitMs(ms) {
   return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
 }
 
+async function probeTabScriptability(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => true
+    });
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error?.message || String(error) };
+  }
+}
+
 async function sendMessageToTab(tabId, message) {
   return new Promise((resolve) => {
     try {
@@ -339,7 +351,7 @@ const MANIFEST_MANAGED_SCRIPT_FILES = new Set([
 ]);
 
 async function resolveReadyTabContext(senderTabId = null) {
-  const retryDelays = [120, 260, 420];
+  const retryDelays = [150, 300, 500, 800];
   let lastPingError = "";
 
   for (let i = 0; i < retryDelays.length; i += 1) {
@@ -380,9 +392,35 @@ async function resolveReadyTabContext(senderTabId = null) {
     await waitMs(retryDelays[i]);
   }
 
+  // Secondary readiness probe: tab can be scriptable before content script responds to PING.
+  const tabContext = await resolveTargetTabContext(senderTabId);
+  const tab = tabContext?.tab || null;
+  if (tab?.id) {
+    if (isUnsupportedMessagingUrl(tab.url || "")) {
+      return {
+        ok: false,
+        error: "This page type cannot be edited. Open a regular website tab and try again."
+      };
+    }
+    const deferState = await shouldDeferPageMessaging(tab);
+    if (deferState.defer) {
+      return { ok: false, error: deferState.error };
+    }
+
+    const probe = await probeTabScriptability(tab.id);
+    if (probe.ok) {
+      await waitMs(220);
+      const pingAfterProbe = await pingTab(tab.id);
+      if (pingAfterProbe.ok) {
+        return { ok: true, tabContext };
+      }
+      lastPingError = String(pingAfterProbe.error || lastPingError || "");
+    }
+  }
+
   return {
     ok: false,
-    error: "Page script context is still initializing. Wait a moment and try again."
+    error: "Page is still initializing. Please try again in a moment."
   };
 }
 
@@ -456,6 +494,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         type: "WEBEDIT_SIDEPANEL_COMMAND",
         payload: message.payload || {}
       });
+      if (!relayResult.ok && typeof relayResult.error === "string" && relayResult.error.includes("Receiving end does not exist")) {
+        // One internal retry for transient runtime startup races.
+        await waitMs(180);
+        const retryResolved = await resolveReadyTabContext(sender?.tab?.id || null);
+        const retryTabId = retryResolved?.ok ? retryResolved?.tabContext?.tab?.id : null;
+        if (retryTabId) {
+          const retryRelay = await sendMessageToTab(retryTabId, {
+            type: "WEBEDIT_SIDEPANEL_COMMAND",
+            payload: message.payload || {}
+          });
+          if (retryRelay.ok) {
+            sendResponse({ ok: true, response: retryRelay.response || null });
+            return;
+          }
+        }
+      }
       if (!relayResult.ok) {
         sendResponse({ ok: false, error: relayResult.error || "Failed to deliver command to tab" });
         return;

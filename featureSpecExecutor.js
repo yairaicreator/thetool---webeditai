@@ -9,6 +9,7 @@ const BOUND_MARKER_ATTR = "data-webedit-ai-bound";
 const TOGGLE_STATE_PREFIX = "webeditAiToggleState::";
 const CONTROLLER_STATE_PREFIX = "webeditAiControllerState::";
 const behaviorRegistry = new Map(); // markerId -> behavior
+const controllerInstanceRegistry = new Map(); // controller+scope+marker -> host
 let delegatedBehaviorHandlerInstalled = false;
 const delegatedBehaviorRoots = new WeakSet();
 const FEATURE_SPEC_SCHEMA_VERSION = "2";
@@ -204,6 +205,17 @@ function bindControllerForMarker(spec, markerId, root = document, options = {}) 
   const containers = safeQueryAll(`[${INSERT_MARKER_ATTR}="${CSS.escape(markerId)}"]`, root);
   const host = containers[0] || null;
   if (!host) return;
+  const controllerKey = `${controller}::${scopeKey}::${markerId}`;
+  const existingHost = controllerInstanceRegistry.get(controllerKey);
+  if (existingHost && existingHost !== host && existingHost.isConnected) {
+    // If another live host already owns this controller instance, drop duplicate mount.
+    const duplicateContainer = host.closest(`[${INSERT_MARKER_ATTR}]`) || host;
+    if (duplicateContainer && duplicateContainer.parentNode) {
+      try { duplicateContainer.parentNode.removeChild(duplicateContainer); } catch (_) {}
+    }
+    return;
+  }
+  controllerInstanceRegistry.set(controllerKey, host);
 
   if (controller === "themeToggleController") {
     const triggers = [];
@@ -284,17 +296,37 @@ function bindControllerForMarker(spec, markerId, root = document, options = {}) 
       return String(value || "").replace(/[^a-zA-Z0-9_-]/g, "\\$&");
     };
     const getHostState = () => {
-      if (!host.__webeditFolderState) host.__webeditFolderState = { original: {} };
+      if (!host.__webeditFolderState) host.__webeditFolderState = {
+        original: {},
+        signatureToId: {},
+        lastCreateAt: 0
+      };
       return host.__webeditFolderState;
     };
     const state = loadState();
     const hostState = getHostState();
+    const hashString = (value) => {
+      const input = String(value || "");
+      let hash = 2166136261;
+      for (let i = 0; i < input.length; i += 1) {
+        hash ^= input.charCodeAt(i);
+        hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
+      }
+      return Math.abs(hash >>> 0).toString(36);
+    };
 
-    const assignChatId = (el, index) => {
+    const assignChatId = (el, index, text = "") => {
       if (!(el instanceof Element)) return "";
       const existing = el.getAttribute("data-webedit-folder-chat-id");
       if (existing) return existing;
-      const nextId = `chat-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`;
+      const href = el.getAttribute("href") || "";
+      const aria = el.getAttribute("aria-label") || "";
+      const signature = `${String(text || "").trim().toLowerCase()}|${String(href).trim().toLowerCase()}|${String(aria).trim().toLowerCase()}`;
+      let nextId = hostState.signatureToId[signature];
+      if (!nextId) {
+        nextId = `chat-${hashString(signature || `index-${index}`)}`;
+        hostState.signatureToId[signature] = nextId;
+      }
       el.setAttribute("data-webedit-folder-chat-id", nextId);
       return nextId;
     };
@@ -316,7 +348,7 @@ function bindControllerForMarker(spec, markerId, root = document, options = {}) 
           const text = (node.textContent || "").replace(/\s+/g, " ").trim();
           if (!text || text.length < 2) return;
           if (/new folder\+|rename|delete|undo|apply|refine/i.test(text)) return;
-          const id = assignChatId(node, map.size + 1);
+          const id = assignChatId(node, map.size + 1, text);
           if (!id) return;
           if (!map.has(id)) {
             map.set(id, { id, text, node });
@@ -488,7 +520,9 @@ function bindControllerForMarker(spec, markerId, root = document, options = {}) 
         rename.addEventListener("click", () => {
           const nextName = prompt("Folder name", folder.name || "Folder");
           if (!nextName) return;
-          folder.name = nextName.trim();
+          const trimmed = nextName.trim();
+          if (!trimmed) return;
+          folder.name = trimmed;
           saveState(state);
           renderAll();
         });
@@ -504,8 +538,12 @@ function bindControllerForMarker(spec, markerId, root = document, options = {}) 
           renderAll();
         });
         drop.addEventListener("click", () => {
-          if (!state.selectedChat) return;
-          state.assignments[state.selectedChat] = folder.id;
+          const assignedIds = new Set(Object.keys(state.assignments || {}));
+          const unassigned = candidates.filter((c) => !assignedIds.has(c.id));
+          const chatIdToAssign = state.selectedChat || unassigned[0]?.id || "";
+          if (!chatIdToAssign) return;
+          state.assignments[chatIdToAssign] = folder.id;
+          state.selectedChat = "";
           saveState(state);
           renderAll();
         });
@@ -537,11 +575,15 @@ function bindControllerForMarker(spec, markerId, root = document, options = {}) 
       if (!(target instanceof Element)) return;
       const item = target.closest("[data-chat-id]");
       if (!item) return;
-      state.selectedChat = item.getAttribute("data-chat-id") || "";
+      const selected = item.getAttribute("data-chat-id") || "";
+      state.selectedChat = state.selectedChat === selected ? "" : selected;
       saveState(state);
       renderAll();
     });
     newButton.addEventListener("click", () => {
+      const now = Date.now();
+      if (now - Number(hostState.lastCreateAt || 0) < 250) return;
+      hostState.lastCreateAt = now;
       const defaultName = `Folder ${state.folders.length + 1}`;
       state.folders.push({
         id: `folder-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -960,6 +1002,7 @@ async function applyFeatureSpec(spec, options = {}) {
 
       const position = spec.position || "inside";
       const generatedModule = spec.generated_module || null;
+      const controllerName = generatedModule?.controller || "";
       const html = ((spec.html || generatedModule?.html || "") + "").trim();
       const content = (spec.content || "").trim();
       const css = typeof spec.css === "string" ? spec.css : (typeof generatedModule?.css === "string" ? generatedModule.css : "");
@@ -977,6 +1020,19 @@ async function applyFeatureSpec(spec, options = {}) {
 
       // For replace, store a snapshot for undo (best-effort).
       const replacedOuterHTML = position === "replace" ? el.outerHTML : null;
+
+      // Keep a single live Gemini folder module to avoid accidental duplicate mounts.
+      if (!preview && controllerName === "folderGeminiController") {
+        const existingModules = safeQueryAll("[data-webedit-folder-module='1']", root);
+        existingModules.forEach((moduleNode) => {
+          const container = moduleNode.closest(`[${INSERT_MARKER_ATTR}]`) || moduleNode;
+          const containerMarker = container?.getAttribute?.(INSERT_MARKER_ATTR) || "";
+          if (containerMarker === String(id)) return;
+          try {
+            if (container && container.parentNode) container.parentNode.removeChild(container);
+          } catch (_) {}
+        });
+      }
 
       // Inject CSS (if present) before insertion so initial paint has styles.
       const injectedStyle = injectCss(css, id, root);
