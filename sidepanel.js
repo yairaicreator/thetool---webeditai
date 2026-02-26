@@ -283,23 +283,34 @@
     return /folder|organize chat|group chat|chat folder|new folder/i.test(String(text || ""));
   }
 
-  async function buildAddSpecPipeline(promptText, baseContext, previousSpec = null) {
+  function createAddTraceId() {
+    return `add-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  async function buildAddSpecPipeline(promptText, baseContext, previousSpec = null, traceId = "") {
     const anchorSelector = lastPickedTarget?.selector || previousSpec?.targetSelector || previousSpec?.selector || "";
     if (!anchorSelector) {
       return { ok: false, stage: "capability", error: "No anchor selected. Pick a target section first." };
     }
 
-    const capabilityResp = await sendToActiveTab({ type: "GET_SITE_CAPABILITIES", selector: anchorSelector });
-    const capability = capabilityResp?.response?.capability || null;
-    if (!capabilityResp?.response?.ok || !capability) {
-      const authLikeError = String(capabilityResp?.error || "").toLowerCase();
+    const resolvedTraceId = String(traceId || createAddTraceId());
+    const domContextResp = await sendToActiveTab({
+      type: "GET_ADD_DOM_CONTEXT",
+      selector: anchorSelector,
+      traceId: resolvedTraceId
+    });
+    const domContext = domContextResp?.response?.addDomContext || null;
+    const capability = domContext?.capability || null;
+    if (!domContextResp?.response?.ok || !domContext) {
+      const authLikeError = String(domContextResp?.error || "").toLowerCase();
       if (authLikeError.includes("not authorized")) {
-        return { ok: false, stage: "auth", error: "Please sign in before generating Add features." };
+        return { ok: false, stage: "auth", error: "Please sign in before generating Add features.", traceId: resolvedTraceId };
       }
       return {
         ok: false,
         stage: "capability",
-        error: capabilityResp?.response?.error || capabilityResp?.error || "Capability check failed."
+        error: domContextResp?.response?.error || domContextResp?.error || "DOM context extraction failed.",
+        traceId: resolvedTraceId
       };
     }
 
@@ -325,29 +336,51 @@
       ...(baseContext || {}),
       selector: anchorSelector,
       anchorElement: lastPickedTarget,
-      previousSpec: previousSpec || undefined
+      previousSpec: previousSpec || undefined,
+      addDomContext: domContext
     };
 
-    const built = planner.buildAddSpecFromModule(promptText, plannerCtx, capability);
+    const forcedFeatureClass = typeof planner.routeFeatureClass === "function"
+      ? planner.routeFeatureClass(promptText, plannerCtx, capability)
+      : null;
+
+    const built = planner.buildAddSpecFromModule(promptText, plannerCtx, capability, { forcedFeatureClass });
     if (!built?.ok || !built?.spec) {
       return {
         ok: false,
         stage: built?.stage || "generation",
         code: built?.code || null,
         error: built?.error || "Could not generate module artifacts.",
-        decompositionSteps: Array.isArray(built?.decompositionSteps) ? built.decompositionSteps : []
+        decompositionSteps: Array.isArray(built?.decompositionSteps) ? built.decompositionSteps : [],
+        traceId: resolvedTraceId
       };
     }
-
-    built.spec.targetSelector = anchorSelector;
-    if (!built.spec.selector) built.spec.selector = anchorSelector;
-    built.spec.metadata = {
-      ...(built.spec.metadata || {}),
-      stage: "generation",
-      capabilityScore: capability.capabilityScore
+    const addContract = typeof window.validateAddSpecContract === "function"
+      ? window.validateAddSpecContract({
+          ...built.spec,
+          targetSelector: anchorSelector,
+          selector: built.spec.selector || anchorSelector
+        })
+      : { ok: true, spec: built.spec };
+    if (!addContract?.ok || !addContract?.spec) {
+      return {
+        ok: false,
+        stage: addContract?.stage || "contract",
+        error: addContract?.error || "Add contract validation failed.",
+        traceId: resolvedTraceId
+      };
+    }
+    const finalSpec = {
+      ...addContract.spec,
+      metadata: {
+        ...(addContract.spec.metadata || {}),
+        stage: "generation",
+        capabilityScore: capability.capabilityScore,
+        traceId: resolvedTraceId
+      }
     };
 
-    return { ok: true, spec: built.spec, capability };
+    return { ok: true, spec: finalSpec, capability, domContext, traceId: resolvedTraceId };
   }
 
   function isYesText(text) {
@@ -482,6 +515,42 @@
     return next;
   }
 
+  async function orchestrateAddSpec(promptText, pageContext, previousSpec = null, traceId = "") {
+    const runTraceId = String(traceId || createAddTraceId());
+    const built = await buildAddSpecPipeline(promptText, pageContext, previousSpec, runTraceId);
+    if (!built.ok || !built.spec) return built;
+
+    const hydrated = await ensureRenderableAddSpec(built.spec, promptText, pageContext, previousSpec || built.spec);
+    if (!hydrated.ok || !hydrated.spec) {
+      return {
+        ok: false,
+        stage: hydrated?.stage || "generation",
+        error: hydrated?.error || "Refinement could not generate renderable Add code.",
+        traceId: runTraceId
+      };
+    }
+    const validated = typeof window.validateAddSpecContract === "function"
+      ? window.validateAddSpecContract(hydrated.spec)
+      : { ok: true, spec: hydrated.spec };
+    if (!validated?.ok || !validated?.spec) {
+      return {
+        ok: false,
+        stage: validated?.stage || "contract",
+        error: validated?.error || "Add contract validation failed.",
+        traceId: runTraceId
+      };
+    }
+
+    const finalSpec = {
+      ...validated.spec,
+      metadata: {
+        ...(validated.spec.metadata || {}),
+        traceId: runTraceId
+      }
+    };
+    return { ok: true, spec: finalSpec, traceId: runTraceId };
+  }
+
   function showNotificationInChat(text) {
     addChatMessage("system", text);
   }
@@ -491,9 +560,10 @@
     const msg = chatMessages.find(m => m.type === "preview" && m.content?.previewId === previewId);
     if (!msg) return;
     const kind = msg?.content?.previewKind || "plan";
+    const traceId = String(msg?.content?.spec?.metadata?.traceId || createAddTraceId());
     const thinking = addChatMessage("assistant", "Applying preview...");
     const resp = kind === "spec"
-      ? await sendToActiveTab({ type: "COMMIT_FEATURE_SPEC", previewId, spec: msg.content?.spec || null })
+      ? await sendToActiveTab({ type: "COMMIT_FEATURE_SPEC", previewId, spec: msg.content?.spec || null, traceId })
       : await sendToActiveTab({ type: "COMMIT_FEATURE", previewId, plan: msg.content?.plan || null });
     if (resp?.response?.ok) {
       chatMessages = chatMessages.filter(m => !(m.type === "preview" && m.content?.previewId === previewId));
@@ -1307,21 +1377,22 @@
           pageContext.previousSpec = spec;
         }
         let nextSpec = null;
+        const refineTraceId = String(spec?.metadata?.traceId || createAddTraceId());
         if (spec?.action === "add") {
-          const built = await buildAddSpecPipeline(text, pageContext, spec);
-          if (!built.ok) {
-            if (built.stage === "complexity" && beginComplexityDecomposition(built.decompositionSteps || [])) {
+          const orchestrated = await orchestrateAddSpec(text, pageContext, spec, refineTraceId);
+          if (!orchestrated.ok) {
+            if (orchestrated.stage === "complexity" && beginComplexityDecomposition(orchestrated.decompositionSteps || [])) {
               thinking.content = "⚠️ Request needs decomposition before reliable implementation.";
               renderChatMessages();
               saveChatHistory();
               return;
             }
-            thinking.content = `❌ ${formatStageError(built, "Refinement failed")}`;
+            thinking.content = `❌ ${formatStageError(orchestrated, "Refinement failed")}`;
             renderChatMessages();
             saveChatHistory();
             return;
           }
-          nextSpec = built.spec;
+          nextSpec = orchestrated.spec;
         } else {
           const aiResp = window.SupabaseClient?.generateFeatureSpec
             ? await window.SupabaseClient.generateFeatureSpec(text, pageContext)
@@ -1333,17 +1404,6 @@
             return;
           }
           nextSpec = aiResp.spec;
-        }
-
-        if (nextSpec?.action === "add") {
-          const hydrated = await ensureRenderableAddSpec(nextSpec, text, pageContext, spec || nextSpec);
-          if (!hydrated.ok) {
-            thinking.content = `❌ ${formatStageError(hydrated, "Refinement could not generate renderable Add code.")}`;
-            renderChatMessages();
-            saveChatHistory();
-            return;
-          }
-          nextSpec = hydrated.spec;
         }
 
         if (!nextSpec || nextSpec.action === "chat" || nextSpec.action === "undo" || nextSpec.action === "reveal") {
@@ -1367,12 +1427,14 @@
             nextSpec.targetSelector = anchorSelector;
             if (!nextSpec.selector) nextSpec.selector = anchorSelector;
           }
-          let previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec: nextSpec, previewId });
+          const traceId = String(nextSpec?.metadata?.traceId || refineTraceId);
+          console.info(`[SidePanel Add][${traceId}] refine-preview-start`);
+          let previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec: nextSpec, previewId, traceId });
           if (!previewResp?.response?.ok && nextSpec?.action === "add") {
             const errText = String(previewResp?.response?.error || "");
             if (errText.includes("add requires html or content")) {
               const forced = forceMinimalAddRenderable(nextSpec, text);
-              previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec: forced, previewId });
+              previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec: forced, previewId, traceId });
               nextSpec = forced;
             }
           }
@@ -1459,31 +1521,26 @@
       isAddFeatureMode = false; // consume guided add prompt and return to normal chat mode
       const thinking = addChatMessage("assistant", "Generating your feature...");
       try {
+        const addTraceId = createAddTraceId();
         const pageContextResp = await sendToActiveTab({ type: "GET_PAGE_CONTEXT" });
         const pageContext = pageContextResp?.response?.pageContext || {};
         pageContext.anchorElement = lastPickedTarget;
 
-        const built = await buildAddSpecPipeline(text, pageContext, null);
-        if (!built.ok) {
-          if (built.stage === "complexity" && beginComplexityDecomposition(built.decompositionSteps || [])) {
+        const orchestrated = await orchestrateAddSpec(text, pageContext, null, addTraceId);
+        if (!orchestrated.ok) {
+          if (orchestrated.stage === "complexity" && beginComplexityDecomposition(orchestrated.decompositionSteps || [])) {
             thinking.content = "⚠️ Request needs decomposition before reliable implementation.";
             renderChatMessages();
             saveChatHistory();
             return;
           }
-          throw new Error(formatStageError(built, "Feature generation failed"));
+          throw new Error(formatStageError(orchestrated, "Feature generation failed"));
         }
 
-        let spec = built.spec || null;
+        let spec = orchestrated.spec || null;
         if (!spec) {
           throw new Error("No feature specification returned.");
         }
-
-        const hydrated = await ensureRenderableAddSpec(spec, text, pageContext, spec);
-        if (!hydrated.ok || !hydrated.spec) {
-          throw new Error(formatStageError(hydrated, "Feature generation failed."));
-        }
-        spec = hydrated.spec;
 
         // Add flow expects an add-capable spec. If not, guide user to refine prompt.
         if (spec.action !== "add") {
@@ -1497,12 +1554,14 @@
           if (!spec.selector) spec.selector = lastPickedTarget.selector;
         }
 
-        let previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec });
+        const traceId = String(spec?.metadata?.traceId || addTraceId);
+        console.info(`[SidePanel Add][${traceId}] add-preview-start`);
+        let previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec, traceId });
         if (!previewResp?.response?.ok) {
           const errText = String(previewResp?.response?.error || "");
           if (errText.includes("add requires html or content")) {
             const forced = forceMinimalAddRenderable(spec, text);
-            previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec: forced });
+            previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec: forced, traceId });
             spec = forced;
           }
         }
@@ -1565,14 +1624,15 @@
             : `❌ ${revealResp?.response?.error || "Reveal failed"}`;
         } else {
           if (spec.action === "add") {
-            const hydrated = await ensureRenderableAddSpec(spec, text, pageContext, spec);
-            if (!hydrated.ok || !hydrated.spec) {
-              thinking.content = `❌ ${formatStageError(hydrated, "Add generation failed.")}`;
+            const flowTraceId = String(spec?.metadata?.traceId || createAddTraceId());
+            const orchestrated = await orchestrateAddSpec(text, pageContext, spec, flowTraceId);
+            if (!orchestrated.ok || !orchestrated.spec) {
+              thinking.content = `❌ ${formatStageError(orchestrated, "Add generation failed.")}`;
               renderChatMessages();
               saveChatHistory();
               return;
             }
-            spec = hydrated.spec;
+            spec = orchestrated.spec;
             if (lastPickedTarget?.selector) {
               spec.targetSelector = lastPickedTarget.selector;
               if (!spec.selector) spec.selector = lastPickedTarget.selector;
@@ -1580,7 +1640,9 @@
           }
           // It's an edit command (hide, customize, add, text)
           thinking.content = "Generating a preview...";
-          const previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec });
+          const previewTraceId = String(spec?.metadata?.traceId || createAddTraceId());
+          console.info(`[SidePanel Add][${previewTraceId}] general-preview-start action=${String(spec?.action || "unknown")}`);
+          const previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec, traceId: previewTraceId });
           if (previewResp?.response?.ok) {
             addPreviewMessage({
               previewId: previewResp.response.previewId,

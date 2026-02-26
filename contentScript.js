@@ -880,29 +880,29 @@ function normalizeAddPayloadToSpec(payload = {}) {
 async function applyAddEdit(editId, payload) {
   if (!editId || !payload || typeof payload !== "object") return false;
 
-  // If this is a FeatureSpec-style add (html/css/behavior), apply via FeatureSpecExecutor so interactivity persists.
+  // Deterministic replay path: FeatureSpecExecutor only (no legacy DOM card fallback).
   const addSpec = normalizeAddPayloadToSpec(payload);
-  if (addSpec && window.FeatureSpecExecutor && typeof window.FeatureSpecExecutor.applyFeatureSpec === "function") {
-    const res = await window.FeatureSpecExecutor.applyFeatureSpec(addSpec, { replay: true, id: editId, skipPersist: true });
-    if (res?.ok) {
-      try {
-        const nodes = document.querySelectorAll(`[data-webedit-ai-insert-id="${cssEscapeSafe(editId)}"]`);
-        nodes.forEach((el) => {
-          try { el.setAttribute(WEBEDIT_CLOUD_EDIT_ATTR, editId); } catch (_) {}
-        });
-      } catch (_) {}
-      return true;
-    }
-    const reason = serializeReplayError(res?.error);
-    console.info(`[WebEdit] FeatureSpec replay unavailable for edit ${editId}; using legacy fallback. reason=${reason}`);
-    // Fallback keeps older/partial payloads visible instead of disappearing.
-    const fallback = injectFeatureCard({ ...(payload || {}), editId });
-    return !!fallback?.ok;
+  if (!addSpec) {
+    console.info(`[WebEdit] Skipping non-normalizable add replay id=${String(editId || "unknown")}`);
+    return false;
   }
-
-  // Legacy: Ensure we always wrap the inserted feature so cleanup is reliable.
-  const result = injectFeatureCard({ ...(payload || {}), editId });
-  return !!result?.ok;
+  if (!(window.FeatureSpecExecutor && typeof window.FeatureSpecExecutor.applyFeatureSpec === "function")) {
+    console.info(`[WebEdit] FeatureSpecExecutor unavailable for add replay id=${String(editId || "unknown")}`);
+    return false;
+  }
+  const res = await window.FeatureSpecExecutor.applyFeatureSpec(addSpec, { replay: true, id: editId, skipPersist: true });
+  if (res?.ok) {
+    try {
+      const nodes = document.querySelectorAll(`[data-webedit-ai-insert-id="${cssEscapeSafe(editId)}"]`);
+      nodes.forEach((el) => {
+        try { el.setAttribute(WEBEDIT_CLOUD_EDIT_ATTR, editId); } catch (_) {}
+      });
+    } catch (_) {}
+    return true;
+  }
+  const reason = serializeReplayError(res?.error);
+  console.info(`[WebEdit] FeatureSpec replay unavailable for edit ${editId}; replay skipped. reason=${reason}`);
+  return false;
 }
 
 async function applyActiveEditsInOrder(edits) {
@@ -1885,7 +1885,14 @@ async function applyFeatureSpecFlow(spec) {
     if (!parsed?.ok || !parsed?.spec) {
       return { ok: false, stage: "parse", error: parsed?.error || "Invalid feature spec" };
     }
-    const normalizedSpec = parsed.spec;
+    let normalizedSpec = parsed.spec;
+    if (normalizedSpec?.action === "add" && typeof window.validateAddSpecContract === "function") {
+      const contract = window.validateAddSpecContract(normalizedSpec);
+      if (!contract?.ok || !contract?.spec) {
+        return { ok: false, stage: contract?.stage || "contract", error: contract?.error || "Add contract validation failed" };
+      }
+      normalizedSpec = contract.spec;
+    }
 
     // Retry a few times on SPA remounts where the target selector may not exist yet.
     let result = null;
@@ -1983,6 +1990,81 @@ async function applyFeatureSpecFlow(spec) {
 function getPagePlainText() {
   const text = document.body?.innerText || "";
   return text.slice(0, 5000).trim();
+}
+
+function summarizeDomElement(el) {
+  if (!(el instanceof Element)) return null;
+  const text = (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 180);
+  const classes = Array.from(el.classList || []).slice(0, 8);
+  return {
+    tag: String(el.tagName || "").toLowerCase(),
+    id: el.id || "",
+    classes,
+    role: el.getAttribute("role") || "",
+    ariaLabel: el.getAttribute("aria-label") || "",
+    text
+  };
+}
+
+function collectSiblingSummaries(anchor) {
+  if (!(anchor instanceof Element) || !(anchor.parentElement instanceof Element)) return [];
+  const siblings = Array.from(anchor.parentElement.children || []);
+  const index = siblings.indexOf(anchor);
+  const out = [];
+  for (let i = Math.max(0, index - 2); i <= Math.min(siblings.length - 1, index + 2); i += 1) {
+    if (siblings[i] === anchor) continue;
+    const summary = summarizeDomElement(siblings[i]);
+    if (summary) out.push(summary);
+  }
+  return out;
+}
+
+function buildAddDomContext(selector, traceId = "") {
+  const safeSelector = String(selector || "").trim();
+  if (!safeSelector) return { ok: false, error: "Missing selector" };
+  let anchor = null;
+  try {
+    anchor = document.querySelector(safeSelector);
+  } catch (_) {
+    anchor = null;
+  }
+  if (!(anchor instanceof Element)) {
+    return { ok: false, error: "Anchor not found for selector" };
+  }
+  const extractor = window.ContextExtractor;
+  const context = (extractor && typeof extractor.extractContext === "function")
+    ? extractor.extractContext(safeSelector)
+    : { ok: true, context: {} };
+  const capability = (extractor && typeof extractor.assessCapabilities === "function")
+    ? extractor.assessCapabilities(safeSelector)
+    : { ok: false, error: "Capability engine unavailable" };
+
+  const anchorSummary = summarizeDomElement(anchor);
+  const parentSummary = summarizeDomElement(anchor.parentElement);
+  const siblingSummaries = collectSiblingSummaries(anchor);
+  const stableSelectors = [safeSelector];
+  if (anchor.id) stableSelectors.push(`#${anchor.id}`);
+  const role = anchor.getAttribute("role");
+  if (role) stableSelectors.push(`${String(anchor.tagName || "").toLowerCase()}[role="${role}"]`);
+
+  return {
+    ok: true,
+    addDomContext: {
+      traceId: String(traceId || ""),
+      url: location.href,
+      title: document.title || "",
+      anchor: {
+        selector: safeSelector,
+        summary: anchorSummary,
+        parent: parentSummary,
+        siblings: siblingSummaries,
+        stableSelectors: Array.from(new Set(stableSelectors)).slice(0, 8)
+      },
+      pageText: getPagePlainText(),
+      extractedContext: context?.context || {},
+      capability: capability?.capability || null
+    }
+  };
 }
 
 function revealLikelyHeader() {
@@ -2187,30 +2269,48 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     if (type === "PREVIEW_FEATURE_SPEC") {
       (async () => {
-        const spec = payload.spec || null;
+        let spec = payload.spec || null;
         if (!spec) {
           sendResponse({ ok: false, error: "Missing spec" });
           return;
         }
+        const traceId = String(payload.traceId || spec?.metadata?.traceId || "");
+        if (spec?.action === "add" && typeof window.validateAddSpecContract === "function") {
+          const contract = window.validateAddSpecContract(spec);
+          if (!contract?.ok || !contract?.spec) {
+            sendResponse({ ok: false, stage: contract?.stage || "contract", error: contract?.error || "Add contract validation failed" });
+            return;
+          }
+          spec = {
+            ...contract.spec,
+            metadata: {
+              ...(contract.spec.metadata || {}),
+              traceId
+            }
+          };
+        }
         const previewId = payload.previewId || `preview-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        console.info(`[WebEdit Add][${traceId || "no-trace"}] preview-start id=${previewId}`);
         const res = await renderSpecPreviewInLab(spec, previewId);
         if (res?.ok) {
           previewLabPreviews.set(previewId, {
             type: "spec",
             spec,
-            selector: spec.targetSelector || spec.selector || ""
+            selector: spec.targetSelector || spec.selector || "",
+            traceId
           });
           if (spec.targetSelector || spec.selector) {
             setGhostHighlight(previewId, spec.targetSelector || spec.selector);
           }
-          sendResponse({ ok: true, previewId });
+          sendResponse({ ok: true, previewId, traceId });
           return;
         }
         sendResponse({
           ok: false,
           stage: res?.stage || "validation",
           error: res?.error || "Preview failed",
-          failures: Array.isArray(res?.failures) ? res.failures : []
+          failures: Array.isArray(res?.failures) ? res.failures : [],
+          traceId
         });
       })();
       return true;
@@ -2221,43 +2321,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const previewId = payload.previewId || null;
         const handle = previewId ? previewLabPreviews.get(previewId) : null;
         const fallbackSpec = payload.spec || null;
+        const traceId = String(payload.traceId || handle?.traceId || fallbackSpec?.metadata?.traceId || "");
+        console.info(`[WebEdit Add][${traceId || "no-trace"}] commit-start previewId=${String(previewId || "none")}`);
         let specToApply = null;
 
         if (handle && handle.type === "spec") {
           const lab = getPreviewLab();
           const content = lab?.getContent?.() || {};
-          const shadowRoot = lab?.getShadowRoot?.();
-          const previewTarget = shadowRoot?.querySelector(`[${PREVIEW_LAB_TARGET_ATTR}="1"]`);
-          const isAddSpec = handle.spec?.action === "add";
-          let html = content.html || "";
-          if (isAddSpec && previewTarget) {
-            const insertedNodes = Array.from(
-              previewTarget.querySelectorAll(`[data-webedit-ai-insert-id="${CSS.escape(previewId)}"]`)
-            );
-            const insertedHtml = insertedNodes
-              .map((node) => (node instanceof Element ? node.outerHTML : ""))
-              .join("\n")
-              .trim();
-            html = insertedHtml || handle.spec.html || "";
-          } else if (previewTarget && previewTarget.innerHTML.trim()) {
-            html = previewTarget.innerHTML;
-          } else if (previewTarget) {
-            const mount = lab?.getMountNode?.();
-            if (mount) {
-              const clone = mount.cloneNode(true);
-              const placeholder = clone.querySelector(`[${PREVIEW_LAB_TARGET_ATTR}="1"]`);
-              if (placeholder) placeholder.remove();
-              html = clone.innerHTML;
-            }
-          }
           specToApply = {
             ...handle.spec,
-            html: html || handle.spec.html,
+            html: content.html || handle.spec.html,
             css: content.css || handle.spec.css,
-            js: content.js || handle.spec.js
+            js: content.js || handle.spec.js,
+            metadata: {
+              ...(handle.spec?.metadata || {}),
+              traceId
+            }
           };
         } else if (fallbackSpec) {
-          specToApply = fallbackSpec;
+          specToApply = {
+            ...fallbackSpec,
+            metadata: {
+              ...(fallbackSpec?.metadata || {}),
+              traceId
+            }
+          };
         } else {
           sendResponse({ ok: false, error: "Preview not found" });
           return;
@@ -2494,19 +2582,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok: true, count });
       return true;
     }
+    if (type === "GET_ADD_DOM_CONTEXT") {
+      const selector = payload.selector || payload.targetSelector || "";
+      const result = buildAddDomContext(selector, payload.traceId || "");
+      sendResponse(result);
+      return true;
+    }
     if (type === "GET_ADD_CONTEXT") {
       const selector = payload.selector || payload.targetSelector || "";
-      const extractor = window.ContextExtractor;
-      if (!selector) {
-        sendResponse({ ok: false, error: "Missing selector" });
-        return true;
-      }
-      if (!extractor || typeof extractor.extractContext !== "function") {
-        sendResponse({ ok: false, error: "ContextExtractor not available" });
-        return true;
-      }
-      const result = extractor.extractContext(selector);
-      sendResponse(result);
+      const result = buildAddDomContext(selector, payload.traceId || "");
+      // Backward-compatible alias for existing callers.
+      sendResponse(result.ok ? { ok: true, context: result.addDomContext } : result);
       return true;
     }
     if (type === "GET_SITE_CAPABILITIES") {

@@ -228,20 +228,22 @@ const FeaturePlanner = (() => {
     };
   }
 
-  function generateModuleArtifacts(prompt, context, capability) {
+  function generateModuleArtifacts(prompt, context, capability, options = {}) {
     const text = normalizePrompt(prompt).toLowerCase();
     const anchorSelector = context?.selector || context?.anchorElement?.selector || "";
     const warnings = [];
-    let featureClass = "genericAdd";
+    const forcedClass = normalizeString(options?.forcedFeatureClass || "");
+    const routedClass = routeFeatureClass(prompt, context, capability);
+    let featureClass = forcedClass || routedClass || "genericAdd";
     let module = null;
 
-    if (/dark mode|theme|night mode|toggle theme/.test(text)) {
+    if (featureClass === "toggleTheme" || /dark mode|theme|night mode|toggle theme/.test(text)) {
       featureClass = "toggleTheme";
       module = buildThemeToggleModule(anchorSelector, text);
-    } else if (/folder|organize chat|drag|drop|group chat/.test(text)) {
+    } else if (featureClass === "folderSystem" || /folder|organize chat|drag|drop|group chat/.test(text)) {
       featureClass = "folderSystem";
       module = buildFolderModule(anchorSelector, text);
-    } else if (/link|url|youtube|cta|button/.test(text)) {
+    } else if (featureClass === "linkCard" || /link|url|youtube|cta|button/.test(text)) {
       const href = extractFirstUrl(prompt);
       const safeHref = href || "https://example.com/";
       featureClass = "linkCard";
@@ -284,7 +286,15 @@ const FeaturePlanner = (() => {
     };
   }
 
-  function buildAddSpecFromModule(prompt, context, capability) {
+  function routeFeatureClass(prompt, context, capability) {
+    const text = normalizePrompt(prompt).toLowerCase();
+    if (/dark mode|theme|night mode|toggle theme/.test(text)) return "toggleTheme";
+    if (/folder|organize chat|drag|drop|group chat/.test(text)) return "folderSystem";
+    if (/link|url|youtube|cta|button/.test(text)) return "linkCard";
+    return "genericAdd";
+  }
+
+  function buildAddSpecFromModule(prompt, context, capability, options = {}) {
     const complexity = classifyComplexity(prompt, context, capability);
     if (complexity.classification === "too_complex") {
       return {
@@ -297,7 +307,9 @@ const FeaturePlanner = (() => {
       };
     }
 
-    const generated = generateModuleArtifacts(prompt, context, capability);
+    const generated = generateModuleArtifacts(prompt, context, capability, {
+      forcedFeatureClass: options?.forcedFeatureClass || ""
+    });
     if (!generated.ok) return generated;
     const selector = context?.selector || context?.anchorElement?.selector || "";
     if (!selector) {
@@ -417,7 +429,7 @@ const FeaturePlanner = (() => {
     return { feature_type, targetSelector, parameters, confidence, warnings };
   }
 
-  return { plan, generateModuleArtifacts, buildAddSpecFromModule, classifyComplexity, proposeDecompositionSteps };
+  return { plan, generateModuleArtifacts, buildAddSpecFromModule, classifyComplexity, proposeDecompositionSteps, routeFeatureClass };
 })();
 
 if (typeof window !== "undefined") {

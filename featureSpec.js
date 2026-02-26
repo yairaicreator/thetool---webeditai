@@ -346,10 +346,42 @@ function parseFeatureSpec(raw) {
   return { ok: true, spec };
 }
 
+function validateAddSpecContract(raw) {
+  const parsed = parseFeatureSpec(raw);
+  if (!parsed?.ok || !parsed?.spec) {
+    return { ok: false, stage: "parse", error: parsed?.error || "Invalid spec" };
+  }
+  const spec = parsed.spec;
+  if (spec.action !== "add") {
+    return { ok: false, stage: "contract", error: "Add contract requires action=add" };
+  }
+  const anchor = normalizeString(spec.targetSelector || spec.selector || "");
+  if (!anchor) {
+    return { ok: false, stage: "contract", error: "Add contract requires targetSelector/selector" };
+  }
+  const hasHtml = typeof spec.html === "string" && spec.html.trim().length > 0;
+  const hasContent = typeof spec.content === "string" && spec.content.trim().length > 0;
+  if (!hasHtml && !hasContent) {
+    return { ok: false, stage: "contract", error: "Add contract requires html or content" };
+  }
+  const normalized = {
+    ...spec,
+    targetSelector: anchor,
+    selector: spec.selector || anchor,
+    position: spec.position || "inside",
+    metadata: {
+      ...(spec.metadata || {}),
+      addContract: "v1"
+    }
+  };
+  return { ok: true, spec: normalized };
+}
+
 if (typeof window !== "undefined") {
   window.FeatureSpecSchema = FeatureSpecSchema;
   window.parseFeatureSpec = parseFeatureSpec;
   window.normalizeFeatureSpecV2 = normalizeFeatureSpecV2;
+  window.validateAddSpecContract = validateAddSpecContract;
   console.log("✅ FeatureSpec validator loaded");
 }
 
