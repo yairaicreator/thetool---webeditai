@@ -60,7 +60,7 @@ function normalizeSessionPayload(raw, context = "unknown") {
     // #region agent log
     fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e76c3f'},body:JSON.stringify({sessionId:'e76c3f',runId:'auth-debug-1',hypothesisId:'H2',location:'bridge-listener.js:normalizeSessionPayload:nearExpiry',message:'Bridge rejected near-expiry session',data:{context,expiresAt},timestamp:Date.now()})}).catch(()=>{});
     // #endregion
-    console.warn(`⚠️ [Bridge] Ignoring expired/near-expiry session from ${context} (expires_at=${expiresAt})`);
+    console.info(`ℹ️ [Bridge] Ignoring expired/near-expiry session from ${context} (expires_at=${expiresAt})`);
     return { session: null, valid: false, explicitSignOut: false };
   }
   // #region agent log

@@ -866,11 +866,11 @@ async function applyAddEdit(editId, payload) {
       } catch (_) {}
       return true;
     }
-    console.warn("[WebEdit] Failed to replay add edit via FeatureSpecExecutor", {
-      editId,
-      reason: res?.error || "unknown"
-    });
-    return false;
+    const reason = String(res?.error || "unknown");
+    console.info(`[WebEdit] FeatureSpec replay unavailable for edit ${editId}; using legacy fallback. reason=${reason}`);
+    // Fallback keeps older/partial payloads visible instead of disappearing.
+    const fallback = injectFeatureCard({ ...(payload || {}), editId });
+    return !!fallback?.ok;
   }
 
   // Legacy: Ensure we always wrap the inserted feature so cleanup is reliable.
@@ -923,7 +923,7 @@ async function rebuildCloudEdits(reason = "unknown") {
 
       const edits = await fetchActiveEditsForWebsite(websiteId);
       if (!Array.isArray(edits)) {
-        console.warn("[WebEdit] Cloud rebuild skipped (fetch unavailable)", { reason, websiteId });
+        console.info(`[WebEdit] Cloud rebuild skipped (fetch unavailable). reason=${String(reason || "unknown")} websiteId=${String(websiteId || "unknown")}`);
         return { ok: false, skipped: true, reason: "fetch-unavailable" };
       }
       // Deterministic correctness: clear everything we manage, then reapply ACTIVE edits in order.
