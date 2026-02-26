@@ -73,10 +73,10 @@ function getClient() {
   return null;
 }
 
-const GEMINI_FOLDER_CONTROLLER_ID = "folderGeminiController";
+const SAVE_EDIT_GEMINI_FOLDER_CONTROLLER_ID = "folderGeminiController";
 
 function isFolderGeminiController(controllerId) {
-  return String(controllerId || "").trim().toLowerCase() === GEMINI_FOLDER_CONTROLLER_ID.toLowerCase();
+  return String(controllerId || "").trim().toLowerCase() === SAVE_EDIT_GEMINI_FOLDER_CONTROLLER_ID.toLowerCase();
 }
 
 /**

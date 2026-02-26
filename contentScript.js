@@ -808,10 +808,10 @@ function cssEscapeSafe(value) {
   return String(value || "").replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`);
 }
 
-const GEMINI_FOLDER_CONTROLLER_ID = "folderGeminiController";
+const CONTENT_SCRIPT_GEMINI_FOLDER_CONTROLLER_ID = "folderGeminiController";
 
 function isFolderGeminiController(controllerId) {
-  return String(controllerId || "").trim().toLowerCase() === GEMINI_FOLDER_CONTROLLER_ID.toLowerCase();
+  return String(controllerId || "").trim().toLowerCase() === CONTENT_SCRIPT_GEMINI_FOLDER_CONTROLLER_ID.toLowerCase();
 }
 
 function serializeReplayError(errorLike) {
