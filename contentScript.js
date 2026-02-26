@@ -808,10 +808,8 @@ function cssEscapeSafe(value) {
   return String(value || "").replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`);
 }
 
-const CONTENT_SCRIPT_GEMINI_FOLDER_CONTROLLER_ID = "folderGeminiController";
-
-function isFolderGeminiController(controllerId) {
-  return String(controllerId || "").trim().toLowerCase() === CONTENT_SCRIPT_GEMINI_FOLDER_CONTROLLER_ID.toLowerCase();
+function isCloudOnlyFolderGeminiController(controllerId) {
+  return String(controllerId || "").trim().toLowerCase() === "foldergeminicontroller";
 }
 
 function serializeReplayError(errorLike) {
@@ -2271,7 +2269,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             const isCloudOnlyGeminiFolder =
               String(specToApply?.metadata?.persistenceMode || "").toLowerCase() === "cloud_only" ||
               String(specToApply?.metadata?.featureClass || "").toLowerCase() === "gemini-folder" ||
-              isFolderGeminiController(specToApply?.generated_module?.controller);
+              isCloudOnlyFolderGeminiController(specToApply?.generated_module?.controller);
             if (!isCloudOnlyGeminiFolder) {
               await store.addCommittedFeature(result.record);
             }

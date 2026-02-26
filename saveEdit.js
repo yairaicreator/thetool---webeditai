@@ -73,10 +73,8 @@ function getClient() {
   return null;
 }
 
-const SAVE_EDIT_GEMINI_FOLDER_CONTROLLER_ID = "folderGeminiController";
-
-function isFolderGeminiController(controllerId) {
-  return String(controllerId || "").trim().toLowerCase() === SAVE_EDIT_GEMINI_FOLDER_CONTROLLER_ID.toLowerCase();
+function isSaveEditFolderGeminiController(controllerId) {
+  return String(controllerId || "").trim().toLowerCase() === "foldergeminicontroller";
 }
 
 /**
@@ -652,7 +650,7 @@ async function saveAddFeature(spec) {
   const selector = spec?.selector;
   const targetElement = selector ? querySelectorSafe(selector) : null;
   const generatedModule = spec?.generated_module || {};
-  const isGeminiFolderController = isFolderGeminiController(generatedModule?.controller);
+  const isGeminiFolderController = isSaveEditFolderGeminiController(generatedModule?.controller);
   const metadataContext = {
     editType: 'add',
     payload: spec,
