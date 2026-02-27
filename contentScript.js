@@ -292,6 +292,7 @@ async function renderSpecPreviewInLab(spec, previewId) {
     if (controller === "folderGeminiController") {
       const addFolderBtn = root.querySelector("[data-webedit-folder-module='1'] button");
       const folderList = root.querySelector("[data-webedit-folder-list='1']");
+      const sourceList = root.querySelector("[data-webedit-folder-source='1']");
       if (!addFolderBtn || !folderList) {
         failures.push({ code: "missing_folder_ui", message: "Folder module controls were not rendered." });
       } else {
@@ -300,6 +301,27 @@ async function renderSpecPreviewInLab(spec, previewId) {
         const afterCount = folderList.querySelectorAll("[data-folder-id]").length;
         if (afterCount <= beforeCount) {
           failures.push({ code: "folder_create_failed", message: "Folder creation action did not create a folder." });
+        }
+        const sourceItems = sourceList ? sourceList.querySelectorAll("[data-chat-id]") : [];
+        if (!sourceItems || sourceItems.length === 0) {
+          failures.push({
+            code: "folder_no_chats_detected",
+            message: "No chats found in the visible list. Pick a section that includes the chat sidebar."
+          });
+        } else {
+          const firstSource = sourceItems[0];
+          const firstDrop = folderList.querySelector("[data-folder-id] .webedit-folder-drop");
+          if (firstSource && firstDrop) {
+            try { firstSource.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); } catch (_) {}
+            try { firstDrop.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); } catch (_) {}
+            const hasChip = !!folderList.querySelector(".webedit-folder-chip");
+            if (!hasChip) {
+              failures.push({
+                code: "folder_assign_failed",
+                message: "Folder assignment did not work in preview. Try a different section with visible chats."
+              });
+            }
+          }
         }
       }
     }
@@ -1879,6 +1901,31 @@ async function applyFeatureSpecFlow(spec) {
       }
       normalizedSpec = contract.spec;
     }
+    if (normalizedSpec?.action === "add") {
+      const controllerId = String(normalizedSpec?.generated_module?.controller || "");
+      if (controllerId === "folderGeminiController") {
+        const requiredAttrs = Array.isArray(normalizedSpec?.generated_module?.requiredDataAttributes)
+          ? normalizedSpec.generated_module.requiredDataAttributes
+          : [
+              "data-webedit-folder-module",
+              "data-webedit-folder-source",
+              "data-webedit-folder-list",
+              "data-webedit-folder-panel"
+            ];
+        const htmlText = String(normalizedSpec?.html || normalizedSpec?.generated_module?.html || "");
+        const missingAttrs = requiredAttrs.filter((attr) => !htmlText.includes(attr));
+        const stateSchema = normalizedSpec?.generated_module?.stateSchema || normalizedSpec?.state_model || null;
+        if (missingAttrs.length > 0 || !stateSchema) {
+          return {
+            ok: false,
+            stage: "validation",
+            error: missingAttrs.length > 0
+              ? `Folder contract missing required attributes: ${missingAttrs.join(", ")}`
+              : "Folder contract missing state schema"
+          };
+        }
+      }
+    }
 
     // Retry a few times on SPA remounts where the target selector may not exist yet.
     let result = null;
@@ -1959,6 +2006,22 @@ async function applyFeatureSpecFlow(spec) {
               try { el.setAttribute(WEBEDIT_CLOUD_EDIT_ATTR, persistedEditId); } catch (_) {}
             });
           } catch (_) {}
+          const isFolderController = String(normalizedSpec?.generated_module?.controller || "") === "folderGeminiController";
+          if (isFolderController) {
+            const persistedHost = document.querySelector(`[data-webedit-ai-insert-id="${cssEscapeSafe(persistedEditId)}"]`);
+            const hasFolderUi = !!(persistedHost && (
+              persistedHost.matches?.("[data-webedit-folder-module='1']")
+              || persistedHost.querySelector?.("[data-webedit-folder-module='1']")
+            ));
+            if (!hasFolderUi) {
+              try { await exec.undoById?.(persistedEditId); } catch (_) {}
+              return {
+                ok: false,
+                stage: "validation",
+                error: "Persisted folder feature could not be restored after save replay."
+              };
+            }
+          }
         }
         return { ok: true, applied: replayed?.applied || result.applied, persisted: true, edit: saveResp.edit || null, record: featureRecord };
       }
@@ -2005,6 +2068,57 @@ function collectSiblingSummaries(anchor) {
   return out;
 }
 
+function collectPageStructureHints() {
+  const hints = {
+    headings: [],
+    landmarks: [],
+    chatLikeNodes: []
+  };
+  try {
+    hints.headings = Array.from(document.querySelectorAll("h1,h2,h3"))
+      .map((el) => (el.textContent || "").replace(/\s+/g, " ").trim())
+      .filter(Boolean)
+      .slice(0, 10);
+  } catch (_) {}
+  try {
+    hints.landmarks = Array.from(document.querySelectorAll("main,nav,aside,header,footer,[role='navigation'],[role='main']"))
+      .map((el) => summarizeDomElement(el))
+      .filter(Boolean)
+      .slice(0, 10);
+  } catch (_) {}
+  try {
+    const selectors = [
+      "nav [data-testid*='chat' i]",
+      "nav [data-testid*='conversation' i]",
+      "aside [data-testid*='conversation' i]",
+      "a[href*='/app/']",
+      "[aria-label*='chat' i] a",
+      "[role='navigation'] a"
+    ];
+    const map = new Map();
+    selectors.forEach((sel) => {
+      safeQueryAll(sel, document).forEach((el) => {
+        if (!(el instanceof Element)) return;
+        if (!isVisibleElement(el)) return;
+        const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+        if (!text || text.length < 2) return;
+        const key = `${sel}|${el.getAttribute("href") || ""}|${text}`;
+        if (map.has(key)) return;
+        map.set(key, {
+          selector: sel,
+          tag: String(el.tagName || "").toLowerCase(),
+          href: el.getAttribute("href") || "",
+          role: el.getAttribute("role") || "",
+          testId: el.getAttribute("data-testid") || "",
+          text: text.slice(0, 180)
+        });
+      });
+    });
+    hints.chatLikeNodes = Array.from(map.values()).slice(0, 20);
+  } catch (_) {}
+  return hints;
+}
+
 function buildAddDomContext(selector, traceId = "") {
   const safeSelector = String(selector || "").trim();
   if (!safeSelector) return { ok: false, error: "Missing selector" };
@@ -2028,6 +2142,7 @@ function buildAddDomContext(selector, traceId = "") {
   const anchorSummary = summarizeDomElement(anchor);
   const parentSummary = summarizeDomElement(anchor.parentElement);
   const siblingSummaries = collectSiblingSummaries(anchor);
+  const pageStructure = collectPageStructureHints();
   const stableSelectors = [safeSelector];
   if (anchor.id) stableSelectors.push(`#${anchor.id}`);
   const role = anchor.getAttribute("role");
@@ -2046,6 +2161,11 @@ function buildAddDomContext(selector, traceId = "") {
         siblings: siblingSummaries,
         stableSelectors: Array.from(new Set(stableSelectors)).slice(0, 8)
       },
+      viewport: {
+        width: window.innerWidth || 0,
+        height: window.innerHeight || 0
+      },
+      pageStructure,
       pageText: getPagePlainText(),
       extractedContext: context?.context || {},
       capability: capability?.capability || null

@@ -20,6 +20,8 @@ const FeaturePlanner = (() => {
     const reasons = [];
     const score = capability?.capabilityScore || 0;
     const isFolderRequest = /folder|organize chat|group chat|chat folder|new folder/.test(text);
+    const parityHints = /(chatgpt projects|projects parity|same as chatgpt|native app parity|full parity|exact clone)/i;
+    const serverSyncHints = /(sync across devices|server sync|account-wide|backend sync|database sync)/i;
 
     const crossSurfaceHints = /(sidebar|header|footer|multiple sections|across page|across tabs|cross page|different areas)/i;
     const deepIntegrationHints = /(integrate|sync with|gemini internals|existing app state|server state|api integration|backend)/i;
@@ -30,6 +32,8 @@ const FeaturePlanner = (() => {
     if (deepIntegrationHints.test(text)) reasons.push("requires_internal_api");
     if (dragDropHints.test(text) && !isFolderRequest) reasons.push("requires_dragdrop");
     if (advancedRuntimeHints.test(text)) reasons.push("high_runtime_risk");
+    if (isFolderRequest && parityHints.test(text)) reasons.push("projects_parity_requested");
+    if (isFolderRequest && serverSyncHints.test(text)) reasons.push("server_sync_required");
     if (score < (isFolderRequest ? 30 : 45)) reasons.push("low_page_capability");
 
     const classification = reasons.length ? "too_complex" : "supported";
@@ -55,6 +59,12 @@ const FeaturePlanner = (() => {
     }
     if (reasons.includes("requires_internal_api")) {
       steps.push("Use extension-managed state first, then integrate with app APIs later if needed.");
+    }
+    if (reasons.includes("projects_parity_requested")) {
+      steps.push("Start with a projects-like v1: local folders, select-to-assign chats, and reload persistence.");
+    }
+    if (reasons.includes("server_sync_required")) {
+      steps.push("Keep v1 local-only first, then add backend sync in a dedicated follow-up step.");
     }
     return steps.slice(0, 4);
   }
@@ -392,6 +402,34 @@ const FeaturePlanner = (() => {
         className: "webedit-theme-dark",
         expandedLabel: "Dark mode on",
         collapsedLabel: "Dark mode off"
+      };
+    }
+    if (generated.featureClass === "folderSystem") {
+      spec.generated_module = {
+        ...(spec.generated_module || {}),
+        controller: "folderGeminiController",
+        requiredDataAttributes: [
+          "data-webedit-folder-module",
+          "data-webedit-folder-source",
+          "data-webedit-folder-list",
+          "data-webedit-folder-panel"
+        ],
+        interactionModel: "select-chat-then-click-folder"
+      };
+      spec.metadata = {
+        ...(spec.metadata || {}),
+        contract: "folder_v1_deterministic"
+      };
+      const tests = Array.isArray(spec.validation?.tests) ? spec.validation.tests : [];
+      tests.push(
+        { type: "selectorExists", selector: "[data-webedit-folder-module='1']" },
+        { type: "selectorExists", selector: "[data-webedit-folder-source='1']" },
+        { type: "selectorExists", selector: "[data-webedit-folder-list='1']" }
+      );
+      spec.validation = {
+        ...(spec.validation || {}),
+        tests,
+        required: Array.from(new Set([...(spec.validation?.required || []), "folder_contract_ready"]))
       };
     }
 

@@ -40,6 +40,9 @@ interface FeatureSpec {
   position?: "before" | "after" | "inside" | "replace";
   html?: string;
   css?: string;
+  generated_module?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  [key: string]: unknown;
 }
 
 function escapeHtml(value: unknown): string {
@@ -53,6 +56,84 @@ function escapeHtml(value: unknown): string {
 
 function asNonEmptyString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function isFolderIntent(prompt: string, context?: unknown): boolean {
+  const text = `${asNonEmptyString(prompt)} ${typeof context === "string" ? context : JSON.stringify(context || {})}`.toLowerCase();
+  return /folder|organize chat|group chat|chat folder|project-like|projects-like/.test(text);
+}
+
+function resolveAnchorSelector(context?: unknown): string {
+  const ctx = (context && typeof context === "object") ? (context as Record<string, unknown>) : {};
+  const direct = asNonEmptyString(ctx.selector) || asNonEmptyString(ctx.targetSelector);
+  if (direct) return direct;
+  const anchorElement = (ctx.anchorElement && typeof ctx.anchorElement === "object")
+    ? (ctx.anchorElement as Record<string, unknown>)
+    : {};
+  const anchorSelector = asNonEmptyString(anchorElement.selector);
+  if (anchorSelector) return anchorSelector;
+  const addDomContext = (ctx.addDomContext && typeof ctx.addDomContext === "object")
+    ? (ctx.addDomContext as Record<string, unknown>)
+    : {};
+  const anchor = (addDomContext.anchor && typeof addDomContext.anchor === "object")
+    ? (addDomContext.anchor as Record<string, unknown>)
+    : {};
+  return asNonEmptyString(anchor.selector);
+}
+
+function buildDeterministicFolderSpec(anchorSelector: string): FeatureSpec {
+  const scopeClass = `webedit-folder-module-${Date.now()}`;
+  return {
+    action: "add",
+    selector: anchorSelector,
+    targetSelector: anchorSelector,
+    position: "inside",
+    html: `
+<section class="${scopeClass}" data-webedit-folder-module="1">
+  <div class="${scopeClass}__toolbar">
+    <button type="button" class="${scopeClass}__new" data-webedit-folder-toggle-panel="1">New Folder+</button>
+  </div>
+  <div class="${scopeClass}__panel" data-webedit-folder-panel="1" hidden>
+    <div class="${scopeClass}__source-wrap">
+      <div class="${scopeClass}__label">Chats</div>
+      <ul class="${scopeClass}__source" data-webedit-folder-source="1"></ul>
+    </div>
+    <div class="${scopeClass}__folders-wrap">
+      <div class="${scopeClass}__label">Folders</div>
+      <div class="${scopeClass}__list" data-webedit-folder-list="1"></div>
+    </div>
+  </div>
+</section>
+    `.trim(),
+    css: `
+.${scopeClass} { position:relative; display:flex; justify-content:flex-end; margin:6px 0; }
+.${scopeClass}__new { width:80px; min-width:80px; height:20px; border:1px solid #374151; background:#111827; color:#fff; border-radius:8px; padding:0 6px; cursor:pointer; font-size:11px; line-height:18px; text-align:center; }
+.${scopeClass}__panel { position:absolute; top:26px; right:0; width:min(440px, 92vw); border:1px solid #d1d5db; border-radius:10px; padding:10px; background:#fff; box-shadow:0 10px 24px rgba(15, 23, 42, 0.16); z-index:2147483647; display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.${scopeClass}__label { font-size:12px; font-weight:600; color:#374151; margin-bottom:6px; }
+.${scopeClass}__source { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; min-height:120px; max-height:280px; overflow:auto; }
+.${scopeClass}__list { display:flex; flex-direction:column; gap:8px; min-height:120px; }
+    `.trim(),
+    generated_module: {
+      moduleId: `folder-system-${Date.now()}`,
+      title: "Folder System",
+      controller: "folderGeminiController",
+      requiredDataAttributes: [
+        "data-webedit-folder-module",
+        "data-webedit-folder-source",
+        "data-webedit-folder-list",
+        "data-webedit-folder-panel"
+      ],
+      stateSchema: {
+        keys: ["folders", "assignments", "selectedChat"],
+        defaults: { folders: [], assignments: {}, selectedChat: "" }
+      },
+      interactionModel: "select-chat-then-click-folder"
+    },
+    metadata: {
+      stage: "generation-postprocess",
+      contract: "folder_v1_deterministic"
+    }
+  };
 }
 
 const SYSTEM_PROMPT = `You are an AI assistant that generates structured feature specifications for web editing actions.
@@ -239,6 +320,14 @@ if (typeof denoServe !== "function") {
         },
         500,
       );
+    }
+
+    if (isFolderIntent(prompt, context)) {
+      const anchorSelector = resolveAnchorSelector(context);
+      if (!anchorSelector) {
+        return buildJsonResponse({ ok: false, error: "Folder generation requires an anchor selector from picked section." }, 400);
+      }
+      spec = buildDeterministicFolderSpec(anchorSelector);
     }
 
     if (spec.action === "add") {

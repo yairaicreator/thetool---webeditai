@@ -306,6 +306,7 @@ function bindControllerForMarker(spec, markerId, root = document, options = {}) 
     };
     const state = loadState();
     const hostState = getHostState();
+    hostState.ordinalBySignature = hostState.ordinalBySignature || {};
     const hashString = (value) => {
       const input = String(value || "");
       let hash = 2166136261;
@@ -322,10 +323,16 @@ function bindControllerForMarker(spec, markerId, root = document, options = {}) 
       if (existing) return existing;
       const href = el.getAttribute("href") || "";
       const aria = el.getAttribute("aria-label") || "";
-      const signature = `${String(text || "").trim().toLowerCase()}|${String(href).trim().toLowerCase()}|${String(aria).trim().toLowerCase()}`;
+      const testId = el.getAttribute("data-testid") || "";
+      const role = el.getAttribute("role") || "";
+      const parent = el.parentElement;
+      const siblingIndex = parent ? Array.from(parent.children || []).indexOf(el) : index;
+      const signature = `${String(text || "").trim().toLowerCase()}|${String(href).trim().toLowerCase()}|${String(aria).trim().toLowerCase()}|${String(testId).trim().toLowerCase()}|${String(role).trim().toLowerCase()}|idx-${siblingIndex}`;
       let nextId = hostState.signatureToId[signature];
       if (!nextId) {
-        nextId = `chat-${hashString(signature || `index-${index}`)}`;
+        const ordinal = Number(hostState.ordinalBySignature[signature] || 0) + 1;
+        hostState.ordinalBySignature[signature] = ordinal;
+        nextId = `chat-${hashString(`${signature || "sig"}|index-${index}|ord-${ordinal}`)}`;
         hostState.signatureToId[signature] = nextId;
       }
       el.setAttribute("data-webedit-folder-chat-id", nextId);
@@ -335,9 +342,14 @@ function bindControllerForMarker(spec, markerId, root = document, options = {}) 
     const collectChatCandidates = () => {
       const hostExclusion = `[${INSERT_MARKER_ATTR}="${escapeForSelector(markerId)}"]`;
       const selectors = [
+        "nav [data-testid*='conversation' i], nav [data-testid*='chat' i]",
+        "aside [data-testid*='conversation' i], aside [data-testid*='chat' i]",
+        "[data-testid*='conversation' i], [data-test-id*='conversation' i]",
+        "nav [role='listitem'], aside [role='listitem']",
+        "a[href*='/app/'], a[href*='?chat=']",
+        "[aria-label*='chat' i] a, [aria-label*='chat' i] button, [aria-label*='chat' i] [role='button']",
         "nav a, nav button, nav [role='button']",
         "aside a, aside button, aside [role='button']",
-        "[aria-label*='chat' i] a, [aria-label*='chat' i] button, [aria-label*='chat' i] [role='button']",
         "a, button, [role='button']"
       ];
       const map = new Map();
@@ -346,13 +358,24 @@ function bindControllerForMarker(spec, markerId, root = document, options = {}) 
           if (!(node instanceof Element)) return;
           if (!isVisibleElement(node)) return;
           if (node.closest(hostExclusion)) return;
-          const text = (node.textContent || "").replace(/\s+/g, " ").trim();
+          const text = (node.textContent || node.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim();
           if (!text || text.length < 2) return;
-          if (/new folder\+|rename|delete|undo|apply|refine/i.test(text)) return;
+          if (/new folder\+|rename|delete|undo|apply|refine|preview|reopen/i.test(text)) return;
+          const href = node.getAttribute("href") || "";
+          const testId = node.getAttribute("data-testid") || node.getAttribute("data-test-id") || "";
+          const role = node.getAttribute("role") || "";
+          const signature = `${text.toLowerCase()}|${href.toLowerCase()}|${testId.toLowerCase()}|${role.toLowerCase()}`;
           const id = assignChatId(node, map.size + 1, text);
           if (!id) return;
-          if (!map.has(id)) {
-            map.set(id, { id, text, node });
+          const existing = map.get(id);
+          if (!existing) {
+            map.set(id, { id, text, node, signature });
+          } else {
+            const currentScore = (existing.testId ? 2 : 0) + (existing.href ? 1 : 0);
+            const nextScore = (testId ? 2 : 0) + (href ? 1 : 0);
+            if (nextScore > currentScore) {
+              map.set(id, { id, text, node, signature, href, testId });
+            }
           }
         });
       });
@@ -361,12 +384,18 @@ function bindControllerForMarker(spec, markerId, root = document, options = {}) 
 
     const renderSourceList = (candidates) => {
       source.innerHTML = "";
+      const diagnostics = document.createElement("li");
+      diagnostics.className = "webedit-folder-drop-empty";
+      diagnostics.textContent = candidates.length
+        ? "Tip: select a chat, then click inside a folder area to assign it."
+        : "No chats found in visible list. Scroll/open sidebar chats, then click New Folder+ again.";
+      source.appendChild(diagnostics);
       const assignedSet = new Set(Object.keys(state.assignments || {}));
       const unassigned = candidates.filter((c) => !assignedSet.has(c.id));
       if (unassigned.length === 0) {
         const empty = document.createElement("li");
         empty.className = "webedit-folder-drop-empty";
-        empty.textContent = "No unassigned chats";
+        empty.textContent = candidates.length ? "No unassigned chats" : "No chats found in visible list";
         source.appendChild(empty);
         return;
       }

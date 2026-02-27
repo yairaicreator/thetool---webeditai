@@ -307,7 +307,8 @@
       ...(baseContext || {}),
       selector: anchorSelector,
       targetSelector: anchorSelector,
-      anchorElement: lastPickedTarget || undefined
+      anchorElement: lastPickedTarget || undefined,
+      traceId
     };
     const aiResp = await aiClient.generateFeatureSpec(promptText, aiContext);
     if (!aiResp?.ok || !aiResp?.spec) {
@@ -383,7 +384,10 @@
 
     const planner = window.FeaturePlanner;
     if (!planner || typeof planner.buildAddSpecFromModule !== "function") {
-      const fallback = await buildAddSpecViaAiFallback(promptText, baseContext, anchorSelector, resolvedTraceId);
+      const fallback = await buildAddSpecViaAiFallback(promptText, {
+        ...(baseContext || {}),
+        addDomContext: domContext
+      }, anchorSelector, resolvedTraceId);
       if (fallback.ok) return { ...fallback, capability, domContext, traceId: resolvedTraceId };
       return { ok: false, stage: "generation", error: fallback.error || "Feature module generator is not available." };
     }
@@ -1688,6 +1692,14 @@
             const pageContextResp = await sendToActiveTab({ type: "GET_PAGE_CONTEXT" });
             const pageContext = pageContextResp?.response?.pageContext || {};
             pageContext.anchorElement = lastPickedTarget;
+            const domContextResp = await sendToActiveTab({
+              type: "GET_ADD_DOM_CONTEXT",
+              selector: lastPickedTarget.selector,
+              traceId: emergencyTraceId
+            });
+            if (domContextResp?.response?.ok && domContextResp?.response?.addDomContext) {
+              pageContext.addDomContext = domContextResp.response.addDomContext;
+            }
             const fallback = await buildAddSpecViaAiFallback(
               text,
               pageContext,
