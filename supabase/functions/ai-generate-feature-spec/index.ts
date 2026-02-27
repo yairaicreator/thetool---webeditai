@@ -11,7 +11,7 @@ type DenoLikeGlobal = typeof globalThis & {
 };
 
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
-const GEMINI_MODEL = "gemini-3.1-pro-preview";
+const GEMINI_MODEL = "gemini-1.5-pro";
 
 interface FeatureSpec {
   action: "hide" | "customize" | "add" | "text" | "chat" | "undo" | "reveal";
@@ -185,7 +185,7 @@ if (typeof denoServe !== "function") {
     const userMessage = buildUserMessage(prompt, context);
 
     const geminiPayload = {
-      system_instruction: {
+      systemInstruction: {
         parts: [{ text: SYSTEM_PROMPT }],
       },
       contents: [
@@ -201,7 +201,7 @@ if (typeof denoServe !== "function") {
     };
 
     const geminiResponse = await fetch(
-      `${GEMINI_API_BASE}/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(apiKey)}`,
+      `${GEMINI_API_BASE}/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
       {
       method: "POST",
       headers: {
