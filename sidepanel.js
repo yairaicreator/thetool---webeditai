@@ -287,6 +287,11 @@
     return `add-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   }
 
+  function isNormalizeStringRuntimeError(error) {
+    const msg = String(error?.message || error || "").toLowerCase();
+    return msg.includes("normalizestring") && msg.includes("not defined");
+  }
+
   async function buildAddSpecViaAiFallback(promptText, baseContext, anchorSelector, traceId = "") {
     const aiClient = window.SupabaseClient;
     if (!aiClient || typeof aiClient.generateFeatureSpec !== "function") {
@@ -391,9 +396,23 @@
       addDomContext: domContext
     };
 
-    const forcedFeatureClass = typeof planner.routeFeatureClass === "function"
-      ? planner.routeFeatureClass(promptText, plannerCtx, capability)
-      : null;
+    let forcedFeatureClass = null;
+    try {
+      forcedFeatureClass = typeof planner.routeFeatureClass === "function"
+        ? planner.routeFeatureClass(promptText, plannerCtx, capability)
+        : null;
+    } catch (error) {
+      if (isNormalizeStringRuntimeError(error)) {
+        const fallback = await buildAddSpecViaAiFallback(promptText, plannerCtx, anchorSelector, resolvedTraceId);
+        if (fallback.ok) return { ...fallback, capability, domContext, traceId: resolvedTraceId };
+      }
+      return {
+        ok: false,
+        stage: "generation",
+        error: error?.message || "Planner routing failed during add spec generation.",
+        traceId: resolvedTraceId
+      };
+    }
 
     let built;
     try {
@@ -1661,6 +1680,47 @@
         });
         thinking.content = "✅ Preview ready. Review and click Apply.";
       } catch (e) {
+        // Last-resort rescue path: if planner runtime is stale and throws normalizeString errors,
+        // bypass planner entirely and generate/preview through AI fallback.
+        if (isNormalizeStringRuntimeError(e) && lastPickedTarget?.selector) {
+          try {
+            const emergencyTraceId = createAddTraceId();
+            const pageContextResp = await sendToActiveTab({ type: "GET_PAGE_CONTEXT" });
+            const pageContext = pageContextResp?.response?.pageContext || {};
+            pageContext.anchorElement = lastPickedTarget;
+            const fallback = await buildAddSpecViaAiFallback(
+              text,
+              pageContext,
+              lastPickedTarget.selector,
+              emergencyTraceId
+            );
+            if (fallback.ok && fallback.spec) {
+              const hydrated = await ensureRenderableAddSpec(fallback.spec, text, pageContext, fallback.spec);
+              const fallbackSpec = hydrated?.ok && hydrated.spec ? hydrated.spec : fallback.spec;
+              const previewResp = await sendToActiveTab({
+                type: "PREVIEW_FEATURE_SPEC",
+                spec: fallbackSpec,
+                traceId: String(fallbackSpec?.metadata?.traceId || emergencyTraceId)
+              });
+              if (previewResp?.response?.ok) {
+                addPreviewMessage({
+                  previewId: previewResp.response.previewId,
+                  feature_type: fallbackSpec.action,
+                  confidence: fallbackSpec.confidence,
+                  warnings: fallbackSpec.warnings || [],
+                  spec: fallbackSpec,
+                  previewKind: "spec"
+                });
+                thinking.content = "✅ Preview ready. Review and click Apply.";
+                renderChatMessages();
+                saveChatHistory();
+                return;
+              }
+            }
+          } catch (_) {
+            // fall through to canonical error message
+          }
+        }
         console.error("[Add Feature] Spec preview failed:", e);
         thinking.content = `❌ I couldn't generate a preview.\nReason: ${e.message || "Unknown error"}`;
       }
