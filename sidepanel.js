@@ -280,27 +280,47 @@
     return `${labels[stage] || stage}: ${detail}`;
   }
 
-  function isFolderIntent(text) {
-    return /folder|organize chat|group chat|chat folder|new folder/i.test(String(text || ""));
-  }
-
+  
   function createAddTraceId() {
     return `add-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   }
 
-  function isNormalizeStringRuntimeError(error) {
-    const msg = String(error?.message || error || "").toLowerCase();
-    return msg.includes("normalizestring") && msg.includes("not defined");
-  }
+  
+      async function buildAddSpecPipeline(promptText, baseContext, previousSpec = null, traceId = "") {
+    const anchorSelector = lastPickedTarget?.selector || previousSpec?.targetSelector || previousSpec?.selector || "";
+    if (!anchorSelector) {
+      return { ok: false, stage: "capability", error: "No anchor selected. Pick a target section first." };
+    }
 
-  async function buildAddSpecViaAiFallback(promptText, baseContext, anchorSelector, traceId = "") {
+    const resolvedTraceId = String(traceId || createAddTraceId());
+    const domContextResp = await sendToActiveTab({
+      type: "GET_ADD_DOM_CONTEXT",
+      selector: anchorSelector,
+      traceId: resolvedTraceId
+    });
+    const domContext = domContextResp?.response?.addDomContext || null;
+    const capability = domContext?.capability || null;
+    
+    if (!domContextResp?.response?.ok || !domContext) {
+      const authLikeError = String(domContextResp?.error || "").toLowerCase();
+      if (authLikeError.includes("not authorized")) {
+        return { ok: false, stage: "auth", error: "Please sign in before generating Add features.", traceId: resolvedTraceId };
+      }
+      return {
+        ok: false,
+        stage: "capability",
+        error: domContextResp?.response?.error || domContextResp?.error || "DOM context extraction failed.",
+        traceId: resolvedTraceId
+      };
+    }
+
     const aiClient = window.SupabaseClient;
     if (!aiClient || typeof aiClient.generateFeatureSpec !== "function") {
       return {
         ok: false,
         stage: "generation",
-        error: "Fallback generator is unavailable. Please reload the extension.",
-        traceId
+        error: "AI generator is unavailable. Please reload the extension.",
+        traceId: resolvedTraceId
       };
     }
 
@@ -309,15 +329,28 @@
       selector: anchorSelector,
       targetSelector: anchorSelector,
       anchorElement: lastPickedTarget || undefined,
-      traceId
+      addDomContext: domContext,
+      traceId: resolvedTraceId
     };
+
     const aiResp = await aiClient.generateFeatureSpec(promptText, aiContext);
+
+    if (aiResp && aiResp.error === "too_complex") {
+       return {
+         ok: false,
+         stage: "complexity",
+         error: "This request is too complex for one reliable step.",
+         decompositionSteps: Array.isArray(aiResp.decompositionSteps) ? aiResp.decompositionSteps : [],
+         traceId: resolvedTraceId
+       };
+    }
+
     if (!aiResp?.ok || !aiResp?.spec) {
       return {
         ok: false,
         stage: "generation",
-        error: aiResp?.error || "Fallback generation failed.",
-        traceId
+        error: aiResp?.error || "Generation failed.",
+        traceId: resolvedTraceId
       };
     }
 
@@ -336,141 +369,12 @@
 
     spec.metadata = {
       ...(spec.metadata || {}),
-      stage: "generation-fallback",
-      traceId
-    };
-
-    return { ok: true, spec, traceId };
-  }
-
-  async function buildAddSpecPipeline(promptText, baseContext, previousSpec = null, traceId = "") {
-    const anchorSelector = lastPickedTarget?.selector || previousSpec?.targetSelector || previousSpec?.selector || "";
-    if (!anchorSelector) {
-      return { ok: false, stage: "capability", error: "No anchor selected. Pick a target section first." };
-    }
-
-    const resolvedTraceId = String(traceId || createAddTraceId());
-    const domContextResp = await sendToActiveTab({
-      type: "GET_ADD_DOM_CONTEXT",
-      selector: anchorSelector,
+      stage: "generation",
+      capabilityScore: capability?.capabilityScore,
       traceId: resolvedTraceId
-    });
-    const domContext = domContextResp?.response?.addDomContext || null;
-    const capability = domContext?.capability || null;
-    if (!domContextResp?.response?.ok || !domContext) {
-      const authLikeError = String(domContextResp?.error || "").toLowerCase();
-      if (authLikeError.includes("not authorized")) {
-        return { ok: false, stage: "auth", error: "Please sign in before generating Add features.", traceId: resolvedTraceId };
-      }
-      return {
-        ok: false,
-        stage: "capability",
-        error: domContextResp?.response?.error || domContextResp?.error || "DOM context extraction failed.",
-        traceId: resolvedTraceId
-      };
-    }
-
-    if (capability.recommendation === "simplified_ui_only") {
-      const folderIntent = isFolderIntent(promptText);
-      if (folderIntent && (capability.capabilityScore || 0) >= 30) {
-        // Allow folder flows in DOM-reorganization mode on medium capability pages.
-      } else {
-      return {
-        ok: false,
-        stage: "capability",
-        error: "This page cannot safely run a complex generated module. Try a simpler feature or pick a more stable section."
-      };
-      }
-    }
-
-    const planner = window.FeaturePlanner;
-    if (!planner || typeof planner.buildAddSpecFromModule !== "function") {
-      const fallback = await buildAddSpecViaAiFallback(promptText, {
-        ...(baseContext || {}),
-        addDomContext: domContext
-      }, anchorSelector, resolvedTraceId);
-      if (fallback.ok) return { ...fallback, capability, domContext, traceId: resolvedTraceId };
-      return { ok: false, stage: "generation", error: fallback.error || "Feature module generator is not available." };
-    }
-
-    const plannerCtx = {
-      ...(baseContext || {}),
-      selector: anchorSelector,
-      anchorElement: lastPickedTarget,
-      previousSpec: previousSpec || undefined,
-      addDomContext: domContext
     };
 
-    let forcedFeatureClass = null;
-    try {
-      forcedFeatureClass = typeof planner.routeFeatureClass === "function"
-        ? planner.routeFeatureClass(promptText, plannerCtx, capability)
-        : null;
-    } catch (error) {
-      if (isNormalizeStringRuntimeError(error)) {
-        const fallback = await buildAddSpecViaAiFallback(promptText, plannerCtx, anchorSelector, resolvedTraceId);
-        if (fallback.ok) return { ...fallback, capability, domContext, traceId: resolvedTraceId };
-      }
-      return {
-        ok: false,
-        stage: "generation",
-        error: error?.message || "Planner routing failed during add spec generation.",
-        traceId: resolvedTraceId
-      };
-    }
-
-    let built;
-    try {
-      built = planner.buildAddSpecFromModule(promptText, plannerCtx, capability, { forcedFeatureClass });
-    } catch (error) {
-      const msg = String(error?.message || "");
-      if (/normalizeString is not defined/i.test(msg)) {
-        const fallback = await buildAddSpecViaAiFallback(promptText, plannerCtx, anchorSelector, resolvedTraceId);
-        if (fallback.ok) return { ...fallback, capability, domContext, traceId: resolvedTraceId };
-      }
-      return {
-        ok: false,
-        stage: "generation",
-        error: error?.message || "Planner threw during add spec generation.",
-        traceId: resolvedTraceId
-      };
-    }
-    if (!built?.ok || !built?.spec) {
-      return {
-        ok: false,
-        stage: built?.stage || "generation",
-        code: built?.code || null,
-        error: built?.error || "Could not generate module artifacts.",
-        decompositionSteps: Array.isArray(built?.decompositionSteps) ? built.decompositionSteps : [],
-        traceId: resolvedTraceId
-      };
-    }
-    const addContract = typeof window.validateAddSpecContract === "function"
-      ? window.validateAddSpecContract({
-          ...built.spec,
-          targetSelector: anchorSelector,
-          selector: built.spec.selector || anchorSelector
-        })
-      : { ok: true, spec: built.spec };
-    if (!addContract?.ok || !addContract?.spec) {
-      return {
-        ok: false,
-        stage: addContract?.stage || "contract",
-        error: addContract?.error || "Add contract validation failed.",
-        traceId: resolvedTraceId
-      };
-    }
-    const finalSpec = {
-      ...addContract.spec,
-      metadata: {
-        ...(addContract.spec.metadata || {}),
-        stage: "generation",
-        capabilityScore: capability.capabilityScore,
-        traceId: resolvedTraceId
-      }
-    };
-
-    return { ok: true, spec: finalSpec, capability, domContext, traceId: resolvedTraceId };
+    return { ok: true, spec, capability, domContext, traceId: resolvedTraceId };
   }
 
   function isYesText(text) {
@@ -557,131 +461,17 @@
     return true;
   }
 
-  async function ensureRenderableAddSpec(spec, promptText, pageContext = {}, previousSpec = null) {
-    const isDarkModePrompt = /dark mode|night mode|theme/i.test(String(promptText || ""));
-    const isLinkPrompt = /youtube|youtu\.be|link|url|hyperlink|href|anchor|open|visit|go to|website|web page|webpage|http/i.test(String(promptText || ""));
-    const hasDarkModeCoverage = (cssText = "") => {
-      const css = String(cssText || "").toLowerCase();
-      const hasBackground = /(background|background-color)/.test(css);
-      const hasTextColor = /color\s*:/.test(css);
-      const hasInteractive = /button|input|textarea|select|a\b/.test(css);
-      const hasContainerCoverage = /(main|section|article|div|\[role="main"\])/.test(css);
-      return hasBackground && hasTextColor && hasInteractive && hasContainerCoverage;
-    };
-    const buildLinkFallback = (base = {}) => {
-      const firstUrlMatch = String(promptText || "").match(/https?:\/\/[^\s)]+/i);
-      const href = firstUrlMatch?.[0] || (/youtube|youtu\.be/i.test(String(promptText || "")) ? "https://www.youtube.com/" : "https://example.com/");
-      return {
-        ...base,
-        action: "add",
-        targetSelector: base.targetSelector || base.selector || lastPickedTarget?.selector || "",
-        selector: base.selector || base.targetSelector || lastPickedTarget?.selector || "",
-        position: base.position || "inside",
-        html: `<div data-webedit-generated-module="1" style="border:1px solid #cbd5e1;border-radius:10px;padding:10px;background:#f8fafc;display:flex;align-items:center;gap:8px;">
-          <a href="${href}" target="_blank" rel="noopener noreferrer"
-             style="display:inline-flex;align-items:center;gap:6px;background:#111827;color:#fff;border-radius:8px;padding:6px 10px;text-decoration:none;font-size:13px;font-weight:600;">
-            Open Link
-          </a>
-          <span style="font-size:12px;color:#334155;overflow-wrap:anywhere;">${href}</span>
-        </div>`,
-        css: base.css || "",
-        js: base.js || ""
-      };
-    };
-    const buildGenericFunctionalFallback = (base = {}) => {
-      const safeText = escapeHtml(
-        String(base?.description || base?.purpose || base?.name || promptText || "New feature").trim()
-      );
-      return {
-        ...base,
-        action: "add",
-        targetSelector: base.targetSelector || base.selector || lastPickedTarget?.selector || "",
-        selector: base.selector || base.targetSelector || lastPickedTarget?.selector || "",
-        position: base.position || "inside",
-        html: `<div data-webedit-generated-module="1" style="border:1px solid #cbd5e1;border-radius:10px;padding:10px;background:#f8fafc;">
-          <div style="font-size:13px;color:#111827;line-height:1.4;">${safeText}</div>
-        </div>`,
-        css: base.css || "",
-        js: base.js || ""
-      };
-    };
-
-    const next = spec ? { ...spec } : null;
-    if (!next || next.action !== "add") return { ok: true, spec: next };
-    const generatedHtml = next.generated_module?.html || "";
-    const generatedCss = next.generated_module?.css || "";
-    const generatedJs = next.generated_module?.js || "";
-    const hasRenderable = !!((next.html && String(next.html).trim()) || (next.content && String(next.content).trim()) || (generatedHtml && String(generatedHtml).trim()));
-    if (hasRenderable) {
-      if ((!next.html || !String(next.html).trim()) && generatedHtml) next.html = generatedHtml;
-      if ((!next.css || !String(next.css).trim()) && generatedCss) next.css = generatedCss;
-      if ((!next.js || !String(next.js).trim()) && generatedJs) next.js = generatedJs;
-      const htmlText = String(next.html || "").toLowerCase();
-      const contentText = String(next.content || "").toLowerCase();
-      const isPlaceholder =
-        htmlText.includes("feature request:") ||
-        contentText.startsWith("feature request:") ||
-        contentText === String(promptText || "").trim().toLowerCase();
-      if (isPlaceholder) {
-        if (isLinkPrompt) {
-          return { ok: true, spec: buildLinkFallback(next) };
-        }
-        return { ok: true, spec: buildGenericFunctionalFallback(next) };
-      }
-      if (isDarkModePrompt) {
-        const combinedCss = `${next.css || ""}\n${generatedCss || ""}`;
-        if (!hasDarkModeCoverage(combinedCss)) {
-          return {
-            ok: false,
-            stage: "generation_quality_failed",
-            error: "Dark mode output is incomplete. It must update background, text, and interactive surfaces."
-          };
-        }
-      }
-      return { ok: true, spec: next };
-    }
-
-    const rebuilt = await buildAddSpecPipeline(promptText, pageContext, previousSpec || next);
-    if (!rebuilt.ok || !rebuilt.spec) {
-      if (isLinkPrompt) {
-        return { ok: true, spec: buildLinkFallback(next || {}) };
-      }
-      return { ok: true, spec: buildGenericFunctionalFallback(next || {}) };
-    }
-    return { ok: true, spec: rebuilt.spec };
-  }
-
-  function forceMinimalAddRenderable(spec, promptText = "") {
-    const next = spec ? { ...spec } : null;
-    if (!next || next.action !== "add") return next;
-    const hasRenderable = !!((next.html && String(next.html).trim()) || (next.content && String(next.content).trim()));
-    if (hasRenderable) return next;
-    const safeText = (next.description || next.purpose || next.name || promptText || "New feature").toString().trim();
-    const escaped = escapeHtml(safeText);
-    next.html = `<div data-webedit-generated-module="1" style="border:1px dashed #94a3b8;padding:8px;border-radius:8px;background:#f8fafc;">${escaped}</div>`;
-    if (!next.css) next.css = "";
-    if (!next.js) next.js = "";
-    if (!next.content) next.content = safeText;
-    return next;
-  }
-
-  async function orchestrateAddSpec(promptText, pageContext, previousSpec = null, traceId = "") {
+  
+  
+    async function orchestrateAddSpec(promptText, pageContext, previousSpec = null, traceId = "") {
     const runTraceId = String(traceId || createAddTraceId());
     const built = await buildAddSpecPipeline(promptText, pageContext, previousSpec, runTraceId);
     if (!built.ok || !built.spec) return built;
 
-    const hydrated = await ensureRenderableAddSpec(built.spec, promptText, pageContext, previousSpec || built.spec);
-    if (!hydrated.ok || !hydrated.spec) {
-      return {
-        ok: false,
-        stage: hydrated?.stage || "generation",
-        error: hydrated?.error || "Refinement could not generate renderable Add code.",
-        traceId: runTraceId
-      };
-    }
     const validated = typeof window.validateAddSpecContract === "function"
-      ? window.validateAddSpecContract(hydrated.spec)
-      : { ok: true, spec: hydrated.spec };
+      ? window.validateAddSpecContract(built.spec)
+      : { ok: true, spec: built.spec };
+      
     if (!validated?.ok || !validated?.spec) {
       return {
         ok: false,
@@ -1632,14 +1422,7 @@
           const traceId = String(nextSpec?.metadata?.traceId || refineTraceId);
           console.info(`[SidePanel Add][${traceId}] refine-preview-start`);
           let previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec: nextSpec, previewId, traceId });
-          if (!previewResp?.response?.ok && nextSpec?.action === "add") {
-            const errText = String(previewResp?.response?.error || "");
-            if (errText.includes("add requires html or content")) {
-              const forced = forceMinimalAddRenderable(nextSpec, text);
-              previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec: forced, previewId, traceId });
-              nextSpec = forced;
-            }
-          }
+          
           if (previewResp?.response?.ok) {
             addPreviewMessage({
               previewId: previewResp.response.previewId,
@@ -1771,14 +1554,7 @@
         const traceId = String(spec?.metadata?.traceId || addTraceId);
         console.info(`[SidePanel Add][${traceId}] add-preview-start`);
         let previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec, traceId });
-        if (!previewResp?.response?.ok) {
-          const errText = String(previewResp?.response?.error || "");
-          if (errText.includes("add requires html or content")) {
-            const forced = forceMinimalAddRenderable(spec, text);
-            previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec: forced, traceId });
-            spec = forced;
-          }
-        }
+        
         if (!previewResp?.response?.ok) {
           throw new Error(previewResp?.response?.error || "Preview failed");
         }
@@ -1796,53 +1572,7 @@
       } catch (e) {
         // Last-resort rescue path: if planner runtime is stale and throws normalizeString errors,
         // bypass planner entirely and generate/preview through AI fallback.
-        if (isNormalizeStringRuntimeError(e) && lastPickedTarget?.selector) {
-          try {
-            const emergencyTraceId = createAddTraceId();
-            const pageContextResp = await sendToActiveTab({ type: "GET_PAGE_CONTEXT" });
-            const pageContext = pageContextResp?.response?.pageContext || {};
-            pageContext.anchorElement = lastPickedTarget;
-            const domContextResp = await sendToActiveTab({
-              type: "GET_ADD_DOM_CONTEXT",
-              selector: lastPickedTarget.selector,
-              traceId: emergencyTraceId
-            });
-            if (domContextResp?.response?.ok && domContextResp?.response?.addDomContext) {
-              pageContext.addDomContext = domContextResp.response.addDomContext;
-            }
-            const fallback = await buildAddSpecViaAiFallback(
-              text,
-              pageContext,
-              lastPickedTarget.selector,
-              emergencyTraceId
-            );
-            if (fallback.ok && fallback.spec) {
-              const hydrated = await ensureRenderableAddSpec(fallback.spec, text, pageContext, fallback.spec);
-              const fallbackSpec = hydrated?.ok && hydrated.spec ? hydrated.spec : fallback.spec;
-              const previewResp = await sendToActiveTab({
-                type: "PREVIEW_FEATURE_SPEC",
-                spec: fallbackSpec,
-                traceId: String(fallbackSpec?.metadata?.traceId || emergencyTraceId)
-              });
-              if (previewResp?.response?.ok) {
-                addPreviewMessage({
-                  previewId: previewResp.response.previewId,
-                  feature_type: fallbackSpec.action,
-                  confidence: fallbackSpec.confidence,
-                  warnings: fallbackSpec.warnings || [],
-                  spec: fallbackSpec,
-                  previewKind: "spec"
-                });
-                thinking.content = "✅ Preview ready. Review and click Apply.";
-                renderChatMessages();
-                saveChatHistory();
-                return;
-              }
-            }
-          } catch (_) {
-            // fall through to canonical error message
-          }
-        }
+        
         console.error("[Add Feature] Spec preview failed:", e);
         thinking.content = `❌ I couldn't generate a preview.\nReason: ${e.message || "Unknown error"}`;
       }

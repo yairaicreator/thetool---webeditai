@@ -58,84 +58,6 @@ function asNonEmptyString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function isFolderIntent(prompt: string, context?: unknown): boolean {
-  const text = `${asNonEmptyString(prompt)} ${typeof context === "string" ? context : JSON.stringify(context || {})}`.toLowerCase();
-  return /folder|organize chat|group chat|chat folder|project-like|projects-like/.test(text);
-}
-
-function resolveAnchorSelector(context?: unknown): string {
-  const ctx = (context && typeof context === "object") ? (context as Record<string, unknown>) : {};
-  const direct = asNonEmptyString(ctx.selector) || asNonEmptyString(ctx.targetSelector);
-  if (direct) return direct;
-  const anchorElement = (ctx.anchorElement && typeof ctx.anchorElement === "object")
-    ? (ctx.anchorElement as Record<string, unknown>)
-    : {};
-  const anchorSelector = asNonEmptyString(anchorElement.selector);
-  if (anchorSelector) return anchorSelector;
-  const addDomContext = (ctx.addDomContext && typeof ctx.addDomContext === "object")
-    ? (ctx.addDomContext as Record<string, unknown>)
-    : {};
-  const anchor = (addDomContext.anchor && typeof addDomContext.anchor === "object")
-    ? (addDomContext.anchor as Record<string, unknown>)
-    : {};
-  return asNonEmptyString(anchor.selector);
-}
-
-function buildDeterministicFolderSpec(anchorSelector: string): FeatureSpec {
-  const scopeClass = `webedit-folder-module-${Date.now()}`;
-  return {
-    action: "add",
-    selector: anchorSelector,
-    targetSelector: anchorSelector,
-    position: "inside",
-    html: `
-<section class="${scopeClass}" data-webedit-folder-module="1">
-  <div class="${scopeClass}__toolbar">
-    <button type="button" class="${scopeClass}__new" data-webedit-folder-toggle-panel="1">New Folder+</button>
-  </div>
-  <div class="${scopeClass}__panel" data-webedit-folder-panel="1" hidden>
-    <div class="${scopeClass}__source-wrap">
-      <div class="${scopeClass}__label">Chats</div>
-      <ul class="${scopeClass}__source" data-webedit-folder-source="1"></ul>
-    </div>
-    <div class="${scopeClass}__folders-wrap">
-      <div class="${scopeClass}__label">Folders</div>
-      <div class="${scopeClass}__list" data-webedit-folder-list="1"></div>
-    </div>
-  </div>
-</section>
-    `.trim(),
-    css: `
-.${scopeClass} { position:relative; display:flex; justify-content:flex-end; margin:6px 0; }
-.${scopeClass}__new { width:80px; min-width:80px; height:20px; border:1px solid #374151; background:#111827; color:#fff; border-radius:8px; padding:0 6px; cursor:pointer; font-size:11px; line-height:18px; text-align:center; }
-.${scopeClass}__panel { position:absolute; top:26px; right:0; width:min(440px, 92vw); border:1px solid #d1d5db; border-radius:10px; padding:10px; background:#fff; box-shadow:0 10px 24px rgba(15, 23, 42, 0.16); z-index:2147483647; display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-.${scopeClass}__label { font-size:12px; font-weight:600; color:#374151; margin-bottom:6px; }
-.${scopeClass}__source { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; min-height:120px; max-height:280px; overflow:auto; }
-.${scopeClass}__list { display:flex; flex-direction:column; gap:8px; min-height:120px; }
-    `.trim(),
-    generated_module: {
-      moduleId: `folder-system-${Date.now()}`,
-      title: "Folder System",
-      controller: "folderGeminiController",
-      requiredDataAttributes: [
-        "data-webedit-folder-module",
-        "data-webedit-folder-source",
-        "data-webedit-folder-list",
-        "data-webedit-folder-panel"
-      ],
-      stateSchema: {
-        keys: ["folders", "assignments", "selectedChat"],
-        defaults: { folders: [], assignments: {}, selectedChat: "" }
-      },
-      interactionModel: "select-chat-then-click-folder"
-    },
-    metadata: {
-      stage: "generation-postprocess",
-      contract: "folder_v1_deterministic"
-    }
-  };
-}
-
 const SYSTEM_PROMPT = `You are an AI assistant that generates structured feature specifications for web editing actions.
 
 CRITICAL SCOPE:
@@ -143,7 +65,8 @@ CRITICAL SCOPE:
 - You are NEVER editing the extension itself (the side panel, chat bubble, or WebEdit AI UI).
 - Terms like "chat bar", "input box", "panel", "header", or "button" used by the user ALWAYS refer to elements on the host webpage.
 
-Given a user prompt and page context, you must return ONLY valid JSON matching this exact schema:
+Given a user prompt and page context, you must evaluate the complexity of the request.
+If the request is actionable and can be done reliably in a single UI generation step, return ONLY valid JSON matching this exact schema:
 
 {
   "action": "hide" | "customize" | "add" | "text" | "chat" | "undo" | "reveal",
@@ -161,13 +84,30 @@ Given a user prompt and page context, you must return ONLY valid JSON matching t
   "targetSelector": "CSS selector for reference element (required if action is add with position)",
   "html": "For add actions ONLY: HTML snippet to insert. Use semantic markup and prefix custom classes with 'webedit-ai-'. Omit this field for other actions.",
   "css": "For add actions ONLY: CSS rules targeting classes used in html. No <style> tags. Omit this field for other actions.",
-  "behavior": "Optional for add: safe interactivity descriptor. Use this for click-to-expand/collapse etc. Do NOT output JavaScript."
+  "behavior": "Optional for add: safe interactivity descriptor. Use this for click-to-expand/collapse etc. Do NOT output JavaScript.",
+  "generated_module": {
+    "controller": "Optional string (e.g. 'folderGeminiController' if complex interactive components like folders are needed)",
+    "stateSchema": { ...optional state schema... }
+  }
+}
+
+If the request is TOO COMPLEX (e.g., requires multiple separate functional steps, server sync, or disjoint actions that cannot be reliably generated at once), return a complexity JSON instead:
+
+{
+  "error": "too_complex",
+  "decompositionSteps": [
+    {
+      "id": "step_1",
+      "title": "Short title for step 1",
+      "executionPrompt": "A highly specific prompt that we will feed back to you to execute ONLY step 1."
+    }
+  ]
 }
 
 Action types:
 - "hide": Hide/remove an element (needs selector)
 - "customize": Modify styles of an element (needs selector and styles)
-- "add": Insert new content (needs content, position, and optionally targetSelector)
+- "add": Insert new content (needs content, position, and optionally targetSelector). Provide html/css exactly as requested.
 - "text": Change text content (needs selector and content)
 - "chat": General conversation or answer about the page (needs content). Use this for non-edit requests.
 - "undo": Revert a previously applied edit (needs targetId from activeSpecs in context).
@@ -178,17 +118,25 @@ Rules:
 2. Include only fields that are relevant to the action.
 3. CSS selectors should be specific and stable. Use IDs or unique class combinations from the context.
 4. If context is provided, use it to generate more accurate selectors or to answer questions about the page content.
-5. For add actions, the HTML should represent the requested feature (buttons, cards, links, etc.) using accessible markup.
+5. For add actions, the HTML must exactly match the user's request. If they want just a button, generate ONLY a button. Do NOT wrap it in unnecessary containers unless required.
 6. Classes inside the HTML must start with "webedit-ai-" to avoid conflicts.
-7. INTERACTIVITY: If the user requests interactive behavior (toggle/expand/collapse), you MUST NOT output JavaScript. Instead:\n   - Provide HTML/CSS for the control.\n   - Provide a \"behavior\" object describing a safe, whitelisted action. The extension will bind the click handler.\n   - Preferred: behavior.type=\"toggleClass\" where the click toggles className on behavior.targetSelector.\n   - Use triggerAttr \"data-webedit-ai-action\" and triggerValue \"toggle\" on the clickable element.\n   - Make selectors stable: prefer [data-testid], [role], aria-label, IDs. Avoid long class chains.\n   - Provide CSS rules that implement both states via the toggled class.
+7. INTERACTIVITY: If the user requests interactive behavior (toggle/expand/collapse), you MUST NOT output JavaScript. Instead:
+   - Provide HTML/CSS for the control.
+   - Provide a "behavior" object describing a safe, whitelisted action. The extension will bind the click handler.
+   - Preferred: behavior.type="toggleClass" where the click toggles className on behavior.targetSelector.
+   - Use triggerAttr "data-webedit-ai-action" and triggerValue "toggle" on the clickable element.
+   - Make selectors stable: prefer [data-testid], [role], aria-label, IDs. Avoid long class chains.
+   - Provide CSS rules that implement both states via the toggled class.
 8. If the user wants to "return", "restore", or "un-hide" something, look at "activeSpecs" in the context, find the relevant spec ID, and return {"action": "undo", "targetId": "..."}.
 9. If the prompt is a general question about the page text, return {"action": "chat", "content": "..."}.
 10. If the user asks to "restore header", "bring back header", "unhide nav", or if the user complains about missing UI elements and no specific undo target is found, return {"action": "reveal"}.
+11. You are completely responsible for generating the right UI and deciding if it needs to be broken down into steps.
 
 Example responses:
 {"action":"hide","selector":"#cookie-banner"}
 {"action":"chat","content":"The main article on this page discusses the impact of AI on web development."}
-{"action":"undo","targetId":"chg-1735182000000-abc12345"}`;
+{"action":"undo","targetId":"chg-1735182000000-abc12345"}
+{"error":"too_complex","decompositionSteps":[{"id":"step_1","title":"Create Button","executionPrompt":"Add a button labeled 'New Folder+'"}]}`;
 
 const denoServe = (globalThis as DenoLikeGlobal).Deno?.serve;
 
@@ -311,6 +259,11 @@ if (typeof denoServe !== "function") {
     }
 
     // Validate spec structure
+    if (spec.error === "too_complex") {
+      // Allow complexity error payload to pass through directly
+      return buildJsonResponse(spec, 200);
+    }
+
     const validActions = ["hide", "customize", "add", "text", "chat", "undo", "reveal"];
     if (!spec.action || !validActions.includes(spec.action)) {
       return buildJsonResponse(
@@ -320,14 +273,6 @@ if (typeof denoServe !== "function") {
         },
         500,
       );
-    }
-
-    if (isFolderIntent(prompt, context)) {
-      const anchorSelector = resolveAnchorSelector(context);
-      if (!anchorSelector) {
-        return buildJsonResponse({ ok: false, error: "Folder generation requires an anchor selector from picked section." }, 400);
-      }
-      spec = buildDeterministicFolderSpec(anchorSelector);
     }
 
     if (spec.action === "add") {
