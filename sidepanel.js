@@ -67,7 +67,8 @@
   let lastPickedTarget = null; // { selector, description }
   let pendingAiAnchorRequest = null; // { text } waiting for Pick Element anchor
   let pendingPreviewRefine = null; // { previewId, plan }
-  let pendingComplexDecomposition = null; // { awaiting: "confirm"|"pick_step", steps: string[] }
+  let pendingComplexDecomposition = null; // { awaiting: "confirm"|"pick_step", steps: {id,title,executionPrompt}[] }
+  let pendingDecompositionExecution = null; // { id, title }
 
   function ensureFeatureControlsLayout() {
     const legacySelectors = [
@@ -482,13 +483,73 @@
     return t === "no" || t === "n" || t === "cancel" || t === "stop";
   }
 
+  function normalizeDecompositionSteps(rawSteps = []) {
+    const steps = Array.isArray(rawSteps) ? rawSteps : [];
+    return steps
+      .map((step, index) => {
+        if (typeof step === "string") {
+          const title = step.trim();
+          if (!title) return null;
+          return {
+            id: `step_${index + 1}`,
+            title,
+            executionPrompt: title
+          };
+        }
+        if (step && typeof step === "object") {
+          const title = String(step.title || step.label || step.executionPrompt || "").trim();
+          if (!title) return null;
+          const executionPrompt = String(step.executionPrompt || title).trim();
+          return {
+            id: String(step.id || `step_${index + 1}`),
+            title,
+            executionPrompt
+          };
+        }
+        return null;
+      })
+      .filter(Boolean)
+      .slice(0, 4);
+  }
+
+  function parseDecompositionStepSelection(inputText, maxStep) {
+    const text = String(inputText || "").trim();
+    if (!text) return { stepNumber: null, ambiguous: false };
+
+    if (/^\d+$/.test(text)) {
+      const stepNumber = Number.parseInt(text, 10);
+      return {
+        stepNumber: Number.isInteger(stepNumber) && stepNumber >= 1 && stepNumber <= maxStep ? stepNumber : null,
+        ambiguous: false
+      };
+    }
+
+    const prefixed = text.match(/^(\d+)\s*[.)\-:]/);
+    if (prefixed) {
+      const stepNumber = Number.parseInt(prefixed[1], 10);
+      return {
+        stepNumber: Number.isInteger(stepNumber) && stepNumber >= 1 && stepNumber <= maxStep ? stepNumber : null,
+        ambiguous: false
+      };
+    }
+
+    const matches = Array.from(text.matchAll(/\b(\d+)\b/g))
+      .map((m) => Number.parseInt(m[1], 10))
+      .filter((n) => Number.isInteger(n) && n >= 1 && n <= maxStep);
+    const unique = Array.from(new Set(matches));
+    if (unique.length === 1) return { stepNumber: unique[0], ambiguous: false };
+    if (unique.length > 1) return { stepNumber: null, ambiguous: true };
+    return { stepNumber: null, ambiguous: false };
+  }
+
   function beginComplexityDecomposition(decompositionSteps = []) {
-    const steps = Array.isArray(decompositionSteps) ? decompositionSteps.filter(Boolean).slice(0, 4) : [];
+    const steps = normalizeDecompositionSteps(decompositionSteps);
     if (!steps.length) return false;
     pendingComplexDecomposition = {
       awaiting: "confirm",
       steps
     };
+    pendingDecompositionExecution = null;
     addChatMessage(
       "assistant",
       "This request is too complex for one reliable step. Would you like me to break it into smaller reliable steps? (yes/no)"
@@ -798,10 +859,33 @@
         actions.appendChild(refineBtn);
         actions.appendChild(reopenBtn);
         msgEl.appendChild(actions);
+      } else if (msg.type === "decomposition") {
+        const data = msg.content || {};
+        const titleEl = document.createElement("div");
+        titleEl.className = "webedit-chat-message-content";
+        titleEl.textContent = "Choose the first step to implement:";
+        msgEl.appendChild(titleEl);
+
+        const steps = Array.isArray(data.steps) ? data.steps : [];
+        const listEl = document.createElement("div");
+        listEl.className = "webedit-chat-message-content";
+        listEl.textContent = steps.map((step, index) => `${index + 1}. ${String(step?.title || "").trim()}`).join("\n");
+        msgEl.appendChild(listEl);
+
+        const actions = document.createElement("div");
+        actions.className = "webedit-preview-actions";
+        steps.forEach((_, index) => {
+          const stepBtn = document.createElement("button");
+          stepBtn.className = "webedit-btn-small webedit-btn-secondary";
+          stepBtn.textContent = `Step ${index + 1}`;
+          stepBtn.addEventListener("click", () => handleSend(String(index + 1)));
+          actions.appendChild(stepBtn);
+        });
+        msgEl.appendChild(actions);
       } else {
         const contentEl = document.createElement("div");
         contentEl.className = "webedit-chat-message-content";
-        contentEl.textContent = msg.content;
+        contentEl.textContent = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content || "");
         msgEl.appendChild(contentEl);
       }
       els.chatMessages.appendChild(msgEl);
@@ -1433,10 +1517,11 @@
         addChatMessage("user", text);
         if (isYesText(text)) {
           state.awaiting = "pick_step";
-          const lines = state.steps.map((s, i) => `${i + 1}. ${s}`).join("\n");
-          addChatMessage("assistant", `Great. Choose the first step to implement by number:\n${lines}`);
+          addChatMessage("assistant", "Great. Choose the first step to implement by number.");
+          addChatMessage("decomposition", { steps: state.steps });
         } else if (isNoText(text)) {
           pendingComplexDecomposition = null;
+          pendingDecompositionExecution = null;
           addChatMessage("assistant", "Understood. I won't break it down now.");
         } else {
           addChatMessage("assistant", "Please reply yes or no.");
@@ -1448,15 +1533,27 @@
 
       if (state.awaiting === "pick_step") {
         addChatMessage("user", text);
-        const stepNumber = Number.parseInt(text, 10);
+        const parsed = parseDecompositionStepSelection(text, state.steps.length);
+        if (parsed.ambiguous) {
+          addChatMessage("assistant", `I found multiple step numbers in your pasted text. Please send only one step number (1-${state.steps.length}).`);
+          renderChatMessages();
+          saveChatHistory();
+          return;
+        }
+
+        const stepNumber = parsed.stepNumber;
         if (Number.isInteger(stepNumber) && stepNumber >= 1 && stepNumber <= state.steps.length) {
-          const chosenStep = state.steps[stepNumber - 1];
+          const chosenStep = state.steps[stepNumber - 1] || {};
           pendingComplexDecomposition = null;
-          addChatMessage("assistant", `Implementing step ${stepNumber}: ${chosenStep}`);
+          pendingDecompositionExecution = {
+            id: String(chosenStep.id || `step_${stepNumber}`),
+            title: String(chosenStep.title || "").trim()
+          };
+          addChatMessage("assistant", `Implementing step ${stepNumber}: ${String(chosenStep.title || "").trim()}`);
           isAddFeatureMode = true;
           renderChatMessages();
           saveChatHistory();
-          handleSend(chosenStep);
+          handleSend(String(chosenStep.executionPrompt || chosenStep.title || ""));
           return;
         }
         addChatMessage("assistant", `Please pick a number between 1 and ${state.steps.length}.`);
@@ -1631,7 +1728,19 @@
         const pageContext = pageContextResp?.response?.pageContext || {};
         pageContext.anchorElement = lastPickedTarget;
 
-        const orchestrated = await orchestrateAddSpec(text, pageContext, null, addTraceId);
+        let orchestrated = await orchestrateAddSpec(text, pageContext, null, addTraceId);
+        if (!orchestrated.ok && orchestrated.stage === "complexity" && pendingDecompositionExecution) {
+          const selectedStepTitle = pendingDecompositionExecution.title || "selected step";
+          const onePassPrompt = `Implement only this minimal step now: ${selectedStepTitle}. Keep exactly one interactive action and no additional scope.`;
+          orchestrated = await orchestrateAddSpec(onePassPrompt, pageContext, null, addTraceId);
+          if (!orchestrated.ok) {
+            pendingDecompositionExecution = null;
+            thinking.content = "⚠️ I simplified your selected step to one minimal action, but it is still too broad. Please choose a smaller step (for example: create only the New Folder+ button first).";
+            renderChatMessages();
+            saveChatHistory();
+            return;
+          }
+        }
         if (!orchestrated.ok) {
           if (orchestrated.stage === "complexity" && beginComplexityDecomposition(orchestrated.decompositionSteps || [])) {
             thinking.content = "⚠️ Request needs decomposition before reliable implementation.";
@@ -1682,6 +1791,7 @@
           spec,
           previewKind: "spec"
         });
+        pendingDecompositionExecution = null;
         thinking.content = "✅ Preview ready. Review and click Apply.";
       } catch (e) {
         // Last-resort rescue path: if planner runtime is stale and throws normalizeString errors,

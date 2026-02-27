@@ -45,26 +45,68 @@ const FeaturePlanner = (() => {
   }
 
   function proposeDecompositionSteps(prompt, reasons = []) {
-    const steps = [];
     const text = normalizePrompt(prompt);
-    const label = text || "your feature";
+    const lower = text.toLowerCase();
+    const compactLabel = (() => {
+      if (!text) return "your feature";
+      if (/folder|organize chat|group chat|chat folder|new folder/.test(lower)) {
+        return "chat folders in the sidebar";
+      }
+      if (/dark mode|theme|night mode/.test(lower)) {
+        return "a site-wide dark mode toggle";
+      }
+      const singleLine = text.replace(/\s+/g, " ").trim();
+      return singleLine.length > 80 ? `${singleLine.slice(0, 77)}...` : singleLine;
+    })();
 
-    steps.push(`Create a minimal working version of ${label} with one interactive action.`);
-    steps.push("Add persistence for this core action so state survives reload.");
+    /** @type {{id:string,title:string,executionPrompt:string}[]} */
+    const steps = [
+      {
+        id: "step_1_minimal",
+        title: `Build a minimal working version of ${compactLabel}.`,
+        executionPrompt: `Implement only step 1 for ${compactLabel}: create one minimal working UI with exactly one interaction. Do not add drag/drop, cross-section behavior, or advanced integrations yet.`
+      },
+      {
+        id: "step_2_persistence",
+        title: "Add persistence so this core interaction survives reload.",
+        executionPrompt: `Implement only step 2 for ${compactLabel}: persist the current minimal feature state so it survives page refresh/reload. Keep existing behavior unchanged.`
+      }
+    ];
+
     if (reasons.includes("requires_dragdrop")) {
-      steps.push("Replace drag/drop with a simple move action (e.g., select item then assign).");
+      steps.push({
+        id: "step_dragdrop_simplify",
+        title: "Replace drag/drop with select-then-assign interaction.",
+        executionPrompt: `Implement only this step for ${compactLabel}: replace drag/drop with a simpler interaction (select item, then assign to target).`
+      });
     }
     if (reasons.includes("cross_surface")) {
-      steps.push("Implement it in one page section first, then extend to other sections.");
+      steps.push({
+        id: "step_scope_single_section",
+        title: "Implement in one section first, then extend later.",
+        executionPrompt: `Implement only this step for ${compactLabel}: apply the feature in one page section first and avoid cross-page/cross-section expansion.`
+      });
     }
     if (reasons.includes("requires_internal_api")) {
-      steps.push("Use extension-managed state first, then integrate with app APIs later if needed.");
+      steps.push({
+        id: "step_local_state_first",
+        title: "Use extension-managed local state first.",
+        executionPrompt: `Implement only this step for ${compactLabel}: use local extension-managed state only, without integrating internal app APIs yet.`
+      });
     }
     if (reasons.includes("projects_parity_requested")) {
-      steps.push("Start with a projects-like v1: local folders, select-to-assign chats, and reload persistence.");
+      steps.push({
+        id: "step_projects_v1",
+        title: "Ship a projects-like v1 with local folders and chat assignment.",
+        executionPrompt: `Implement only this step for ${compactLabel}: local folders, select-to-assign chats, and reload persistence. Do not attempt full ChatGPT parity.`
+      });
     }
     if (reasons.includes("server_sync_required")) {
-      steps.push("Keep v1 local-only first, then add backend sync in a dedicated follow-up step.");
+      steps.push({
+        id: "step_local_then_sync",
+        title: "Keep v1 local-only; backend sync later.",
+        executionPrompt: `Implement only this step for ${compactLabel}: keep v1 local-only and defer backend/server sync to a follow-up.`
+      });
     }
     return steps.slice(0, 4);
   }
