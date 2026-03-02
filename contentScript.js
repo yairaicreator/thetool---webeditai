@@ -134,7 +134,7 @@ function openSandboxedPreview(previewId, title, deadHtml, generatedCode, callbac
   iframe.sandbox = "allow-scripts"; // strict sandbox
   iframe.style.cssText = "flex: 1; border: none; width: 100%; height: 100%; background: #fafafa;";
 
-  const srcdoc = \`
+  const srcdoc = `
     <!DOCTYPE html>
     <html>
       <head>
@@ -142,17 +142,17 @@ function openSandboxedPreview(previewId, title, deadHtml, generatedCode, callbac
         <style>
           body { margin: 0; padding: 20px; font-family: sans-serif; }
           /* Injected CSS */
-          \${generatedCode?.css || ""}
+          ${generatedCode?.css || ""}
         </style>
       </head>
       <body>
         <div id="dead-ui-container">
-          \${deadHtml}
+          ${deadHtml}
         </div>
         <script>
           (function() {
              try {
-               \${generatedCode?.js || ""}
+               ${generatedCode?.js || ""}
              } catch(e) {
                console.error("Preview Lab Script Error:", e);
              }
@@ -160,7 +160,7 @@ function openSandboxedPreview(previewId, title, deadHtml, generatedCode, callbac
         </script>
       </body>
     </html>
-  \`;
+  `;
   iframe.srcdoc = srcdoc;
 
   container.appendChild(header);
@@ -169,17 +169,17 @@ function openSandboxedPreview(previewId, title, deadHtml, generatedCode, callbac
   // Placement Control (if Add)
   if (callbacks.onChangePlacement) {
     const placementBar = document.createElement("div");
-    placementBar.style.cssText = \`
+    placementBar.style.cssText = `
       padding: 8px 10px; background: #f9fafb; border-top: 1px solid #e5e7eb; font-size: 12px; color: #4b5563;
       display: flex; gap: 10px; align-items: center;
-    \`;
-    placementBar.innerHTML = \`<span>Placement relative to picked section:</span>
+    `;
+    placementBar.innerHTML = `<span>Placement relative to picked section:</span>
       <select id="webedit-preview-placement" style="font-size:12px; padding: 2px 4px; border: 1px solid #d1d5db; border-radius: 4px; background: white;">
         <option value="inside">Inside</option>
         <option value="before">Before</option>
         <option value="after">After</option>
       </select>
-    \`;
+    `;
     container.appendChild(placementBar);
     const selectEl = placementBar.querySelector("select");
     selectEl.value = callbacks.initialPlacement || "inside";
