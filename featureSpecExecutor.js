@@ -401,7 +401,24 @@ async function applyFeatureSpec(spec, options = {}) {
 
       // Inject CSS (if present) before insertion so initial paint has styles.
       const injectedStyle = injectCss(css, id, root);
-      insertNodes(el, nodesToInsert, position);
+
+      const doInsertNodes = (target, nodes, pos) => {
+        if (pos === "inside") {
+          nodes.forEach((n) => target.appendChild(n));
+        } else if (pos === "before") {
+          nodes.forEach((n) => target.parentNode?.insertBefore(n, target));
+        } else if (pos === "after") {
+          nodes.reverse().forEach((n) => target.parentNode?.insertBefore(n, target.nextSibling));
+        } else if (pos === "replace") {
+          const parent = target.parentNode;
+          if (parent) {
+            nodes.forEach((n) => parent.insertBefore(n, target));
+            parent.removeChild(target);
+          }
+        }
+      };
+
+      doInsertNodes(el, nodesToInsert, position);
 
       // Bind safe behavior triggers inside inserted content (click handlers implemented by the extension).
       try {
