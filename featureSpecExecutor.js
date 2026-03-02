@@ -259,8 +259,12 @@ async function applyFeatureSpec(spec, options = {}) {
       const previousPriority = el.style.getPropertyPriority("display");
       const previousAttr = el.getAttribute(HIDE_MARKER_ATTR);
 
-      el.style.setProperty("display", "none", "important");
-      el.setAttribute(HIDE_MARKER_ATTR, id);
+      if (previousDisplay !== "none" || previousPriority !== "important") {
+        el.style.setProperty("display", "none", "important");
+      }
+      if (previousAttr !== String(id)) {
+        el.setAttribute(HIDE_MARKER_ATTR, id);
+      }
 
       const applied = { id, spec, timestamp, undo: { action: "hide", selector: spec.selector, previousDisplay, previousPriority, previousAttr } };
       if (!replay && !skipPersist) {
@@ -285,7 +289,10 @@ async function applyFeatureSpec(spec, options = {}) {
         if (!prop) continue;
         previous[prop] = el.style.getPropertyValue(prop);
         previousPriority[prop] = el.style.getPropertyPriority(prop);
-        el.style.setProperty(prop, String(v), "important");
+        const strV = String(v);
+        if (previous[prop] !== strV || previousPriority[prop] !== "important") {
+          el.style.setProperty(prop, strV, "important");
+        }
       }
 
       const applied = { id, spec, timestamp, undo: { action: "customize", selector: spec.selector, previous, previousPriority } };
@@ -308,7 +315,9 @@ async function applyFeatureSpec(spec, options = {}) {
 
       if (position === "replace") {
         const previousText = el.textContent;
-        el.textContent = content;
+        if (el.textContent !== content) {
+          el.textContent = content;
+        }
         const applied = { id, spec, timestamp, undo: { action: "text-replace", selector: spec.selector, previousText } };
         if (!replay && !skipPersist) {
           undoStack.push(applied);
@@ -316,6 +325,19 @@ async function applyFeatureSpec(spec, options = {}) {
           await persistAppend(spec);
         }
         return { ok: true, applied };
+      }
+
+      // Check if already injected
+      const already = safeQueryAll(`[${INSERT_MARKER_ATTR}="${CSS.escape(id)}"]`, root);
+      if (already.length > 0 && replay && skipPersist) {
+        return { ok: true, applied: { id, spec, timestamp, undo: { action: "text-insert", markerId: id } } };
+      }
+      if (already.length > 0) {
+        already.forEach((node) => {
+          try {
+            if (node && node.parentNode) node.parentNode.removeChild(node);
+          } catch (_) {}
+        });
       }
 
       const node = document.createTextNode(content);
@@ -351,6 +373,12 @@ async function applyFeatureSpec(spec, options = {}) {
       // If this spec already rendered for this id, remove stale nodes/styles first.
       // This is required for preview placement changes (before/inside/after/replace).
       const already = safeQueryAll(`[${INSERT_MARKER_ATTR}="${CSS.escape(id)}"]`, root);
+      
+      // Prevent MutationObserver infinite loops during SPA remounts
+      if (already.length > 0 && replay && skipPersist) {
+        return { ok: true, applied: { id, spec, timestamp, undo: { action: "add", markerId: id } } };
+      }
+
       if (already.length > 0) {
         already.forEach((node) => {
           try {
@@ -420,17 +448,6 @@ async function applyFeatureSpec(spec, options = {}) {
 
       doInsertNodes(el, nodesToInsert, position);
 
-      // Bind safe behavior triggers inside inserted content (click handlers implemented by the extension).
-      try {
-        bindBehaviorForMarker(spec, id, root);
-      } catch (e) {
-        console.warn("[WebEdit AI] Failed to bind behavior:", e?.message || e);
-      }
-      try {
-        bindControllerForMarker(spec, id, root, { preview });
-      } catch (e) {
-        console.warn("[WebEdit AI] Failed to bind controller:", e?.message || e);
-      }
       if (js) {
         runScopedScript(js, root);
       }

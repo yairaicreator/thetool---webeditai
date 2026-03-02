@@ -599,7 +599,13 @@ function clearAppliedCloudEdits(activeIds = new Set()) {
       node.hasAttribute("data-webedit-ai-insert-id");
   };
 
-  const shouldKeep = (id) => id && activeIds.has(String(id));
+  const shouldKeep = (id) => {
+    try {
+      return id && activeIds.has(String(id));
+    } catch (err) {
+      return false;
+    }
+  };
 
   // 1) Remove injected "Add" features (cloud-managed only)
   try {
@@ -740,7 +746,10 @@ function applyCustomizeEdit(editId, payload) {
     styleEl.id = styleId;
     head.appendChild(styleEl);
   }
-  styleEl.textContent = `/* WebEdit cloud customize: ${editId} */\n${css}\n`;
+  const newText = `/* WebEdit cloud customize: ${editId} */\n${css}\n`;
+  if (styleEl.textContent !== newText) {
+    styleEl.textContent = newText;
+  }
   return true;
 }
 
@@ -759,16 +768,34 @@ function applyHideEdit(editId, payload) {
     if (el.closest && (el.closest(`[${WEBEDIT_CLOUD_EDIT_ATTR}]`) || el.closest("[data-webedit-feature-id]"))) return;
 
     try {
+      let mutated = false;
+      const hideClass = `${WEBEDIT_HIDDEN_CLASS_PREFIX}${editId}`;
+
       // Save original inline display only once
       if (!el.hasAttribute(WEBEDIT_ORIG_DISPLAY_ATTR)) {
         el.setAttribute(WEBEDIT_ORIG_DISPLAY_ATTR, el.style.getPropertyValue("display") || "");
         el.setAttribute(WEBEDIT_ORIG_DISPLAY_PRIO_ATTR, el.style.getPropertyPriority("display") || "");
+        mutated = true;
       }
 
-      el.classList.add(`${WEBEDIT_HIDDEN_CLASS_PREFIX}${editId}`);
-      el.setAttribute(WEBEDIT_MANAGED_ATTR, "1");
-      el.style.setProperty("display", "none", "important");
-      count += 1;
+      if (!el.classList.contains(hideClass)) {
+        el.classList.add(hideClass);
+        mutated = true;
+      }
+
+      if (!el.hasAttribute(WEBEDIT_MANAGED_ATTR)) {
+        el.setAttribute(WEBEDIT_MANAGED_ATTR, "1");
+        mutated = true;
+      }
+
+      if (el.style.getPropertyValue("display") !== "none" || el.style.getPropertyPriority("display") !== "important") {
+        el.style.setProperty("display", "none", "important");
+        mutated = true;
+      }
+
+      if (mutated) {
+        count += 1;
+      }
     } catch (_) {}
   });
   return count;
@@ -927,7 +954,8 @@ async function rebuildCloudEdits(reason = "unknown") {
         return { ok: false, skipped: true, reason: "fetch-unavailable" };
       }
       // Deterministic correctness: clear everything we manage, then reapply ACTIVE edits in order.
-      const clearSummary = clearAppliedCloudEdits(edits);
+      const activeIdsSet = new Set(edits.map(e => String(e?.id || e?.edit_id || e?.editId)));
+      const clearSummary = clearAppliedCloudEdits(activeIdsSet);
       // stable order (server orders by created_at asc, but keep client-side fallback)
       edits.sort((a, b) => String(a?.created_at || "").localeCompare(String(b?.created_at || "")));
       const result = await applyActiveEditsInOrder(edits);
@@ -1173,7 +1201,7 @@ try {
   };
 
   // DOM remount watcher: on heavy SPA remounts, reapply edits after a short debounce.
-  const observer = new MutationObserver(() => {
+  const observer = new MutationObserver((mutations) => {
     scheduleSpaReapply("mutation");
   });
   observer.observe(document.documentElement, { subtree: true, childList: true });
