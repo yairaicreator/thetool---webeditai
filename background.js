@@ -481,75 +481,80 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === "WEBEDIT_SIDEPANEL_COMMAND") {
     (async () => {
-      const resolved = await resolveReadyTabContext(sender?.tab?.id || null);
-      if (!resolved?.ok || !resolved?.tabContext?.tab?.id) {
-        sendResponse({
-          ok: false,
-          error: resolved?.error || "No active tab found"
-        });
-        return;
-      }
-      const tabId = resolved.tabContext.tab.id;
-
-      const relayResult = await sendMessageToTab(tabId, {
-        type: "WEBEDIT_SIDEPANEL_COMMAND",
-        payload: message.payload || {}
-      });
-      if (!relayResult.ok && typeof relayResult.error === "string" && relayResult.error.includes("Receiving end does not exist")) {
-        // One internal retry for transient runtime startup races.
-        await waitMs(180);
-        const retryResolved = await resolveReadyTabContext(sender?.tab?.id || null);
-        const retryTabId = retryResolved?.ok ? retryResolved?.tabContext?.tab?.id : null;
-        if (retryTabId) {
-          const retryRelay = await sendMessageToTab(retryTabId, {
-            type: "WEBEDIT_SIDEPANEL_COMMAND",
-            payload: message.payload || {}
+      try {
+        const resolved = await resolveReadyTabContext(sender?.tab?.id || null);
+        if (!resolved?.ok || !resolved?.tabContext?.tab?.id) {
+          sendResponse({
+            ok: false,
+            error: resolved?.error || "No active tab found"
           });
-          if (retryRelay.ok) {
-            sendResponse({ ok: true, response: retryRelay.response || null });
-            return;
+          return;
+        }
+        const tabId = resolved.tabContext.tab.id;
+
+        const relayResult = await sendMessageToTab(tabId, {
+          type: "WEBEDIT_SIDEPANEL_COMMAND",
+          payload: message.payload || {}
+        });
+        if (!relayResult.ok && typeof relayResult.error === "string" && relayResult.error.includes("Receiving end does not exist")) {
+          // One internal retry for transient runtime startup races.
+          await waitMs(180);
+          const retryResolved = await resolveReadyTabContext(sender?.tab?.id || null);
+          const retryTabId = retryResolved?.ok ? retryResolved?.tabContext?.tab?.id : null;
+          if (retryTabId) {
+            const retryRelay = await sendMessageToTab(retryTabId, {
+              type: "WEBEDIT_SIDEPANEL_COMMAND",
+              payload: message.payload || {}
+            });
+            if (retryRelay.ok) {
+              sendResponse({ ok: true, response: retryRelay.response || null });
+              return;
+            }
           }
         }
+        if (!relayResult.ok) {
+          sendResponse({ ok: false, error: relayResult.error || "Failed to deliver command to tab" });
+          return;
+        }
+        sendResponse({ ok: true, response: relayResult.response || null });
+      } catch (error) {
+        sendResponse({ ok: false, error: error.message || String(error) });
       }
-      if (!relayResult.ok) {
-        sendResponse({ ok: false, error: relayResult.error || "Failed to deliver command to tab" });
-        return;
-      }
-      sendResponse({ ok: true, response: relayResult.response || null });
     })();
-    return true;
+    return true; // async response
   }
 
   // Legacy message relay: sidepanel.js -> background.js -> contentScript.js (active tab)
-  if (message?.type !== "WEBEDIT_SIDEPANEL_SEND_MESSAGE") {
-    // fall through to auth handlers below
-  } else {
+  if (message?.type === "WEBEDIT_SIDEPANEL_SEND_MESSAGE") {
     (async () => {
-      const tabContext = await resolveTargetTabContext(sender?.tab?.id || null);
-      const tabId = tabContext?.tab?.id || null;
-      if (!tabId) {
-        sendResponse({ ok: false, error: "No active tab found" });
-        return;
-      }
+      try {
+        const tabContext = await resolveTargetTabContext(sender?.tab?.id || null);
+        const tabId = tabContext?.tab?.id || null;
+        if (!tabId) {
+          sendResponse({ ok: false, error: "No active tab found" });
+          return;
+        }
 
-      const deferState = await shouldDeferPageMessaging(tabContext.tab);
-      if (deferState.defer) {
-        sendResponse({ ok: false, error: deferState.error });
-        return;
-      }
+        const deferState = await shouldDeferPageMessaging(tabContext.tab);
+        if (deferState.defer) {
+          sendResponse({ ok: false, error: deferState.error });
+          return;
+        }
 
-      const relayResult = await sendMessageToTab(tabId, {
-        type: "WEBEDIT_FROM_SIDEPANEL",
-        text: String(message.text || ""),
-        at: Date.now()
-      });
-      if (!relayResult.ok) {
-        sendResponse({ ok: false, error: relayResult.error || "Failed to forward message to tab" });
-        return;
+        const relayResult = await sendMessageToTab(tabId, {
+          type: "WEBEDIT_FROM_SIDEPANEL",
+          text: String(message.text || ""),
+          at: Date.now()
+        });
+        if (!relayResult.ok) {
+          sendResponse({ ok: false, error: relayResult.error || "Failed to forward message to tab" });
+          return;
+        }
+        sendResponse({ ok: true, forwarded: true, tabId, response: relayResult.response || null });
+      } catch (error) {
+        sendResponse({ ok: false, error: error.message || String(error) });
       }
-      sendResponse({ ok: true, forwarded: true, tabId, response: relayResult.response || null });
     })();
-
     return true; // async response
   }
 

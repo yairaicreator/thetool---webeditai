@@ -2307,58 +2307,70 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     if (type === "APPLY_FEATURE_SPEC") {
       (async () => {
-        const spec = payload.spec;
-        const result = await applyFeatureSpecFlow(spec);
-        sendResponse(result);
+        try {
+          const spec = payload.spec;
+          const result = await applyFeatureSpecFlow(spec);
+          sendResponse(result || { ok: false });
+        } catch (error) {
+          sendResponse({ ok: false, error: error.message });
+        }
       })();
       return true;
     }
-                if (type === "PREVIEW_FEATURE_SPEC") {
+    if (type === "PREVIEW_FEATURE_SPEC") {
       (async () => {
-        const spec = payload.spec || null;
-        if (!spec) {
-          sendResponse({ ok: false, error: "Missing spec" });
-          return;
-        }
-        const previewId = payload.previewId || spec.id || `preview-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        const res = await renderSpecPreviewInLab(spec, previewId);
-        if (res?.ok) {
-          previewLabPreviews.set(previewId, { type: "spec", spec, selector: spec.targetSelector || spec.selector || "" });
-          sendResponse({ ok: true, previewId, spec });
-          return;
-        }
-        sendResponse({ ok: false, error: res?.error || "Preview failed" });
-      })();
-      return true;
-    }
-        if (type === "COMMIT_FEATURE_SPEC") {
-      (async () => {
-        const previewId = payload.previewId || null;
-        let specToApply = payload.spec || null;
-
-        if (previewId && previewLabPreviews.has(previewId)) {
-          const handle = previewLabPreviews.get(previewId);
-          if (handle?.type === "spec") {
-            specToApply = handle.spec;
+        try {
+          const spec = payload.spec || null;
+          if (!spec) {
+            sendResponse({ ok: false, error: "Missing spec" });
+            return;
           }
+          const previewId = payload.previewId || spec.id || `preview-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          const res = await renderSpecPreviewInLab(spec, previewId);
+          if (res?.ok) {
+            previewLabPreviews.set(previewId, { type: "spec", spec, selector: spec.targetSelector || spec.selector || "" });
+            sendResponse({ ok: true, previewId, spec });
+            return;
+          }
+          sendResponse({ ok: false, error: res?.error || "Preview failed" });
+        } catch (error) {
+          sendResponse({ ok: false, error: error.message });
         }
+      })();
+      return true;
+    }
+    if (type === "COMMIT_FEATURE_SPEC") {
+      (async () => {
+        try {
+          const previewId = payload.previewId || null;
+          let specToApply = payload.spec || null;
 
-        if (!specToApply) {
-          sendResponse({ ok: false, error: "No spec found to commit" });
-          return;
-        }
-
-        const result = await applyFeatureSpecFlow(specToApply);
-        
-        if (result?.ok) {
           if (previewId && previewLabPreviews.has(previewId)) {
-            previewLabPreviews.delete(previewId);
-            clearGhostHighlight(previewId);
-            if (activePreviewLab?.previewId === previewId) activePreviewLab.cleanup();
+            const handle = previewLabPreviews.get(previewId);
+            if (handle?.type === "spec") {
+              specToApply = handle.spec;
+            }
           }
-          sendResponse({ ok: true, record: result.record || null });
-        } else {
-          sendResponse(result || { ok: false, error: "Commit failed" });
+
+          if (!specToApply) {
+            sendResponse({ ok: false, error: "No spec found to commit" });
+            return;
+          }
+
+          const result = await applyFeatureSpecFlow(specToApply);
+          
+          if (result?.ok) {
+            if (previewId && previewLabPreviews.has(previewId)) {
+              previewLabPreviews.delete(previewId);
+              clearGhostHighlight(previewId);
+              if (activePreviewLab?.previewId === previewId) activePreviewLab.cleanup();
+            }
+            sendResponse({ ok: true, record: result.record || null });
+          } else {
+            sendResponse(result || { ok: false, error: "Commit failed" });
+          }
+        } catch (error) {
+          sendResponse({ ok: false, error: error.message });
         }
       })();
       return true;
@@ -2504,7 +2516,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     sendResponse({ ok: false, error: "Unknown command" });
-    return true;
     })();
     return true;
   }
