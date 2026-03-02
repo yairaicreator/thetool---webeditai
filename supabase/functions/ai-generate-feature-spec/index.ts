@@ -48,7 +48,7 @@ Return ONLY this JSON object.`;
     const userMessage = `Context HTML (where the feature will be inserted):\n\`\`\`html\n${htmlContext || "No context provided"}\n\`\`\`\n\nUser Request: ${prompt}`;
 
     const geminiPayload = {
-      systemInstruction: {
+      system_instruction: {
         parts: [{ text: systemInstruction }]
       },
       contents: [
@@ -57,7 +57,7 @@ Return ONLY this JSON object.`;
           parts: [{ text: userMessage }]
         }
       ],
-      generationConfig: {
+      generation_config: {
         response_mime_type: "application/json",
       }
     };
