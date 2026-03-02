@@ -223,38 +223,36 @@ async function renderSpecPreviewInLab(spec, previewId) {
   let target = null;
   try { target = selector ? document.querySelector(selector) : null; } catch (_) {}
   
-  let deadHtml = "";
-  if (target) {
-    // Clone target to strip JS events, so it's a dead UI
-    const clone = target.cloneNode(true);
-    deadHtml = clone.outerHTML;
-  } else {
-    deadHtml = "<div style='padding:10px; background:#fee2e2; color:#991b1b; border:1px solid #f87171; border-radius:4px;'>Selected element not found on page.</div>";
-  }
-
-  const generatedCode = {
-    html: spec.html || "",
-    css: spec.css || "",
-    js: spec.js || ""
-  };
-
   const position = spec.position || "inside";
   
   if (target) {
+    const clone = target.cloneNode(true);
+    const tempDiv = document.createElement("div");
+    tempDiv.innerHTML = generatedCode.html;
+    const generatedNodes = Array.from(tempDiv.childNodes);
+    
+    const wrapper = document.createElement("div");
+    
     if (position === "before") {
-       deadHtml = generatedCode.html + deadHtml;
+      generatedNodes.forEach(n => wrapper.appendChild(n));
+      wrapper.appendChild(clone);
     } else if (position === "after") {
-       deadHtml = deadHtml + generatedCode.html;
+      wrapper.appendChild(clone);
+      generatedNodes.forEach(n => wrapper.appendChild(n));
     } else { // inside
-       // Try to insert inside the main tag
-       const firstTagClose = deadHtml.indexOf(">");
-       if (firstTagClose !== -1) {
-         deadHtml = deadHtml.slice(0, firstTagClose + 1) + generatedCode.html + deadHtml.slice(firstTagClose + 1);
-       } else {
-         deadHtml += generatedCode.html;
-       }
+      // Insert generated HTML at the beginning of the selected element
+      generatedNodes.reverse().forEach(n => {
+        if (clone.firstChild) {
+          clone.insertBefore(n, clone.firstChild);
+        } else {
+          clone.appendChild(n);
+        }
+      });
+      wrapper.appendChild(clone);
     }
+    deadHtml = wrapper.innerHTML;
   } else {
+    deadHtml = "<div style='padding:10px; background:#fee2e2; color:#991b1b; border:1px solid #f87171; border-radius:4px;'>Selected element not found on page.</div>";
     deadHtml += generatedCode.html;
   }
 
