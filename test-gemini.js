@@ -1,25 +1,24 @@
 const apiKey = process.env.GEMINI_API_KEY;
 
-async function testGemini() {
+async function testGemini(model) {
   const payload = {
-    system_instruction: {
-      parts: [{ text: "You are a helpful assistant." }]
-    },
     contents: [
       { role: "user", parts: [{ text: "Hello" }] }
-    ],
-    generation_config: {
-        response_mime_type: "application/json"
-    }
+    ]
   };
 
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${apiKey}`, {
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
 
-  console.log(`Test:`, response.status, await response.text());
+  console.log(`Test ${model}:`, response.status, await response.text());
 }
 
-testGemini();
+async function run() {
+  await testGemini('gemini-3.1-pro-preview');
+  await testGemini('gemini-3-flash-preview');
+}
+
+run();
