@@ -24,18 +24,6 @@ function getPreviewLab() {
   return window.PreviewLab || null;
 }
 
-async function ensurePreviewLabAvailable() {
-  let lab = getPreviewLab();
-  if (lab) return lab;
-  try {
-    await chrome.runtime.sendMessage({
-      type: "WEBEDIT_ENSURE_CONTENT_SCRIPTS",
-      files: ["previewLab.js"]
-    });
-  } catch (_) {}
-  lab = getPreviewLab();
-  return lab || null;
-}
 
 function ensureGhostStyles() {
   if (document.getElementById("webedit-preview-ghost-style")) return;
@@ -83,24 +71,6 @@ function openPreviewLab(previewId, title) {
   });
 }
 
-function lockPreviewContextInteractivity(previewTarget, markerId) {
-  if (!previewTarget || !markerId) return;
-  const markerSelector = `[data-webedit-ai-insert-id="${CSS.escape(markerId)}"]`;
-  const interactiveSelector = "a, button, input, textarea, select, details, summary, [role='button'], [contenteditable='true']";
-  const nodes = previewTarget.querySelectorAll(interactiveSelector);
-  nodes.forEach((el) => {
-    if (!(el instanceof Element)) return;
-    if (el.closest(markerSelector)) return;
-    el.setAttribute("data-webedit-preview-static", "1");
-    if (!el.hasAttribute("tabindex")) {
-      el.setAttribute("tabindex", "-1");
-    }
-    if ("disabled" in el && el.tagName !== "A") {
-      try { el.disabled = true; } catch (_) {}
-    }
-    try { el.style.pointerEvents = "none"; } catch (_) {}
-  });
-}
 
 function applyPlanPreviewToElement(el, plan) {
   if (!el || !plan) return;
@@ -2373,126 +2343,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       })();
       return true;
     }
-    if (type === "PREVIEW_FEATURE_SPEC") {
-      (async () => {
-        let spec = payload.spec || null;
-        if (!spec) {
-          sendResponse({ ok: false, error: "Missing spec" });
-          return;
-        }
-        const traceId = String(payload.traceId || spec?.metadata?.traceId || "");
-        if (spec?.action === "add" && typeof window.validateAddSpecContract === "function") {
-          const contract = window.validateAddSpecContract(spec);
-          if (!contract?.ok || !contract?.spec) {
-            sendResponse({ ok: false, stage: contract?.stage || "contract", error: contract?.error || "Add contract validation failed" });
-            return;
-          }
-          spec = {
-            ...contract.spec,
-            metadata: {
-              ...(contract.spec.metadata || {}),
-              traceId
-            }
-          };
-        }
-        const previewId = payload.previewId || `preview-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        console.info(`[WebEdit Add][${traceId || "no-trace"}] preview-start id=${previewId}`);
-        const res = await renderSpecPreviewInLab(spec, previewId);
-        if (res?.ok) {
-          previewLabPreviews.set(previewId, {
-            type: "spec",
-            spec,
-            selector: spec.targetSelector || spec.selector || "",
-            traceId
-          });
-          if (spec.targetSelector || spec.selector) {
-            setGhostHighlight(previewId, spec.targetSelector || spec.selector);
-          }
-          sendResponse({ ok: true, previewId, traceId });
-          return;
-        }
-        sendResponse({
-          ok: false,
-          stage: res?.stage || "validation",
-          error: res?.error || "Preview failed",
-          failures: Array.isArray(res?.failures) ? res.failures : [],
-          traceId
-        });
-      })();
-      return true;
-    }
-    if (type === "COMMIT_FEATURE_SPEC") {
-      (async () => {
-        const store = window.FeatureStore;
-        const previewId = payload.previewId || null;
-        const handle = previewId ? previewLabPreviews.get(previewId) : null;
-        const fallbackSpec = payload.spec || null;
-        const traceId = String(payload.traceId || handle?.traceId || fallbackSpec?.metadata?.traceId || "");
-        console.info(`[WebEdit Add][${traceId || "no-trace"}] commit-start previewId=${String(previewId || "none")}`);
-        let specToApply = null;
-
-        if (handle && handle.type === "spec") {
-          const lab = getPreviewLab();
-          const content = lab?.getContent?.() || {};
-          specToApply = {
-            ...handle.spec,
-            html: content.html || handle.spec.html,
-            css: content.css || handle.spec.css,
-            js: content.js || handle.spec.js,
-            metadata: {
-              ...(handle.spec?.metadata || {}),
-              traceId
-            }
-          };
-        } else if (fallbackSpec) {
-          specToApply = {
-            ...fallbackSpec,
-            metadata: {
-              ...(fallbackSpec?.metadata || {}),
-              traceId
-            }
-          };
-        } else {
-          sendResponse({ ok: false, error: "Preview not found" });
-          return;
-        }
-
-        const result = await applyFeatureSpecFlow(specToApply);
-        if (result?.ok) {
-          if (store && typeof store.addCommittedFeature === "function" && result.record) {
-            const isCloudOnlyGeminiFolder =
-              String(specToApply?.metadata?.persistenceMode || "").toLowerCase() === "cloud_only" ||
-              String(specToApply?.metadata?.featureClass || "").toLowerCase() === "gemini-folder" ||
-              isCloudOnlyFolderGeminiController(specToApply?.generated_module?.controller);
-            if (!isCloudOnlyGeminiFolder) {
-              await store.addCommittedFeature(result.record);
-            }
-          }
-          if (previewId) {
-            previewLabPreviews.delete(previewId);
-            clearGhostHighlight(previewId);
-          }
-          const lab = getPreviewLab();
-          lab?.close?.();
-        }
-        sendResponse(result);
-      })();
-      return true;
-    }
-    if (type === "UNDO_FEATURE_SPEC") {
-      const previewId = payload.previewId || null;
-      if (previewId && previewLabPreviews.has(previewId)) {
-        previewLabPreviews.delete(previewId);
-        clearGhostHighlight(previewId);
-        const lab = getPreviewLab();
-        lab?.close?.();
-        sendResponse({ ok: true });
-        return true;
-      }
-      sendResponse({ ok: false, error: "Preview not found" });
-      return true;
-    }
-    if (type === "PREVIEW_FEATURE") {
+                if (type === "PREVIEW_FEATURE") {
       (async () => {
         const plan = payload.plan || null;
         if (!plan) {
@@ -2511,49 +2362,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       })();
       return true;
     }
-    if (type === "REOPEN_PREVIEW") {
-      (async () => {
-        const previewId = payload.previewId || `preview-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        const previewKind = payload.previewKind || "plan";
-        if (previewKind === "spec") {
-          const spec = payload.spec || null;
-          if (!spec) {
-            sendResponse({ ok: false, error: "Missing spec" });
-            return;
-          }
-          const res = await renderSpecPreviewInLab(spec, previewId);
-          if (!res?.ok) {
-            sendResponse({ ok: false, error: res?.error || "Preview failed" });
-            return;
-          }
-          previewLabPreviews.set(previewId, {
-            type: "spec",
-            spec,
-            selector: spec.targetSelector || spec.selector || ""
-          });
-          if (spec.targetSelector || spec.selector) {
-            setGhostHighlight(previewId, spec.targetSelector || spec.selector);
-          }
-          sendResponse({ ok: true, previewId });
-          return;
-        }
-        const plan = payload.plan || null;
-        if (!plan) {
-          sendResponse({ ok: false, error: "Missing plan" });
-          return;
-        }
-        const res = await renderPlanPreviewInLab(plan, previewId);
-        if (!res?.ok) {
-          sendResponse({ ok: false, error: res?.error || "Preview failed" });
-          return;
-        }
-        previewLabPreviews.set(previewId, { type: "plan", plan, selector: plan.targetSelector || "" });
-        if (plan.targetSelector) setGhostHighlight(previewId, plan.targetSelector);
-        sendResponse({ ok: true, previewId });
-      })();
-      return true;
-    }
-    if (type === "COMMIT_FEATURE") {
+        if (type === "COMMIT_FEATURE") {
       (async () => {
         const engine = window.FeatureEngine;
         const store = window.FeatureStore;

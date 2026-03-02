@@ -62,14 +62,10 @@
   let activeHistoryRenameForm = null;
   let currentTool = "add";
   let pendingFeaturePickMode = null; // null | add | remove | customize
-  let isAddFeatureMode = false;
+  
   let customizeReviewApplied = false;
   let lastPickedTarget = null; // { selector, description }
-  let pendingAiAnchorRequest = null; // { text } waiting for Pick Element anchor
-  let pendingPreviewRefine = null; // { previewId, plan }
-  let pendingComplexDecomposition = null; // { awaiting: "confirm"|"pick_step", steps: {id,title,executionPrompt}[] }
-  let pendingDecompositionExecution = null; // { id, title }
-
+        
   function ensureFeatureControlsLayout() {
     const legacySelectors = [
       ".webedit-visual-edit",
@@ -281,215 +277,25 @@
   }
 
   
-  function createAddTraceId() {
-    return `add-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  -${Math.random().toString(36).slice(2, 8)}`;
   }
 
   
-      async function buildAddSpecPipeline(promptText, baseContext, previousSpec = null, traceId = "") {
-    const anchorSelector = lastPickedTarget?.selector || previousSpec?.targetSelector || previousSpec?.selector || "";
-    if (!anchorSelector) {
-      return { ok: false, stage: "capability", error: "No anchor selected. Pick a target section first." };
-    }
-
-    const resolvedTraceId = String(traceId || createAddTraceId());
-    const domContextResp = await sendToActiveTab({
-      type: "GET_ADD_DOM_CONTEXT",
-      selector: anchorSelector,
-      traceId: resolvedTraceId
-    });
-    const domContext = domContextResp?.response?.addDomContext || null;
-    const capability = domContext?.capability || null;
-    
-    if (!domContextResp?.response?.ok || !domContext) {
-      const authLikeError = String(domContextResp?.error || "").toLowerCase();
-      if (authLikeError.includes("not authorized")) {
-        return { ok: false, stage: "auth", error: "Please sign in before generating Add features.", traceId: resolvedTraceId };
-      }
-      return {
-        ok: false,
-        stage: "capability",
-        error: domContextResp?.response?.error || domContextResp?.error || "DOM context extraction failed.",
-        traceId: resolvedTraceId
-      };
-    }
-
-    const aiClient = window.SupabaseClient;
-    if (!aiClient || typeof aiClient.generateFeatureSpec !== "function") {
-      return {
-        ok: false,
-        stage: "generation",
-        error: "AI generator is unavailable. Please reload the extension.",
-        traceId: resolvedTraceId
-      };
-    }
-
-    const aiContext = {
-      ...(baseContext || {}),
-      selector: anchorSelector,
-      targetSelector: anchorSelector,
-      anchorElement: lastPickedTarget || undefined,
-      addDomContext: domContext,
-      traceId: resolvedTraceId
-    };
-
-    const aiResp = await aiClient.generateFeatureSpec(promptText, aiContext);
-
-    if (aiResp && aiResp.error === "too_complex") {
-       return {
-         ok: false,
-         stage: "complexity",
-         error: "This request is too complex for one reliable step.",
-         decompositionSteps: Array.isArray(aiResp.decompositionSteps) ? aiResp.decompositionSteps : [],
-         traceId: resolvedTraceId
-       };
-    }
-
-    if (!aiResp?.ok || !aiResp?.spec) {
-      return {
-        ok: false,
-        stage: "generation",
-        error: aiResp?.error || "Generation failed.",
-        traceId: resolvedTraceId
-      };
-    }
-
-    const spec = { ...(aiResp.spec || {}) };
-    if (spec.action !== "add") {
-      spec.action = "add";
-      if (!spec.content) spec.content = String(promptText || "").trim();
-    }
-    spec.targetSelector = anchorSelector;
-    if (!spec.selector) spec.selector = anchorSelector;
-
-    const generatedHtml = spec.generated_module?.html || "";
-    if ((!spec.html || !String(spec.html).trim()) && generatedHtml) {
-      spec.html = generatedHtml;
-    }
-
-    spec.metadata = {
-      ...(spec.metadata || {}),
-      stage: "generation",
-      capabilityScore: capability?.capabilityScore,
-      traceId: resolvedTraceId
-    };
-
-    return { ok: true, spec, capability, domContext, traceId: resolvedTraceId };
-  }
-
-  function isYesText(text) {
-    const t = String(text || "").trim().toLowerCase();
-    return t === "yes" || t === "y" || t === "sure" || t === "ok" || t === "okay";
-  }
-
-  function isNoText(text) {
-    const t = String(text || "").trim().toLowerCase();
-    return t === "no" || t === "n" || t === "cancel" || t === "stop";
-  }
-
-  function normalizeDecompositionSteps(rawSteps = []) {
-    const steps = Array.isArray(rawSteps) ? rawSteps : [];
-    return steps
-      .map((step, index) => {
-        if (typeof step === "string") {
-          const title = step.trim();
-          if (!title) return null;
-          return {
-            id: `step_${index + 1}`,
-            title,
-            executionPrompt: title
-          };
-        }
-        if (step && typeof step === "object") {
-          const title = String(step.title || step.label || step.executionPrompt || "").trim();
-          if (!title) return null;
-          const executionPrompt = String(step.executionPrompt || title).trim();
-          return {
-            id: String(step.id || `step_${index + 1}`),
-            title,
-            executionPrompt
-          };
-        }
-        return null;
-      })
-      .filter(Boolean)
-      .slice(0, 4);
-  }
-
-  function parseDecompositionStepSelection(inputText, maxStep) {
-    const text = String(inputText || "").trim();
-    if (!text) return { stepNumber: null, ambiguous: false };
-
-    if (/^\d+$/.test(text)) {
-      const stepNumber = Number.parseInt(text, 10);
-      return {
-        stepNumber: Number.isInteger(stepNumber) && stepNumber >= 1 && stepNumber <= maxStep ? stepNumber : null,
-        ambiguous: false
-      };
-    }
-
-    const prefixed = text.match(/^(\d+)\s*[.)\-:]/);
-    if (prefixed) {
-      const stepNumber = Number.parseInt(prefixed[1], 10);
-      return {
-        stepNumber: Number.isInteger(stepNumber) && stepNumber >= 1 && stepNumber <= maxStep ? stepNumber : null,
-        ambiguous: false
-      };
-    }
-
-    const matches = Array.from(text.matchAll(/\b(\d+)\b/g))
-      .map((m) => Number.parseInt(m[1], 10))
-      .filter((n) => Number.isInteger(n) && n >= 1 && n <= maxStep);
-    const unique = Array.from(new Set(matches));
-    if (unique.length === 1) return { stepNumber: unique[0], ambiguous: false };
-    if (unique.length > 1) return { stepNumber: null, ambiguous: true };
-    return { stepNumber: null, ambiguous: false };
-  }
-
-  function beginComplexityDecomposition(decompositionSteps = []) {
-    const steps = normalizeDecompositionSteps(decompositionSteps);
-    if (!steps.length) return false;
-    pendingComplexDecomposition = {
-      awaiting: "confirm",
-      steps
-    };
-    pendingDecompositionExecution = null;
-    addChatMessage(
-      "assistant",
-      "This request is too complex for one reliable step. Would you like me to break it into smaller reliable steps? (yes/no)"
-    );
-    return true;
-  }
-
-  
-  
-    async function orchestrateAddSpec(promptText, pageContext, previousSpec = null, traceId = "") {
-    const runTraceId = String(traceId || createAddTraceId());
-    const built = await buildAddSpecPipeline(promptText, pageContext, previousSpec, runTraceId);
-    if (!built.ok || !built.spec) return built;
-
-    const validated = typeof window.validateAddSpecContract === "function"
-      ? window.validateAddSpecContract(built.spec)
-      : { ok: true, spec: built.spec };
       
-    if (!validated?.ok || !validated?.spec) {
-      return {
-        ok: false,
-        stage: validated?.stage || "contract",
-        error: validated?.error || "Add contract validation failed.",
-        traceId: runTraceId
-      };
-    }
 
-    const finalSpec = {
-      ...validated.spec,
-      metadata: {
-        ...(validated.spec.metadata || {}),
-        traceId: runTraceId
-      }
-    };
-    return { ok: true, spec: finalSpec, traceId: runTraceId };
-  }
+  
+
+  
+
+  
+
+  
+
+  
+
+  
+  
+    
 
   function showNotificationInChat(text) {
     addChatMessage("system", text);
@@ -501,74 +307,13 @@
     return true;
   }
 
-  async function handlePreviewApply(previewId) {
-    if (!previewId) return;
-    const msg = chatMessages.find(m => m.type === "preview" && m.content?.previewId === previewId);
-    if (!msg) return;
-    const kind = msg?.content?.previewKind || "plan";
-    const traceId = String(msg?.content?.spec?.metadata?.traceId || createAddTraceId());
-    const thinking = addChatMessage("assistant", "Applying preview...");
-    const resp = kind === "spec"
-      ? await sendToActiveTab({ type: "COMMIT_FEATURE_SPEC", previewId, spec: msg.content?.spec || null, traceId })
-      : await sendToActiveTab({ type: "COMMIT_FEATURE", previewId, plan: msg.content?.plan || null });
-    if (resp?.response?.ok) {
-      chatMessages = chatMessages.filter(m => !(m.type === "preview" && m.content?.previewId === previewId));
-      thinking.content = "✅ Feature applied.";
-    } else {
-      thinking.content = `❌ ${formatStageError(resp, "Apply failed")}`;
-    }
-    renderChatMessages();
-    saveChatHistory();
-  }
+  
 
-  async function handlePreviewUndo(previewId) {
-    if (!previewId) return;
-    const msg = chatMessages.find(m => m.type === "preview" && m.content?.previewId === previewId);
-    const kind = msg?.content?.previewKind || "plan";
-    const resp = kind === "spec"
-      ? await sendToActiveTab({ type: "UNDO_FEATURE_SPEC", previewId })
-      : await sendToActiveTab({ type: "UNDO_FEATURE", previewId });
-    if (resp?.response?.ok) {
-      chatMessages = chatMessages.filter(m => !(m.type === "preview" && m.content?.previewId === previewId));
-      addChatMessage("assistant", "✅ Preview removed.");
-    } else {
-      addChatMessage("assistant", `❌ Undo failed: ${resp?.response?.error || "unknown error"}`);
-    }
-    renderChatMessages();
-    saveChatHistory();
-  }
+  
 
-  function handlePreviewRefine(previewId) {
-    if (!previewId) return;
-    const msg = chatMessages.find(m => m.type === "preview" && m.content?.previewId === previewId);
-    if (!msg) return;
-    pendingPreviewRefine = {
-      previewId,
-      plan: msg.content?.plan || null,
-      spec: msg.content?.spec || null,
-      mode: msg.content?.previewKind || "plan"
-    };
-    addChatMessage("system", "Describe how to refine this preview.");
-    renderChatMessages();
-    saveChatHistory();
-  }
+  
 
-  async function handlePreviewReopen(previewId) {
-    if (!previewId) return;
-    const msg = chatMessages.find(m => m.type === "preview" && m.content?.previewId === previewId);
-    if (!msg) return;
-    const content = msg.content || {};
-    const mode = content.previewKind || "plan";
-    const payload = mode === "spec"
-      ? { type: "REOPEN_PREVIEW", previewId, previewKind: "spec", spec: content.spec || null }
-      : { type: "REOPEN_PREVIEW", previewId, previewKind: "plan", plan: content.plan || null };
-    const resp = await sendToActiveTab(payload);
-    if (resp?.response?.ok) {
-      addChatMessage("system", "Preview window reopened.");
-      return;
-    }
-    addChatMessage("system", `Could not reopen preview: ${formatStageError(resp, "unknown error")}`);
-  }
+  
 
   function addChatMessage(type, content) {
     const msg = { type, content, timestamp: Date.now() };
@@ -1003,7 +748,7 @@
     if (!enabled) {
       els.customizePanel?.classList.remove("visible");
       hideModeIndicator();
-      isAddFeatureMode = false;
+      
       pendingFeaturePickMode = null;
       customizeReviewApplied = false;
       pendingAiAnchorRequest = null;
@@ -1199,7 +944,7 @@
 
     setActiveTool(tool);
     pendingPreviewRefine = null;
-    isAddFeatureMode = false;
+    
     customizeReviewApplied = false;
     els.customizePanel?.classList.remove("visible");
 
@@ -1340,7 +1085,7 @@
             title: String(chosenStep.title || "").trim()
           };
           addChatMessage("assistant", `Implementing step ${stepNumber}: ${String(chosenStep.title || "").trim()}`);
-          isAddFeatureMode = true;
+          
           renderChatMessages();
           saveChatHistory();
           handleSend(String(chosenStep.executionPrompt || chosenStep.title || ""));
@@ -1495,92 +1240,6 @@
       return;
     }
 
-    // Add Feature flow handling (single guided prompt after pick)
-    if (isAddFeatureMode) {
-      if (!lastPickedTarget?.selector) {
-        addChatMessage("system", "Pick an element first.");
-        return;
-      }
-
-      addChatMessage("user", text);
-      isAddFeatureMode = false; // consume guided add prompt and return to normal chat mode
-      const thinking = addChatMessage("assistant", "Generating your feature...");
-      try {
-        const addTraceId = createAddTraceId();
-        const pageContextResp = await sendToActiveTab({ type: "GET_PAGE_CONTEXT" });
-        const pageContext = pageContextResp?.response?.pageContext || {};
-        pageContext.anchorElement = lastPickedTarget;
-
-        let orchestrated = await orchestrateAddSpec(text, pageContext, null, addTraceId);
-        if (!orchestrated.ok && orchestrated.stage === "complexity" && pendingDecompositionExecution) {
-          const selectedStepTitle = pendingDecompositionExecution.title || "selected step";
-          const onePassPrompt = `Implement only this minimal step now: ${selectedStepTitle}. Keep exactly one interactive action and no additional scope.`;
-          orchestrated = await orchestrateAddSpec(onePassPrompt, pageContext, null, addTraceId);
-          if (!orchestrated.ok) {
-            pendingDecompositionExecution = null;
-            thinking.content = "⚠️ I simplified your selected step to one minimal action, but it is still too broad. Please choose a smaller step (for example: create only the New Folder+ button first).";
-            renderChatMessages();
-            saveChatHistory();
-            return;
-          }
-        }
-        if (!orchestrated.ok) {
-          if (orchestrated.stage === "complexity" && beginComplexityDecomposition(orchestrated.decompositionSteps || [])) {
-            thinking.content = "⚠️ Request needs decomposition before reliable implementation.";
-            renderChatMessages();
-            saveChatHistory();
-            return;
-          }
-          throw new Error(formatStageError(orchestrated, "Feature generation failed"));
-        }
-
-        let spec = orchestrated.spec || null;
-        if (!spec) {
-          throw new Error("No feature specification returned.");
-        }
-
-        // Add flow expects an add-capable spec. If not, guide user to refine prompt.
-        if (spec.action !== "add") {
-          const actionLabel = spec.action || "unknown";
-          throw new Error(`AI generated '${actionLabel}' instead of an add feature. Refine your prompt with clear UI and workflow details for a new feature.`);
-        }
-
-        // Force Add previews to stay anchored to the picked target section.
-        if (lastPickedTarget?.selector) {
-          spec.targetSelector = lastPickedTarget.selector;
-          if (!spec.selector) spec.selector = lastPickedTarget.selector;
-        }
-
-        const traceId = String(spec?.metadata?.traceId || addTraceId);
-        console.info(`[SidePanel Add][${traceId}] add-preview-start`);
-        let previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec, traceId });
-        
-        if (!previewResp?.response?.ok) {
-          throw new Error(previewResp?.response?.error || "Preview failed");
-        }
-
-        addPreviewMessage({
-          previewId: previewResp.response.previewId,
-          feature_type: spec.action,
-          confidence: spec.confidence,
-          warnings: spec.warnings || [],
-          spec,
-          previewKind: "spec"
-        });
-        pendingDecompositionExecution = null;
-        thinking.content = "✅ Preview ready. Review and click Apply.";
-      } catch (e) {
-        // Last-resort rescue path: if planner runtime is stale and throws normalizeString errors,
-        // bypass planner entirely and generate/preview through AI fallback.
-        
-        console.error("[Add Feature] Spec preview failed:", e);
-        thinking.content = `❌ I couldn't generate a preview.\nReason: ${e.message || "Unknown error"}`;
-      }
-      renderChatMessages();
-      saveChatHistory();
-      return;
-    }
-
     // General chat / Conversation / Edit Commands
     addChatMessage("user", text);
     const thinking = addChatMessage("assistant", "🤖 Thinking...");
@@ -1672,33 +1331,12 @@
       refreshAuthorization();
       return;
     }
-    if (message?.type === "WEBEDIT_PREVIEW_SPEC_UPDATED") {
-      const previewId = message?.payload?.previewId;
-      const spec = message?.payload?.spec || null;
-      if (!previewId || !spec) return;
-      const msg = chatMessages.find((m) => m.type === "preview" && m.content?.previewId === previewId);
-      if (!msg || !msg.content) return;
-      msg.content.spec = spec;
-      renderChatMessages();
-      saveChatHistory();
-      return;
-    }
+    
     if (message?.type === "WEBEDIT_TAB_EVENT") {
       // placeholder
       return;
     }
-    if (message?.type === "WEBEDIT_PREVIEW_ACTION") {
-      const action = message?.payload?.action;
-      const previewId = message?.payload?.previewId;
-      if (action === "apply") {
-        handlePreviewApply(previewId);
-      } else if (action === "undo") {
-        handlePreviewUndo(previewId);
-      } else if (action === "refine") {
-        handlePreviewRefine(previewId);
-      }
-      return;
-    }
+    
     if (message?.type === "WEBEDIT_ELEMENT_PICKED") {
       lastPickedTarget = message.payload || null;
       if (lastPickedTarget?.description) {
@@ -1728,27 +1366,13 @@
           showNotificationInChat(`Element picked for customize: ${lastPickedTarget.description || lastPickedTarget.selector}`);
         })();
       } else if (pickedTool === "add" && lastPickedTarget?.selector) {
-        isAddFeatureMode = true;
         addChatMessage(
           "system",
-          "Great, anchor selected. Please include in your prompt the workflow, how the feature works, UI, and goal of the feature."
+          "Great, anchor selected. (Add flow logic removed for clean slate)"
         );
       }
 
-      if (pendingAiAnchorRequest && lastPickedTarget?.selector) {
-        addChatMessage("system", `Anchor selected: ${lastPickedTarget.description || lastPickedTarget.selector}`);
-        
-        const textToRetry = pendingAiAnchorRequest.text;
-        if (textToRetry && typeof textToRetry === "string") {
-          addChatMessage("system", "Retrying request with new anchor...");
-          pendingAiAnchorRequest = null;
-          handleSend(textToRetry);
-        } else {
-          addChatMessage("system", "Now re-send your last request and I will apply it to this selected area.");
-          pendingAiAnchorRequest = null;
-        }
-      }
-      return;
+            return;
     }
     if (message?.type === "WEBEDIT_MODE_EXITED") {
       // Ignore stale exit events while a pick flow is actively pending.
