@@ -231,6 +231,13 @@ async function renderSpecPreviewInLab(spec, previewId) {
   let target = null;
   try { target = selector ? document.querySelector(selector) : null; } catch (_) {}
   
+  const generatedCode = {
+    html: spec.html || "",
+    css: spec.css || "",
+    js: spec.js || ""
+  };
+
+  let deadHtml = "";
   const position = spec.position || "inside";
   
   if (target) {
@@ -579,7 +586,7 @@ async function fetchActiveEditsForWebsite(websiteId) {
     .filter((row) => (row?.status || "active") === "active");
 }
 
-function clearAppliedCloudEdits() {
+function clearAppliedCloudEdits(activeIds = new Set()) {
   const summary = {
     removedNodes: 0,
     removedStyles: 0,
@@ -592,11 +599,15 @@ function clearAppliedCloudEdits() {
       node.hasAttribute("data-webedit-ai-insert-id");
   };
 
+  const shouldKeep = (id) => id && activeIds.has(String(id));
+
   // 1) Remove injected "Add" features (cloud-managed only)
   try {
     const injected = Array.from(document.querySelectorAll(`[${WEBEDIT_CLOUD_EDIT_ATTR}]`));
     injected.forEach((node) => {
       if (!isCloudInjectedArtifact(node)) return;
+      const editId = node.getAttribute(WEBEDIT_CLOUD_EDIT_ATTR);
+      if (shouldKeep(editId)) return;
       try {
         node.remove();
         summary.removedNodes += 1;
@@ -612,6 +623,8 @@ function clearAppliedCloudEdits() {
       // If it doesn't have the new attr, it might be local-only (featureSpec undo stack).
       // Keep it to avoid breaking local Undo/Redo.
       if (!node.hasAttribute(WEBEDIT_CLOUD_EDIT_ATTR)) return;
+      const editId = node.getAttribute("data-webedit-feature-id");
+      if (shouldKeep(editId)) return;
       try {
         node.remove();
         summary.removedNodes += 1;
@@ -627,6 +640,8 @@ function clearAppliedCloudEdits() {
     styleEls.forEach((el) => {
       const isFeatureSpecStyle = el.hasAttribute("data-webedit-ai-style-id");
       if (isFeatureSpecStyle) return;
+      const editId = el.id.replace(WEBEDIT_STYLE_ID_PREFIX, "");
+      if (shouldKeep(editId)) return;
       try {
         el.remove();
         summary.removedStyles += 1;
@@ -639,13 +654,21 @@ function clearAppliedCloudEdits() {
     const managed = Array.from(document.querySelectorAll(`[${WEBEDIT_MANAGED_ATTR}="1"]`));
     managed.forEach((el) => {
       try {
-        // Remove any webedit-hidden-* classes
+        let isStillActive = false;
+        // Remove any webedit-hidden-* classes that are no longer active
         const classes = Array.from(el.classList || []);
         classes.forEach((c) => {
           if (c && c.startsWith(WEBEDIT_HIDDEN_CLASS_PREFIX)) {
-            el.classList.remove(c);
+            const id = c.replace(WEBEDIT_HIDDEN_CLASS_PREFIX, "");
+            if (shouldKeep(id)) {
+              isStillActive = true;
+            } else {
+              el.classList.remove(c);
+            }
           }
         });
+
+        if (isStillActive) return;
 
         // Restore original inline display (best-effort)
         const prevDisplay = el.getAttribute(WEBEDIT_ORIG_DISPLAY_ATTR);
@@ -660,10 +683,13 @@ function clearAppliedCloudEdits() {
       } catch (_) {
         // ignore element-level failures
       } finally {
-        try { el.removeAttribute(WEBEDIT_ORIG_DISPLAY_ATTR); } catch (_) {}
-        try { el.removeAttribute(WEBEDIT_ORIG_DISPLAY_PRIO_ATTR); } catch (_) {}
-        try { el.removeAttribute(WEBEDIT_MANAGED_ATTR); } catch (_) {}
-        summary.restoredManagedNodes += 1;
+        // Only cleanup attributes if the element is actually being unmanaged
+        if (!el.className.includes(WEBEDIT_HIDDEN_CLASS_PREFIX)) {
+          try { el.removeAttribute(WEBEDIT_ORIG_DISPLAY_ATTR); } catch (_) {}
+          try { el.removeAttribute(WEBEDIT_ORIG_DISPLAY_PRIO_ATTR); } catch (_) {}
+          try { el.removeAttribute(WEBEDIT_MANAGED_ATTR); } catch (_) {}
+          summary.restoredManagedNodes += 1;
+        }
       }
     });
   } catch (_) {}
@@ -901,7 +927,7 @@ async function rebuildCloudEdits(reason = "unknown") {
         return { ok: false, skipped: true, reason: "fetch-unavailable" };
       }
       // Deterministic correctness: clear everything we manage, then reapply ACTIVE edits in order.
-      const clearSummary = clearAppliedCloudEdits();
+      const clearSummary = clearAppliedCloudEdits(edits);
       // stable order (server orders by created_at asc, but keep client-side fallback)
       edits.sort((a, b) => String(a?.created_at || "").localeCompare(String(b?.created_at || "")));
       const result = await applyActiveEditsInOrder(edits);
@@ -2201,125 +2227,118 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message?.type === "WEBEDIT_SIDEPANEL_COMMAND") {
     (async () => {
-      let authorized = await isAuthenticated();
-      if (!authorized) {
-        // Brief grace window for auth propagation after recent sign-in/refresh.
-        await authWaitMs(220);
-        authorized = await isAuthenticated(true);
-      }
-      if (!authorized) {
-        stopPickMode();
-        stopRemoveMode();
-        clearHover();
-        clearSelected();
-        sendResponse({ ok: false, error: "Not authorized" });
-        return;
-      }
-      const payload = message.payload || {};
-      const type = payload.type;
+      try {
+        let authorized = await isAuthenticated();
+        if (!authorized) {
+          // Brief grace window for auth propagation after recent sign-in/refresh.
+          await authWaitMs(220);
+          authorized = await isAuthenticated(true);
+        }
+        if (!authorized) {
+          stopPickMode();
+          stopRemoveMode();
+          clearHover();
+          clearSelected();
+          sendResponse({ ok: false, error: "Not authorized" });
+          return;
+        }
+        const payload = message.payload || {};
+        const type = payload.type;
 
-    if (type === "START_PICK_MODE") {
-      startPickMode();
-      chrome.runtime.sendMessage({
-        type: "WEBEDIT_MODE_STARTED",
-        payload: { mode: "pick", reason: payload.reason || null }
-      }).catch(() => {});
-      sendResponse({ ok: true });
-      return true;
-    }
-    if (type === "REMOVE_ELEMENT") {
-      const result = removeElementBySelector(payload.selector);
-      sendResponse(result);
-      return true;
-    }
-    if (type === "START_REMOVE_MODE") {
-      startRemoveMode();
-      chrome.runtime.sendMessage({
-        type: "WEBEDIT_MODE_STARTED",
-        payload: { mode: "remove", reason: payload.reason || null }
-      }).catch(() => {});
-      sendResponse({ ok: true });
-      return true;
-    }
-    if (type === "START_CUSTOMIZE_SESSION") {
-      const result = startCustomizeSession(payload.selector);
-      sendResponse(result);
-      return true;
-    }
-    if (type === "PREVIEW_STYLES") {
-      const result = previewStylesForSelector(payload.selector, payload.styles || {});
-      sendResponse(result);
-      return true;
-    }
-    if (type === "RESET_PREVIEW_STYLES") {
-      const ok = resetPreviewStylesForSelector(payload.selector);
-      sendResponse({ ok });
-      return true;
-    }
-    if (type === "EXIT_FEATURES") {
-      stopPickMode();
-      stopRemoveMode();
-      clearHover();
-      clearSelected();
-      sendResponse({ ok: true });
-      chrome.runtime.sendMessage({ type: "WEBEDIT_MODE_EXITED" }).catch(() => {});
-      return true;
-    }
-    if (type === "APPLY_STYLES") {
-      const result = applyStylesToSelector(payload.selector, payload.styles || {});
-      sendResponse(result?.ok ? result : { ok: false });
-      return true;
-    }
-    if (type === "RESET_STYLES") {
-      const ok = resetStylesForSelector(payload.selector);
-      sendResponse({ ok });
-      return true;
-    }
-    if (type === "ADD_FEATURE_CARD") {
-      const result = injectFeatureCard(payload);
-      sendResponse(result?.ok ? result : { ok: false });
-      return true;
-    }
-    if (type === "REMOVE_FEATURE_CARD") {
-      const ok = removeFeatureCardById(payload.featureId);
-      sendResponse({ ok });
-      return true;
-    }
-    if (type === "SET_ELEMENT_DISPLAY") {
-      const ok = setElementDisplay(payload.selector, payload.value, payload.priority);
-      sendResponse({ ok });
-      return true;
-    }
-    if (type === "APPLY_STYLE_PATCH") {
-      const ok = applyStylePatch(payload.selector, payload.patch || []);
-      sendResponse({ ok });
-      return true;
-    }
-    if (type === "MOVE_ELEMENT") {
-      const ok = moveElement(payload.selector, payload.direction);
-      sendResponse({ ok });
-      return true;
-    }
-    if (type === "ALIGN_ELEMENT") {
-      const ok = alignElement(payload.selector, payload.align);
-      sendResponse({ ok });
-      return true;
-    }
-    if (type === "APPLY_FEATURE_SPEC") {
-      (async () => {
-        try {
+        if (type === "START_PICK_MODE") {
+          startPickMode();
+          chrome.runtime.sendMessage({
+            type: "WEBEDIT_MODE_STARTED",
+            payload: { mode: "pick", reason: payload.reason || null }
+          }).catch(() => {});
+          sendResponse({ ok: true });
+          return;
+        }
+        if (type === "REMOVE_ELEMENT") {
+          const result = removeElementBySelector(payload.selector);
+          sendResponse(result);
+          return;
+        }
+        if (type === "START_REMOVE_MODE") {
+          startRemoveMode();
+          chrome.runtime.sendMessage({
+            type: "WEBEDIT_MODE_STARTED",
+            payload: { mode: "remove", reason: payload.reason || null }
+          }).catch(() => {});
+          sendResponse({ ok: true });
+          return;
+        }
+        if (type === "START_CUSTOMIZE_SESSION") {
+          const result = startCustomizeSession(payload.selector);
+          sendResponse(result);
+          return;
+        }
+        if (type === "PREVIEW_STYLES") {
+          const result = previewStylesForSelector(payload.selector, payload.styles || {});
+          sendResponse(result);
+          return;
+        }
+        if (type === "RESET_PREVIEW_STYLES") {
+          const ok = resetPreviewStylesForSelector(payload.selector);
+          sendResponse({ ok });
+          return;
+        }
+        if (type === "EXIT_FEATURES") {
+          stopPickMode();
+          stopRemoveMode();
+          clearHover();
+          clearSelected();
+          sendResponse({ ok: true });
+          chrome.runtime.sendMessage({ type: "WEBEDIT_MODE_EXITED" }).catch(() => {});
+          return;
+        }
+        if (type === "APPLY_STYLES") {
+          const result = applyStylesToSelector(payload.selector, payload.styles || {});
+          sendResponse(result?.ok ? result : { ok: false });
+          return;
+        }
+        if (type === "RESET_STYLES") {
+          const ok = resetStylesForSelector(payload.selector);
+          sendResponse({ ok });
+          return;
+        }
+        if (type === "ADD_FEATURE_CARD") {
+          const result = injectFeatureCard(payload);
+          sendResponse(result?.ok ? result : { ok: false });
+          return;
+        }
+        if (type === "REMOVE_FEATURE_CARD") {
+          const ok = removeFeatureCardById(payload.featureId);
+          sendResponse({ ok });
+          return;
+        }
+        if (type === "SET_ELEMENT_DISPLAY") {
+          const ok = setElementDisplay(payload.selector, payload.value, payload.priority);
+          sendResponse({ ok });
+          return;
+        }
+        if (type === "APPLY_STYLE_PATCH") {
+          const ok = applyStylePatch(payload.selector, payload.patch || []);
+          sendResponse({ ok });
+          return;
+        }
+        if (type === "MOVE_ELEMENT") {
+          const ok = moveElement(payload.selector, payload.direction);
+          sendResponse({ ok });
+          return;
+        }
+        if (type === "ALIGN_ELEMENT") {
+          const ok = alignElement(payload.selector, payload.align);
+          sendResponse({ ok });
+          return;
+        }
+        if (type === "APPLY_FEATURE_SPEC") {
           const spec = payload.spec;
           const result = await applyFeatureSpecFlow(spec);
           sendResponse(result || { ok: false });
-        } catch (error) {
-          sendResponse({ ok: false, error: error.message });
+          return;
         }
-      })();
-      return true;
-    }
-    if (type === "PREVIEW_FEATURE_SPEC") {
-      (async () => {
-        try {
+        if (type === "PREVIEW_FEATURE_SPEC") {
           const spec = payload.spec || null;
           if (!spec) {
             sendResponse({ ok: false, error: "Missing spec" });
@@ -2333,15 +2352,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             return;
           }
           sendResponse({ ok: false, error: res?.error || "Preview failed" });
-        } catch (error) {
-          sendResponse({ ok: false, error: error.message });
+          return;
         }
-      })();
-      return true;
-    }
-    if (type === "COMMIT_FEATURE_SPEC") {
-      (async () => {
-        try {
+        if (type === "COMMIT_FEATURE_SPEC") {
           const previewId = payload.previewId || null;
           let specToApply = payload.spec || null;
 
@@ -2369,28 +2382,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           } else {
             sendResponse(result || { ok: false, error: "Commit failed" });
           }
-        } catch (error) {
-          sendResponse({ ok: false, error: error.message });
+          return;
         }
-      })();
-      return true;
-    }
-    if (type === "UNDO_FEATURE") {
-      if (payload.previewId) {
-        if (previewLabPreviews.has(payload.previewId)) {
-          previewLabPreviews.delete(payload.previewId);
-          clearGhostHighlight(payload.previewId);
-          if (activePreviewLab?.previewId === payload.previewId) activePreviewLab.cleanup();
-          sendResponse({ ok: true });
-          return true;
+        if (type === "UNDO_FEATURE") {
+          if (payload.previewId) {
+            if (previewLabPreviews.has(payload.previewId)) {
+              previewLabPreviews.delete(payload.previewId);
+              clearGhostHighlight(payload.previewId);
+              if (activePreviewLab?.previewId === payload.previewId) activePreviewLab.cleanup();
+              sendResponse({ ok: true });
+              return;
+            }
+          }
+          sendResponse({ ok: false, error: "Missing previewId" });
+          return;
         }
-      }
-      sendResponse({ ok: false, error: "Missing previewId" });
-      return true;
-    }
-    if (type === "UNDO_LAST") {
-      (async () => {
-        try {
+        if (type === "UNDO_LAST") {
           const store = window.FeatureStore;
           if (store && typeof store.undoLastCommit === "function") {
             const storeRes = await store.undoLastCommit();
@@ -2406,15 +2413,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           }
           const result = await exec.undoLast();
           sendResponse(result);
-        } catch (error) {
-          sendResponse({ ok: false, error: error.message });
+          return;
         }
-      })();
-      return true;
-    }
-    if (type === "REDO_LAST") {
-      (async () => {
-        try {
+        if (type === "REDO_LAST") {
           const store = window.FeatureStore;
           if (store && typeof store.redoLastCommit === "function") {
             const storeRes = await store.redoLastCommit();
@@ -2430,15 +2431,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           }
           const result = await exec.redoLast();
           sendResponse(result);
-        } catch (error) {
-          sendResponse({ ok: false, error: error.message });
+          return;
         }
-      })();
-      return true;
-    }
-    if (type === "UNDO_BY_ID") {
-      (async () => {
-        try {
+        if (type === "UNDO_BY_ID") {
           const exec = window.FeatureSpecExecutor;
           if (!exec || typeof exec.undoById !== "function") {
             sendResponse({ ok: false, error: "UndoById not available" });
@@ -2446,76 +2441,75 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           }
           const result = await exec.undoById(payload.targetId);
           sendResponse(result);
-        } catch (error) {
-          sendResponse({ ok: false, error: error.message });
+          return;
         }
-      })();
-      return true;
-    }
-    if (type === "REVEAL_HEADER") {
-      const count = revealLikelyHeader();
-      sendResponse({ ok: true, count });
-      return true;
-    }
-    if (type === "GET_ADD_DOM_CONTEXT") {
-      const selector = payload.selector || payload.targetSelector || "";
-      const result = buildAddDomContext(selector, payload.traceId || "");
-      sendResponse(result);
-      return true;
-    }
-    if (type === "GET_ADD_CONTEXT") {
-      const selector = payload.selector || payload.targetSelector || "";
-      const result = buildAddDomContext(selector, payload.traceId || "");
-      // Backward-compatible alias for existing callers.
-      sendResponse(result.ok ? { ok: true, context: result.addDomContext } : result);
-      return true;
-    }
-    if (type === "GET_SITE_CAPABILITIES") {
-      const selector = payload.selector || payload.targetSelector || "";
-      const extractor = window.ContextExtractor;
-      if (!extractor || typeof extractor.assessCapabilities !== "function") {
-        sendResponse({ ok: false, error: "Capability engine not available" });
-        return true;
-      }
-      const result = extractor.assessCapabilities(selector);
-      sendResponse(result);
-      return true;
-    }
-    if (type === "GET_PAGE_CONTEXT") {
-      // Prefer FeatureSpecExecutor page context when available (it provides a richer outline),
-      // but always include plain text for the AI endpoints.
-      const plainText = getPagePlainText();
-      const exec = window.FeatureSpecExecutor;
-      if (exec && typeof exec.getPageContext === "function") {
-        try {
-          const ctx = exec.getPageContext() || {};
+        if (type === "REVEAL_HEADER") {
+          const count = revealLikelyHeader();
+          sendResponse({ ok: true, count });
+          return;
+        }
+        if (type === "GET_ADD_DOM_CONTEXT") {
+          const selector = payload.selector || payload.targetSelector || "";
+          const result = buildAddDomContext(selector, payload.traceId || "");
+          sendResponse(result);
+          return;
+        }
+        if (type === "GET_ADD_CONTEXT") {
+          const selector = payload.selector || payload.targetSelector || "";
+          const result = buildAddDomContext(selector, payload.traceId || "");
+          // Backward-compatible alias for existing callers.
+          sendResponse(result.ok ? { ok: true, context: result.addDomContext } : result);
+          return;
+        }
+        if (type === "GET_SITE_CAPABILITIES") {
+          const selector = payload.selector || payload.targetSelector || "";
+          const extractor = window.ContextExtractor;
+          if (!extractor || typeof extractor.assessCapabilities !== "function") {
+            sendResponse({ ok: false, error: "Capability engine not available" });
+            return;
+          }
+          const result = extractor.assessCapabilities(selector);
+          sendResponse(result);
+          return;
+        }
+        if (type === "GET_PAGE_CONTEXT") {
+          // Prefer FeatureSpecExecutor page context when available (it provides a richer outline),
+          // but always include plain text for the AI endpoints.
+          const plainText = getPagePlainText();
+          const exec = window.FeatureSpecExecutor;
+          if (exec && typeof exec.getPageContext === "function") {
+            try {
+              const ctx = exec.getPageContext() || {};
+              sendResponse({
+                ok: true,
+                pageContext: {
+                  url: ctx.url || location.href,
+                  title: ctx.title || document.title || "",
+                  text: typeof ctx.text === "string" && ctx.text.trim() ? ctx.text : plainText,
+                  outline: ctx.outline ?? null
+                }
+              });
+              return;
+            } catch (error) {
+              // Fall through to basic context below.
+            }
+          }
           sendResponse({
             ok: true,
             pageContext: {
-              url: ctx.url || location.href,
-              title: ctx.title || document.title || "",
-              text: typeof ctx.text === "string" && ctx.text.trim() ? ctx.text : plainText,
-              outline: ctx.outline ?? null
+              url: location.href,
+              title: document.title || "",
+              text: plainText,
+              outline: null
             }
           });
-          return true;
-    } catch (error) {
-          // Fall through to basic context below.
+          return;
         }
-      }
-      sendResponse({
-        ok: true,
-        pageContext: {
-          url: location.href,
-          title: document.title || "",
-          text: plainText,
-          outline: null
-        }
-      });
-      return true;
-    }
 
-    sendResponse({ ok: false, error: "Unknown command" });
+        sendResponse({ ok: false, error: "Unknown command" });
+      } catch (err) {
+        sendResponse({ ok: false, error: err.message || String(err) });
+      }
     })();
     return true;
   }

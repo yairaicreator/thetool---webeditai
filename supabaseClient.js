@@ -119,6 +119,9 @@ async function generateFeatureSpec(prompt, context = null) {
   }
 
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 45000); // 45s timeout
+
     const response = await fetch(`${SUPABASE_URL}/functions/v1/ai-generate-feature-spec`, {
       method: 'POST',
       headers: {
@@ -126,8 +129,11 @@ async function generateFeatureSpec(prompt, context = null) {
         'apikey': SUPABASE_ANON_KEY,
         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal: controller.signal
     });
+    
+    clearTimeout(timeoutId);
 
     const text = await response.text();
     let json = null;

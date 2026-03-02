@@ -1176,6 +1176,8 @@
           }
           const traceId = String(nextSpec?.metadata?.traceId || refineTraceId);
           console.info(`[SidePanel Add][${traceId}] refine-preview-start`);
+          thinking.content = "Updating preview...";
+          renderChatMessages();
           let previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec: nextSpec, previewId, traceId });
           
           if (previewResp?.response?.ok) {
@@ -1294,6 +1296,8 @@
           }
           // It's an edit command (hide, customize, add, text)
           thinking.content = "Generating a preview...";
+          renderChatMessages();
+          
           const previewTraceId = String(spec?.metadata?.traceId || `trace-${Date.now()}`);
           console.info(`[SidePanel Add][${previewTraceId}] general-preview-start action=${String(spec?.action || "unknown")}`);
           const previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec, traceId: previewTraceId });

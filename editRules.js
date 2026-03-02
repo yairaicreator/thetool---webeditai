@@ -535,14 +535,14 @@ const RuleApplier = {
           case 'hide':
             effectRecord.attr = 'data-webedit-hidden';
             effectRecord.previousDisplay = el.style.getPropertyValue('display') || null;
-            el.style.display = 'none';
+            el.style.setProperty('display', 'none', 'important');
             el.setAttribute('data-webedit-hidden', rule.id);
             break;
 
           case 'remove':
             effectRecord.attr = 'data-webedit-removed';
             effectRecord.previousDisplay = el.style.getPropertyValue('display') || null;
-            el.style.display = 'none';
+            el.style.setProperty('display', 'none', 'important');
             el.setAttribute('data-webedit-removed', rule.id);
             break;
 
