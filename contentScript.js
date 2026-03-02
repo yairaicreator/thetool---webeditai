@@ -50,10 +50,18 @@ function clearGhostHighlight(previewId) {
 }
 
 function notifyPreviewAction(action, previewId) {
-  chrome.runtime.sendMessage({
-    type: "WEBEDIT_PREVIEW_ACTION",
-    payload: { action, previewId }
-  }).catch(() => {});
+  try {
+    chrome.runtime.sendMessage({
+      type: "WEBEDIT_PREVIEW_ACTION",
+      payload: { action, previewId }
+    }).catch(() => {});
+  } catch (e) {
+    if (e.message && e.message.includes("Extension context invalidated")) {
+      console.warn("[WebEdit AI] Extension was reloaded. Please refresh the page.");
+      // Optional: alert the user to refresh the page
+      alert("WebEdit AI extension was updated. Please refresh the page to continue editing.");
+    }
+  }
 }
 
 function escapeHtml(value = "") {

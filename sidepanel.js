@@ -1381,6 +1381,19 @@
       hideModeIndicator();
       return;
     }
+
+    if (message?.type === "WEBEDIT_PREVIEW_ACTION") {
+      const { action, previewId } = message.payload || {};
+      if (!previewId) return;
+      if (action === "apply") {
+        handlePreviewApply(previewId);
+      } else if (action === "refine") {
+        handlePreviewRefine(previewId);
+      } else if (action === "undo") {
+        handlePreviewUndo(previewId);
+      }
+      return;
+    }
     if (message?.type === "WEBEDIT_MODE_STARTED") {
       const mode = message.payload?.mode;
       if (mode === "pick") {

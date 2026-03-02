@@ -442,7 +442,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       "WEBEDIT_ELEMENT_PICKED",
       "WEBEDIT_MODE_STARTED",
       "WEBEDIT_MODE_EXITED",
-      "WEBEDIT_SESSION_UPDATED"
+      "WEBEDIT_SESSION_UPDATED",
+      "WEBEDIT_PREVIEW_ACTION"
     ]);
     if (relayTypes.has(message.type)) {
       // Best-effort broadcast to extension UIs (sidepanel, etc.)
