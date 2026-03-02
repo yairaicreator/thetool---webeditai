@@ -62,6 +62,10 @@
   let activeHistoryRenameForm = null;
   let currentTool = "add";
   let pendingFeaturePickMode = null; // null | add | remove | customize
+  let pendingPreviewRefine = null;
+  let pendingComplexDecomposition = null;
+  let pendingDecompositionExecution = null;
+  let pendingAiAnchorRequest = null;
   
   let customizeReviewApplied = false;
   let lastPickedTarget = null; // { selector, description }
@@ -276,26 +280,49 @@
     return `${labels[stage] || stage}: ${detail}`;
   }
 
-  
-  -${Math.random().toString(36).slice(2, 8)}`;
+  async function handlePreviewApply(previewId) {
+    if (!requireAuth("apply features")) return;
+    const msgIndex = chatMessages.findIndex(m => m.type === "preview" && m.content?.previewId === previewId);
+    if (msgIndex !== -1) {
+      chatMessages.splice(msgIndex, 1);
+    }
+    const thinking = addChatMessage("assistant", "Applying feature...");
+    const resp = await sendToActiveTab({ type: "COMMIT_FEATURE_SPEC", previewId });
+    if (resp?.response?.ok) {
+      thinking.content = "✅ Applied successfully!";
+    } else {
+      thinking.content = `❌ Apply failed: ${resp?.response?.error || "unknown"}`;
+    }
+    renderChatMessages();
+    saveChatHistory();
   }
 
-  
-      
+  async function handlePreviewUndo(previewId) {
+    const msgIndex = chatMessages.findIndex(m => m.type === "preview" && m.content?.previewId === previewId);
+    if (msgIndex !== -1) chatMessages.splice(msgIndex, 1);
+    addChatMessage("system", "Preview discarded.");
+    await sendToActiveTab({ type: "UNDO_FEATURE", previewId });
+    renderChatMessages();
+    saveChatHistory();
+  }
 
-  
+  async function handlePreviewRefine(previewId) {
+    const msg = chatMessages.find(m => m.type === "preview" && m.content?.previewId === previewId);
+    if (!msg) return;
+    pendingPreviewRefine = {
+      previewId,
+      spec: msg.content.spec,
+      mode: "spec"
+    };
+    addChatMessage("system", "How should I change this feature? Type your request below.");
+  }
 
-  
-
-  
-
-  
-
-  
-
-  
-  
-    
+  async function handlePreviewReopen(previewId) {
+    const msg = chatMessages.find(m => m.type === "preview" && m.content?.previewId === previewId);
+    if (!msg) return;
+    addChatMessage("system", "Reopening preview...");
+    await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec: msg.content.spec, previewId });
+  }
 
   function showNotificationInChat(text) {
     addChatMessage("system", text);
@@ -1114,34 +1141,17 @@
           pageContext.previousSpec = spec;
         }
         let nextSpec = null;
-        const refineTraceId = String(spec?.metadata?.traceId || createAddTraceId());
-        if (spec?.action === "add") {
-          const orchestrated = await orchestrateAddSpec(text, pageContext, spec, refineTraceId);
-          if (!orchestrated.ok) {
-            if (orchestrated.stage === "complexity" && beginComplexityDecomposition(orchestrated.decompositionSteps || [])) {
-              thinking.content = "⚠️ Request needs decomposition before reliable implementation.";
-              renderChatMessages();
-              saveChatHistory();
-              return;
-            }
-            thinking.content = `❌ ${formatStageError(orchestrated, "Refinement failed")}`;
-            renderChatMessages();
-            saveChatHistory();
-            return;
-          }
-          nextSpec = orchestrated.spec;
-        } else {
-          const aiResp = window.SupabaseClient?.generateFeatureSpec
-            ? await window.SupabaseClient.generateFeatureSpec(text, pageContext)
-            : null;
-          if (!aiResp?.ok) {
-            thinking.content = `❌ ${aiResp?.error || "AI is not available right now."}`;
-            renderChatMessages();
-            saveChatHistory();
-            return;
-          }
-          nextSpec = aiResp.spec;
+        const refineTraceId = `trace-${Date.now()}`;
+        const aiResp = window.SupabaseClient?.generateFeatureSpec
+          ? await window.SupabaseClient.generateFeatureSpec(text, pageContext)
+          : null;
+        if (!aiResp?.ok) {
+          thinking.content = `❌ ${aiResp?.error || "AI is not available right now."}`;
+          renderChatMessages();
+          saveChatHistory();
+          return;
         }
+        nextSpec = aiResp.spec;
 
         if (!nextSpec || nextSpec.action === "chat" || nextSpec.action === "undo" || nextSpec.action === "reveal") {
           thinking.content = "❌ I couldn't generate a new preview for that refinement.";
@@ -1277,15 +1287,6 @@
             : `❌ ${revealResp?.response?.error || "Reveal failed"}`;
         } else {
           if (spec.action === "add") {
-            const flowTraceId = String(spec?.metadata?.traceId || createAddTraceId());
-            const orchestrated = await orchestrateAddSpec(text, pageContext, spec, flowTraceId);
-            if (!orchestrated.ok || !orchestrated.spec) {
-              thinking.content = `❌ ${formatStageError(orchestrated, "Add generation failed.")}`;
-              renderChatMessages();
-              saveChatHistory();
-              return;
-            }
-            spec = orchestrated.spec;
             if (lastPickedTarget?.selector) {
               spec.targetSelector = lastPickedTarget.selector;
               if (!spec.selector) spec.selector = lastPickedTarget.selector;
@@ -1293,7 +1294,7 @@
           }
           // It's an edit command (hide, customize, add, text)
           thinking.content = "Generating a preview...";
-          const previewTraceId = String(spec?.metadata?.traceId || createAddTraceId());
+          const previewTraceId = String(spec?.metadata?.traceId || `trace-${Date.now()}`);
           console.info(`[SidePanel Add][${previewTraceId}] general-preview-start action=${String(spec?.action || "unknown")}`);
           const previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec, traceId: previewTraceId });
           if (previewResp?.response?.ok) {

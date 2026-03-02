@@ -113,6 +113,9 @@ async function generateFeatureSpec(prompt, context = null) {
   const payload = { prompt: sanitizedPrompt };
   if (context && typeof context === 'object') {
     payload.context = context;
+    if (context.anchorElement?.htmlContext) {
+      payload.htmlContext = context.anchorElement.htmlContext;
+    }
   }
 
   try {
@@ -147,7 +150,16 @@ async function generateFeatureSpec(prompt, context = null) {
       return { ok: false, error: `ai-generate-feature-spec failed with status ${response.status}` };
     }
 
-    return json;
+    // Wrap in standard spec format for sidepanel
+    return { 
+      ok: true, 
+      spec: {
+        action: "add",
+        html: json.html || "",
+        css: json.css || "",
+        js: json.js || ""
+      }
+    };
   } catch (error) {
     console.error('[SupabaseClient] ai-generate-feature-spec request failed:', error);
     const message = error instanceof Error ? error.message : String(error);
