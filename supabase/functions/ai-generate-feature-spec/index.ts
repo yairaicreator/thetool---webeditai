@@ -89,12 +89,18 @@ Return ONLY this JSON object.`;
       parsedSpec = JSON.parse(textOutput);
     } catch (parseError) {
       console.error("Failed to parse Gemini output as JSON. Output was:", textOutput);
-      // Fallback: try to extract JSON if it was wrapped in markdown
-      const match = textOutput.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-      if (match && match[1]) {
-         parsedSpec = JSON.parse(match[1]);
-      } else {
-         throw new Error("Could not parse AI output as JSON.");
+      // Fallback: try to extract JSON by finding the first { and last }
+      try {
+        const firstBrace = textOutput.indexOf('{');
+        const lastBrace = textOutput.lastIndexOf('}');
+        if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+          const jsonString = textOutput.substring(firstBrace, lastBrace + 1);
+          parsedSpec = JSON.parse(jsonString);
+        } else {
+          throw new Error("No JSON object found in output.");
+        }
+      } catch (fallbackError) {
+        throw new Error("Could not parse AI output as JSON.");
       }
     }
 
