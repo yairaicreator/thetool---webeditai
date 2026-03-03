@@ -882,6 +882,7 @@ async function applyAddEdit(editId, payload) {
 
   // Deterministic replay path: FeatureSpecExecutor only (no legacy DOM card fallback).
   const addSpec = normalizeAddPayloadToSpec(payload);
+  fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e76c3f'},body:JSON.stringify({sessionId:'e76c3f',hypothesisId:'H4',location:'contentScript.js:applyAddEdit',message:'Applying add edit',data:{editId, addSpecId: addSpec?.id},timestamp:Date.now()})}).catch(()=>{});
   if (!addSpec) {
     console.info(`[WebEdit] Skipping non-normalizable add replay id=${String(editId || "unknown")}`);
     return false;
@@ -964,9 +965,11 @@ async function rebuildCloudEdits(reason = "unknown") {
         console.info(`[WebEdit] Cloud rebuild skipped (fetch unavailable). reason=${String(reason || "unknown")} websiteId=${String(websiteId || "unknown")}`);
         return { ok: false, skipped: true, reason: "fetch-unavailable" };
       }
+      fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e76c3f'},body:JSON.stringify({sessionId:'e76c3f',hypothesisId:'H5',location:'contentScript.js:rebuildCloudEdits',message:'Fetched edits',data:{count: edits.length, ids: edits.map(e => String(e?.id || e?.edit_id || e?.editId))},timestamp:Date.now()})}).catch(()=>{});
       // Deterministic correctness: clear everything we manage, then reapply ACTIVE edits in order.
       const activeIdsSet = new Set(edits.map(e => String(e?.id || e?.edit_id || e?.editId)));
       const clearSummary = clearAppliedCloudEdits(activeIdsSet);
+      fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e76c3f'},body:JSON.stringify({sessionId:'e76c3f',hypothesisId:'H5',location:'contentScript.js:rebuildCloudEdits:cleared',message:'Cleared applied cloud edits',data:{clearSummary},timestamp:Date.now()})}).catch(()=>{});
       // stable order (server orders by created_at asc, but keep client-side fallback)
       edits.sort((a, b) => String(a?.created_at || "").localeCompare(String(b?.created_at || "")));
       const result = await applyActiveEditsInOrder(edits);
@@ -2000,20 +2003,20 @@ async function applyFeatureSpecFlow(spec) {
       }
 
       // Replace the local (temporary) insertion with a cloud-managed insertion keyed by the Supabase edit id.
-      const persistedEditId = saveResp?.edit?.id;
-      if (persistedEditId) {
-        try {
-          const oldId = result.applied?.id;
-          if (oldId) {
-            const oldNodes = document.querySelectorAll(`[data-webedit-ai-insert-id="${cssEscapeSafe(oldId)}"]`);
-            oldNodes.forEach(el => el.remove());
-            const oldStyles = document.querySelectorAll(`style[data-webedit-ai-style-id="${cssEscapeSafe(oldId)}"]`);
-            oldStyles.forEach(el => el.remove());
+        const persistedEditId = saveResp?.edit?.id;
+        if (persistedEditId) {
+          try {
+            const oldId = result.applied?.id;
+            if (oldId) {
+              const oldNodes = document.querySelectorAll(`[data-webedit-ai-insert-id="${cssEscapeSafe(oldId)}"]`);
+              oldNodes.forEach(el => el.remove());
+              const oldStyles = document.querySelectorAll(`style[data-webedit-ai-style-id="${cssEscapeSafe(oldId)}"]`);
+              oldStyles.forEach(el => el.remove());
+            }
+          } catch (err) {
           }
-        } catch (err) {
-        }
-        const replayed = await exec.applyFeatureSpec(normalizedSpec, { replay: true, id: persistedEditId, skipPersist: true });
-        if (replayed?.ok) {
+          const replayed = await exec.applyFeatureSpec(normalizedSpec, { replay: true, id: persistedEditId, skipPersist: true });
+          if (replayed?.ok) {
           try {
             const nodes = document.querySelectorAll(`[data-webedit-ai-insert-id="${cssEscapeSafe(persistedEditId)}"]`);
             nodes.forEach((el) => {

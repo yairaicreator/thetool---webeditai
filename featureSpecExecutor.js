@@ -267,10 +267,12 @@ async function applyFeatureSpec(spec, options = {}) {
       }
 
       const applied = { id, spec, timestamp, undo: { action: "hide", selector: spec.selector, previousDisplay, previousPriority, previousAttr } };
-      if (!replay && !skipPersist) {
+      if (!replay) {
         undoStack.push(applied);
         redoStack.length = 0;
-        await persistAppend(spec);
+        if (!skipPersist) {
+          await persistAppend(spec);
+        }
       }
       return { ok: true, applied };
     }
@@ -296,10 +298,12 @@ async function applyFeatureSpec(spec, options = {}) {
       }
 
       const applied = { id, spec, timestamp, undo: { action: "customize", selector: spec.selector, previous, previousPriority } };
-      if (!replay && !skipPersist) {
+      if (!replay) {
         undoStack.push(applied);
         redoStack.length = 0;
-        await persistAppend(spec);
+        if (!skipPersist) {
+          await persistAppend(spec);
+        }
       }
       return { ok: true, applied };
     }
@@ -356,10 +360,12 @@ async function applyFeatureSpec(spec, options = {}) {
       }
 
       const applied = { id, spec, timestamp, undo: { action: "text-insert", markerId: id } };
-      if (!replay && !skipPersist) {
+      if (!replay) {
         undoStack.push(applied);
         redoStack.length = 0;
-        await persistAppend(spec);
+        if (!skipPersist) {
+          await persistAppend(spec);
+        }
       }
       return { ok: true, applied };
     }
@@ -373,7 +379,8 @@ async function applyFeatureSpec(spec, options = {}) {
       // If this spec already rendered for this id, remove stale nodes/styles first.
       // This is required for preview placement changes (before/inside/after/replace).
       const already = safeQueryAll(`[${INSERT_MARKER_ATTR}="${CSS.escape(id)}"]`, root);
-      
+      fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e76c3f'},body:JSON.stringify({sessionId:'e76c3f',hypothesisId:'H6',location:'featureSpecExecutor.js:applyFeatureSpec:already',message:'Checking existing nodes',data:{id, alreadyCount: already.length, replay, skipPersist},timestamp:Date.now()})}).catch(()=>{});
+
       // Prevent MutationObserver infinite loops during SPA remounts
       if (already.length > 0 && replay && skipPersist) {
         return { ok: true, applied: { id, spec, timestamp, undo: { action: "add", markerId: id } } };
@@ -392,6 +399,11 @@ async function applyFeatureSpec(spec, options = {}) {
           } catch (_) {}
         });
       }
+      
+      try {
+        const oldStyles = document.querySelectorAll(`style[data-webedit-ai-style-id="${cssEscapeSafe(id)}"]`);
+        oldStyles.forEach(el => el.remove());
+      } catch (e) {}
 
       const position = spec.position || "inside";
       const generatedModule = spec.generated_module || null;
@@ -490,9 +502,9 @@ async function applyFeatureSpec(spec, options = {}) {
         }
       };
       if (!replay) {
+        undoStack.push(applied);
+        redoStack.length = 0;
         if (!skipPersist) {
-          undoStack.push(applied);
-          redoStack.length = 0;
           await persistAppend(spec, applied.migration);
         }
       }
