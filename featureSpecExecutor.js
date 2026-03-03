@@ -393,6 +393,9 @@ async function applyFeatureSpec(spec, options = {}) {
           // If the injected nodes are already in the DOM, skip re-insertion to avoid MutationObserver infinite loops.
           return { ok: true, applied: { id, spec, timestamp, skipped: true, undo: { action: "add", markerId: id } } };
         }
+        
+        // When reapplying an element (either due to preview updating or some other valid re-insertion),
+        // we must remove the existing nodes first to prevent duplication.
         already.forEach((node) => {
           try {
             if (node && node.parentNode) node.parentNode.removeChild(node);
