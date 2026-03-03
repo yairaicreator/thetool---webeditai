@@ -323,10 +323,12 @@ async function applyFeatureSpec(spec, options = {}) {
           el.textContent = content;
         }
         const applied = { id, spec, timestamp, undo: { action: "text-replace", selector: spec.selector, previousText } };
-        if (!replay && !skipPersist) {
+        if (!replay) {
           undoStack.push(applied);
           redoStack.length = 0;
-          await persistAppend(spec);
+          if (!skipPersist) {
+            await persistAppend(spec);
+          }
         }
         return { ok: true, applied };
       }
@@ -383,10 +385,14 @@ async function applyFeatureSpec(spec, options = {}) {
 
       // Prevent MutationObserver infinite loops during SPA remounts
       if (already.length > 0 && replay && skipPersist) {
-        return { ok: true, applied: { id, spec, timestamp, undo: { action: "add", markerId: id } } };
+         return { ok: true, applied: { id, spec, timestamp, skipped: true, undo: { action: "add", markerId: id } } };
       }
 
       if (already.length > 0) {
+        if (!preview && !replay) {
+          // If the injected nodes are already in the DOM, skip re-insertion to avoid MutationObserver infinite loops.
+          return { ok: true, applied: { id, spec, timestamp, skipped: true, undo: { action: "add", markerId: id } } };
+        }
         already.forEach((node) => {
           try {
             if (node && node.parentNode) node.parentNode.removeChild(node);
