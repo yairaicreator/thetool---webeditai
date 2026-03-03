@@ -890,7 +890,18 @@ async function applyAddEdit(editId, payload) {
     console.info(`[WebEdit] FeatureSpecExecutor unavailable for add replay id=${String(editId || "unknown")}`);
     return false;
   }
-  const res = await window.FeatureSpecExecutor.applyFeatureSpec(addSpec, { replay: true, id: editId, skipPersist: true });
+
+  let res = null;
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    res = await window.FeatureSpecExecutor.applyFeatureSpec(addSpec, { replay: true, id: editId, skipPersist: true });
+    if (res?.ok) break;
+    if (typeof res?.error === "string" && res.error.includes("Could not find target")) {
+      await new Promise(r => setTimeout(r, 400 * attempt));
+      continue;
+    }
+    break;
+  }
+
   if (res?.ok) {
     try {
       const nodes = document.querySelectorAll(`[data-webedit-ai-insert-id="${cssEscapeSafe(editId)}"]`);
@@ -1991,7 +2002,16 @@ async function applyFeatureSpecFlow(spec) {
       // Replace the local (temporary) insertion with a cloud-managed insertion keyed by the Supabase edit id.
       const persistedEditId = saveResp?.edit?.id;
       if (persistedEditId) {
-        try { await exec.undoById?.(result.applied?.id); } catch (_) {}
+        try {
+          const oldId = result.applied?.id;
+          if (oldId) {
+            const oldNodes = document.querySelectorAll(`[data-webedit-ai-insert-id="${cssEscapeSafe(oldId)}"]`);
+            oldNodes.forEach(el => el.remove());
+            const oldStyles = document.querySelectorAll(`style[data-webedit-ai-style-id="${cssEscapeSafe(oldId)}"]`);
+            oldStyles.forEach(el => el.remove());
+          }
+        } catch (err) {
+        }
         const replayed = await exec.applyFeatureSpec(normalizedSpec, { replay: true, id: persistedEditId, skipPersist: true });
         if (replayed?.ok) {
           try {
