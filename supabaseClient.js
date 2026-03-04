@@ -118,9 +118,10 @@ async function generateFeatureSpec(prompt, context = null) {
     }
   }
 
+  let timeoutId;
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 45000); // 45s timeout
+    timeoutId = setTimeout(() => controller.abort(), 45000); // 45s timeout
 
     const response = await fetch(`${SUPABASE_URL}/functions/v1/ai-generate-feature-spec`, {
       method: 'POST',
@@ -133,8 +134,6 @@ async function generateFeatureSpec(prompt, context = null) {
       signal: controller.signal
     });
     
-    clearTimeout(timeoutId);
-
     const text = await response.text();
     let json = null;
     try {
@@ -156,31 +155,44 @@ async function generateFeatureSpec(prompt, context = null) {
       return { ok: false, error: `ai-generate-feature-spec failed with status ${response.status}` };
     }
 
-    // Wrap in standard spec format for sidepanel
-    return { 
-      ok: true, 
-      spec: {
-        action: "add",
-        html: json.html || "",
-        css: json.css || "",
-        js: json.js || ""
-      }
-    };
+      // Wrap in standard spec format for sidepanel
+      return { 
+        ok: true, 
+        spec: {
+          action: "add",
+          html: json.html || "",
+          css: json.css || "",
+          js: json.js || ""
+        }
+      };
   } catch (error) {
     console.error('[SupabaseClient] ai-generate-feature-spec request failed:', error);
     const message = error instanceof Error ? error.message : String(error);
     return { ok: false, error: message };
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
-async function fetchAuthUser() {
+let cachedAuthUser = null;
+let cachedAuthUserAt = 0;
+const AUTH_USER_CACHE_TTL = 30000;
+
+async function fetchAuthUser(force = false) {
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY || SUPABASE_URL.includes("YOUR_SUPABASE_URL")) {
     return { ok: false, error: "Supabase not configured", user: null };
   }
+  
+  if (!force && Date.now() - cachedAuthUserAt < AUTH_USER_CACHE_TTL) {
+    return { ok: true, user: cachedAuthUser };
+  }
+
   try {
     const { data: { session } } = await SupabaseClient.getSession({ allowRefresh: false });
     const accessToken = session?.access_token;
     if (!accessToken) {
+      cachedAuthUser = null;
+      cachedAuthUserAt = Date.now();
       return { ok: true, user: null };
     }
     const response = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
@@ -191,6 +203,8 @@ async function fetchAuthUser() {
       }
     });
     if (response.status === 401 || response.status === 403) {
+      cachedAuthUser = null;
+      cachedAuthUserAt = Date.now();
       return { ok: true, user: null };
     }
     const payload = await response.json().catch(() => null);
@@ -198,6 +212,8 @@ async function fetchAuthUser() {
       const msg = payload?.msg || payload?.error_description || payload?.error || response.statusText;
       return { ok: false, error: msg || `Auth user fetch failed (${response.status})`, user: null };
     }
+    cachedAuthUser = payload;
+    cachedAuthUserAt = Date.now();
     return { ok: true, user: payload };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
