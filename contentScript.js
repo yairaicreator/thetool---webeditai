@@ -322,6 +322,27 @@ let applySavedEditsInFlight = null;
 let pendingApplySavedReason = null;
 let lastSpaKey = null; // origin+pathname
 let spaReapplyTimer = null;
+let spaMutationObserver = null;
+
+function disconnectSpaObserver() {
+  try {
+    if (spaMutationObserver) {
+      spaMutationObserver.disconnect();
+      spaMutationObserver = null;
+    }
+  } catch (_) {}
+}
+
+function reconnectSpaObserver() {
+  try {
+    if (spaMutationObserver) return;
+    if (!document.documentElement) return;
+    spaMutationObserver = new MutationObserver(() => {
+      scheduleSpaReapply("mutation");
+    });
+    spaMutationObserver.observe(document.documentElement, { subtree: true, childList: true });
+  } catch (_) {}
+}
 const CUSTOMIZE_STYLE_PROPS = [
   "background-color",
   "color",
@@ -350,7 +371,7 @@ function scheduleSpaReapply(reason = "spa") {
     console.log("[WebEdit] SPA reapply triggered:", reason);
     // Re-run deterministic rehydration pipeline once per burst.
     applySavedEditsForUser(`spa:${reason}`).catch(() => {});
-  }, 250);
+  }, 450);
 }
 
 function handleSpaUrlChange(reason = "url-change") {
@@ -638,15 +659,15 @@ function clearAppliedCloudEdits(activeIds = new Set()) {
     });
   } catch (_) {}
 
-  // 2) Remove injected style tags for cloud Customize edits only.
+  // 2) Remove injected style tags for cloud Customize and Hide edits when no longer active.
   // Preserve local FeatureSpec styles (`data-webedit-ai-style-id`) so local replayed
   // add features do not flicker/disappear after cloud rebuild.
   try {
-    const styleEls = Array.from(document.querySelectorAll(`style[id^="${WEBEDIT_STYLE_ID_PREFIX}"]`));
+    const styleEls = Array.from(document.querySelectorAll(`style[id^="${WEBEDIT_STYLE_ID_PREFIX}"], style[id^="${WEBEDIT_HIDDEN_STYLE_PREFIX}"]`));
     styleEls.forEach((el) => {
       const isFeatureSpecStyle = el.hasAttribute("data-webedit-ai-style-id");
       if (isFeatureSpecStyle) return;
-      const editId = el.id.replace(WEBEDIT_STYLE_ID_PREFIX, "");
+      const editId = el.id.replace(WEBEDIT_STYLE_ID_PREFIX, "").replace(WEBEDIT_HIDDEN_STYLE_PREFIX, "");
       if (shouldKeep(editId)) return;
       try {
         el.remove();
@@ -655,7 +676,7 @@ function clearAppliedCloudEdits(activeIds = new Set()) {
     });
   } catch (_) {}
 
-  // 3) Unhide elements affected by cloud Hide/Remove edits
+  // 3) Legacy: unhide elements with data-webedit-managed (from old element-based hide)
   try {
     const managed = Array.from(document.querySelectorAll(`[${WEBEDIT_MANAGED_ATTR}="1"]`));
     managed.forEach((el) => {
@@ -756,56 +777,33 @@ function applyCustomizeEdit(editId, payload) {
   return true;
 }
 
+const WEBEDIT_HIDDEN_STYLE_PREFIX = "webedit-hidden-";
+
 function applyHideEdit(editId, payload) {
   const selector = pickSelectorFromPayload(payload);
   if (!selector || !editId) return 0;
-  let count = 0;
-  let nodes = [];
+  // Use global CSS in head so elements are hidden immediately when added to DOM (no flicker)
+  const safeSelector = `${selector}:not([${WEBEDIT_CLOUD_EDIT_ATTR}]):not([data-webedit-feature-id])`;
+  const css = `${safeSelector} { display: none !important }`;
+  const styleId = `${WEBEDIT_HIDDEN_STYLE_PREFIX}${editId}`;
+  const head = document.head || document.documentElement;
+  if (!head) return 0;
+  let styleEl = document.getElementById(styleId);
+  if (!styleEl) {
+    styleEl = document.createElement("style");
+    styleEl.id = styleId;
+    head.appendChild(styleEl);
+  }
+  const newText = `/* WebEdit cloud hide: ${editId} */\n${css}\n`;
+  if (styleEl.textContent !== newText) {
+    styleEl.textContent = newText;
+  }
   try {
-    nodes = Array.from(document.querySelectorAll(selector));
-  } catch (e) {
-    console.debug(`[WebEdit] applyHideEdit selector failed id=${editId} selector=${selector}`, e?.message || e);
-    return 0;
+    const count = document.querySelectorAll(selector).length;
+    return count > 0 ? 1 : 0;
+  } catch (_) {
+    return 1;
   }
-  if (nodes.length === 0) {
-    console.debug(`[WebEdit] applyHideEdit no elements matched id=${editId} selector=${selector}`);
-  }
-  nodes.forEach((el) => {
-    // Skip extension injected nodes (avoid hiding the feature UI itself)
-    if (el.closest && (el.closest(`[${WEBEDIT_CLOUD_EDIT_ATTR}]`) || el.closest("[data-webedit-feature-id]"))) return;
-
-    try {
-      let mutated = false;
-      const hideClass = `${WEBEDIT_HIDDEN_CLASS_PREFIX}${editId}`;
-
-      // Save original inline display only once
-      if (!el.hasAttribute(WEBEDIT_ORIG_DISPLAY_ATTR)) {
-        el.setAttribute(WEBEDIT_ORIG_DISPLAY_ATTR, el.style.getPropertyValue("display") || "");
-        el.setAttribute(WEBEDIT_ORIG_DISPLAY_PRIO_ATTR, el.style.getPropertyPriority("display") || "");
-        mutated = true;
-      }
-
-      if (!el.classList.contains(hideClass)) {
-        el.classList.add(hideClass);
-        mutated = true;
-      }
-
-      if (!el.hasAttribute(WEBEDIT_MANAGED_ATTR)) {
-        el.setAttribute(WEBEDIT_MANAGED_ATTR, "1");
-        mutated = true;
-      }
-
-      if (el.style.getPropertyValue("display") !== "none" || el.style.getPropertyPriority("display") !== "important") {
-        el.style.setProperty("display", "none", "important");
-        mutated = true;
-      }
-
-      if (mutated) {
-        count += 1;
-      }
-    } catch (_) {}
-  });
-  return count;
 }
 
 function cssEscapeSafe(value) {
@@ -886,6 +884,17 @@ function normalizeAddPayloadToSpec(payload = {}) {
 
 async function applyAddEdit(editId, payload) {
   if (!editId || !payload || typeof payload !== "object") return false;
+
+  // Skip if already injected (prevents flicker and duplication from remove-then-reinsert)
+  try {
+    const existing = document.querySelectorAll(`[data-webedit-ai-insert-id="${cssEscapeSafe(editId)}"]`);
+    if (existing.length > 0 && existing[0].isConnected) {
+      existing.forEach((el) => {
+        try { el.setAttribute(WEBEDIT_CLOUD_EDIT_ATTR, editId); } catch (_) {}
+      });
+      return true;
+    }
+  } catch (_) {}
 
   // Deterministic replay path: FeatureSpecExecutor only (no legacy DOM card fallback).
   const addSpec = normalizeAddPayloadToSpec(payload);
@@ -985,6 +994,49 @@ async function rebuildCloudEdits(reason = "unknown") {
       // Deterministic correctness: clear everything we manage, then reapply ACTIVE edits in order.
       const activeIdsSet = new Set(edits.map(e => String(e?.id || e?.edit_id || e?.editId)));
       const clearSummary = clearAppliedCloudEdits(activeIdsSet);
+
+      // Synchronize local editRules.js with active cloud edits
+      try {
+        if (typeof window.EditRules?.getRulesForCurrentPage === "function" && 
+            typeof window.EditRules?.deleteRule === "function" &&
+            typeof window.EditRules?.saveRule === "function") {
+          
+          const localRules = await window.EditRules.getRulesForCurrentPage();
+          
+          // Identify which editRules IDs are actively in the cloud payload
+          const activeLocalIds = new Set();
+          const rulesToSave = [];
+          
+          for (const row of edits) {
+            const payload = row?.payload || row?.metadata?.payload || row?.data || {};
+            // If the payload looks like an editRules rule, track it
+            if (payload?.id && typeof payload.selector === "string" && typeof payload.action === "string" && !payload.html && !payload.js) {
+              activeLocalIds.add(String(payload.id));
+              rulesToSave.push(payload);
+            }
+          }
+          
+          // Delete local rules that are NOT in active cloud edits (and are older than 10s to prevent race conditions)
+          for (const localRule of localRules) {
+            if (!activeLocalIds.has(String(localRule.id))) {
+              if (Date.now() - (localRule.createdAt || 0) > 10000) {
+                await window.EditRules.deleteRule(localRule.id);
+              }
+            }
+          }
+          
+          // Save active cloud rules that are missing locally (for Redo)
+          const existingLocalIds = new Set(localRules.map(r => String(r.id)));
+          for (const rule of rulesToSave) {
+            if (!existingLocalIds.has(String(rule.id))) {
+              await window.EditRules.saveRule(rule);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("[WebEdit] Failed to sync local editRules with cloud edits:", e);
+      }
+
       // stable order (server orders by created_at asc, but keep client-side fallback)
       edits.sort((a, b) => String(a?.created_at || "").localeCompare(String(b?.created_at || "")));
       const result = await applyActiveEditsInOrder(edits);
@@ -1230,10 +1282,7 @@ try {
   };
 
   // DOM remount watcher: on heavy SPA remounts, reapply edits after a short debounce.
-  const observer = new MutationObserver((mutations) => {
-    scheduleSpaReapply("mutation");
-  });
-  observer.observe(document.documentElement, { subtree: true, childList: true });
+  reconnectSpaObserver();
 } catch (e) {
   console.warn("[WebEdit] SPA hooks setup failed:", e?.message || e);
 }
@@ -1288,24 +1337,28 @@ async function applySavedEditsForUserOnce(reason = "manual") {
     return;
   }
 
-  console.log("[WebEdit] applySavedEditsForUser start", {
-    reason,
-    origin: location.origin,
-    pathname: location.pathname,
-    href: location.href
-  });
-
-  if (!window.EditRules) {
-    return;
+  // Suppress observers during apply to prevent feedback loop (our DOM changes triggering another apply)
+  disconnectSpaObserver();
+  if (window.EditRules && typeof window.EditRules.disconnectMutationObserver === "function") {
+    window.EditRules.disconnectMutationObserver();
   }
+
   try {
+    console.log("[WebEdit] applySavedEditsForUser start", {
+      reason,
+      origin: location.origin,
+      pathname: location.pathname,
+      href: location.href
+    });
+
+    if (!window.EditRules) {
+      return;
+    }
+    try {
     if (typeof window.EditRules.applyAllRulesForCurrentPage === "function") {
       await window.EditRules.applyAllRulesForCurrentPage(true);
     } else if (typeof window.EditRules.applyRules === "function") {
       await window.EditRules.applyRules();
-    }
-    if (typeof window.EditRules.setupMutationObserver === "function") {
-      window.EditRules.setupMutationObserver();
     }
     console.log("[WebEdit] Re-applied saved edits for", currentUser.id);
   } catch (e) {
@@ -1339,6 +1392,13 @@ async function applySavedEditsForUserOnce(reason = "manual") {
   // Cloud edits apply last so local restore and cloud cleanup do not overlap.
   await initCloudEditsRuntime({ skipInitialRebuild: true }).catch(() => {});
   await rebuildCloudEdits(`rehydrate:${reason}`).catch(() => {});
+  } finally {
+    // Reconnect observers after apply completes
+    reconnectSpaObserver();
+    if (window.EditRules && typeof window.EditRules.setupMutationObserver === "function") {
+      window.EditRules.setupMutationObserver();
+    }
+  }
 }
 
 async function ensureEditRulesReady() {

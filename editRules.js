@@ -23,6 +23,26 @@ function cssEscape(value) {
   });
 }
 
+function cssPropToKebab(prop) {
+  if (!prop) return '';
+  const s = String(prop).trim();
+  if (!s) return '';
+  if (s.includes('-')) return s.toLowerCase();
+  return s.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
+}
+
+function buildCssFromStyles(selector, styles) {
+  const pairs = [];
+  for (const [k, v] of Object.entries(styles || {})) {
+    if (v === undefined || v === null || v === '') continue;
+    const prop = cssPropToKebab(k);
+    if (!prop) continue;
+    pairs.push(`${prop}: ${String(v)} !important;`);
+  }
+  if (!selector || pairs.length === 0) return '';
+  return `${selector} { ${pairs.join(' ')} }`;
+}
+
 function setActiveUserContext(user) {
   activeUserId = user?.id || null;
   if (!activeUserId) {
@@ -519,6 +539,52 @@ const RuleApplier = {
       // Reset stored effects for this rule before reapplying
       this._appliedEffects.set(rule.id, []);
 
+      switch (rule.action) {
+        case 'hide':
+        case 'remove': {
+          // Use global CSS in head for instant hide (no flicker when React remounts)
+          const styleId = `webedit-rule-hidden-${rule.id}`;
+          const safeSelector = `${rule.selector}:not([data-webedit-edit-id]):not([data-webedit-feature-id])`;
+          const css = `${safeSelector} { display: none !important }`;
+          const head = document.head || document.documentElement;
+          if (head) {
+            let styleEl = document.getElementById(styleId);
+            if (!styleEl) {
+              styleEl = document.createElement('style');
+              styleEl.id = styleId;
+              head.appendChild(styleEl);
+            }
+            styleEl.textContent = `/* WebEdit rule hide: ${rule.id} */\n${css}\n`;
+            this._appliedEffects.set(rule.id, [{ action: rule.action, styleElement: styleEl }]);
+          }
+          break;
+        }
+        case 'style': {
+          // Use global CSS in head for instant style (no flicker when React remounts)
+          if (rule.metadata?.styles) {
+            const styleId = `webedit-rule-style-${rule.id}`;
+            const css = buildCssFromStyles(rule.selector, rule.metadata.styles);
+            if (css) {
+              const head = document.head || document.documentElement;
+              if (head) {
+                let styleEl = document.getElementById(styleId);
+                if (!styleEl) {
+                  styleEl = document.createElement('style');
+                  styleEl.id = styleId;
+                  head.appendChild(styleEl);
+                }
+                styleEl.textContent = `/* WebEdit rule style: ${rule.id} */\n${css}\n`;
+                this._appliedEffects.set(rule.id, [{ action: 'style', styleElement: styleEl }]);
+              }
+            }
+          }
+          break;
+        }
+        default:
+          break;
+      }
+
+      if (rule.action !== 'hide' && rule.action !== 'remove' && rule.action !== 'style') {
       elements.forEach(el => {
         // Skip WebEdit panel elements
         if (el.closest('#webedit-chat-panel')) return;
@@ -532,40 +598,6 @@ const RuleApplier = {
         };
 
         switch (rule.action) {
-          case 'hide':
-            effectRecord.attr = 'data-webedit-hidden';
-            effectRecord.previousDisplay = el.style.getPropertyValue('display') || null;
-            el.style.setProperty('display', 'none', 'important');
-            el.setAttribute('data-webedit-hidden', rule.id);
-            break;
-
-          case 'remove':
-            effectRecord.attr = 'data-webedit-removed';
-            effectRecord.previousDisplay = el.style.getPropertyValue('display') || null;
-            el.style.setProperty('display', 'none', 'important');
-            el.setAttribute('data-webedit-removed', rule.id);
-            break;
-
-          case 'style':
-            if (rule.metadata?.styles) {
-              Object.entries(rule.metadata.styles).forEach(([prop, value]) => {
-                // Convert camelCase to kebab-case for CSS properties
-                const cssProperty = prop.replace(/([A-Z])/g, '-$1').toLowerCase();
-                const previousValue = el.style.getPropertyValue(cssProperty) || null;
-                const previousPriority = el.style.getPropertyPriority(cssProperty) || '';
-                effectRecord.properties.push({
-                  name: cssProperty,
-                  previousValue,
-                  previousPriority
-                });
-                // Apply with !important to ensure styles override existing ones
-                el.style.setProperty(cssProperty, value, 'important');
-              });
-              effectRecord.attr = 'data-webedit-styled';
-              el.setAttribute('data-webedit-styled', rule.id);
-            }
-            break;
-
         case 'reorder':
           const layout = rule.metadata?.layout;
           if (!layout) {
@@ -596,6 +628,7 @@ const RuleApplier = {
         storedEffects.push(effectRecord);
         this._appliedEffects.set(rule.id, storedEffects);
       });
+      }
 
       console.log(`✅ Applied rule ${rule.id} to ${elements.length} element(s)`);
       return elements.length;
@@ -700,12 +733,70 @@ const RuleApplier = {
   },
 
   /**
+   * Clear applied effect for a specific rule from the DOM
+   * @param {string} ruleId - The rule ID to unapply
+   */
+  clearAppliedEffect(ruleId) {
+    const effects = this._appliedEffects.get(ruleId);
+    if (!effects) return false;
+
+    effects.forEach(effect => {
+      try {
+        if (effect.styleElement) {
+          effect.styleElement.remove();
+          return;
+        }
+        if (!effect || !effect.element) {
+          return;
+        }
+
+        if (effect.action === 'hide' || effect.action === 'remove') {
+          if (effect.previousDisplay && effect.previousDisplay.length > 0) {
+            effect.element.style.setProperty('display', effect.previousDisplay);
+          } else {
+            effect.element.style.removeProperty('display');
+          }
+        } else if (effect.action === 'style' && Array.isArray(effect.properties)) {
+          effect.properties.forEach(prop => {
+            if (!prop || !prop.name) {
+              return;
+            }
+            if (prop.previousValue && prop.previousValue.length > 0) {
+              effect.element.style.setProperty(prop.name, prop.previousValue, prop.previousPriority || '');
+            } else {
+              effect.element.style.removeProperty(prop.name);
+            }
+          });
+        } else if (effect.action === 'reorder' && effect.reorder) {
+          const previousParent = effect.reorder.previousParent;
+          if (previousParent) {
+            previousParent.insertBefore(effect.element, effect.reorder.previousNextSibling || null);
+          }
+        }
+
+        if (effect.attr) {
+          effect.element.removeAttribute(effect.attr);
+        }
+      } catch (error) {
+        console.warn(`⚠️ Failed to clear applied effect for rule ${ruleId}:`, error);
+      }
+    });
+
+    this._appliedEffects.delete(ruleId);
+    return true;
+  },
+
+  /**
    * Clear all applied rule effects from the DOM (used on logout/user switch)
    */
   clearAppliedEffects() {
     this._appliedEffects.forEach((effects, ruleId) => {
       effects.forEach(effect => {
         try {
+          if (effect && effect.styleElement) {
+            effect.styleElement.remove();
+            return;
+          }
           if (!effect || !effect.element) {
             return;
           }
@@ -1081,6 +1172,7 @@ const EditRules = {
    */
   async deleteRule(ruleId) {
     const pageKey = getPageKey();
+    RuleApplier.clearAppliedEffect(ruleId);
     return StorageManager.deleteRule(pageKey, ruleId);
   },
 
@@ -1091,6 +1183,15 @@ const EditRules = {
   async getRulesForCurrentPage() {
     const pageKey = getPageKey();
     return StorageManager.getRulesForPage(pageKey);
+  },
+
+  /**
+   * Save an existing rule directly to local storage
+   * @param {EditRule} rule - The rule object to save
+   * @returns {Promise<boolean>} Success status
+   */
+  async saveRule(rule) {
+    return StorageManager.saveRule(rule);
   },
 
   /**
@@ -1136,6 +1237,18 @@ const EditRules = {
         resolve(true);
       });
     });
+  },
+
+  /**
+   * Disconnect mutation observer (used during apply to prevent feedback loop)
+   */
+  disconnectMutationObserver() {
+    try {
+      if (this._mutationObserver) {
+        this._mutationObserver.disconnect();
+        this._mutationObserver = null;
+      }
+    } catch (_) {}
   },
 
   /**

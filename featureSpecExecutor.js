@@ -143,7 +143,9 @@ function createNodesFromHtml(html, markerId) {
   // Mark inserted element nodes so undo can find them deterministically.
   for (const node of nodes) {
     if (node.nodeType === Node.ELEMENT_NODE) {
-      /** @type {Element} */ (node).setAttribute(INSERT_MARKER_ATTR, markerId);
+      const el = /** @type {Element} */ (node);
+      el.setAttribute(INSERT_MARKER_ATTR, markerId);
+      el.setAttribute("data-webedit-injected", "true");
     }
   }
   return nodes;
@@ -427,6 +429,7 @@ async function applyFeatureSpec(spec, options = {}) {
       } else {
         const wrapper = document.createElement("div");
         wrapper.setAttribute(INSERT_MARKER_ATTR, id);
+        wrapper.setAttribute("data-webedit-injected", "true");
         wrapper.textContent = content;
         nodesToInsert = [wrapper];
       }
