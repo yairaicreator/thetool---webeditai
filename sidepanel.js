@@ -897,21 +897,11 @@
     });
   }
 
-  let lastAuthRefreshTime = 0;
-  const AUTH_REFRESH_THROTTLE_MS = 10000;
-
   async function refreshAuthorization(options = {}) {
-    const forceRefresh = !!options?.forceRefresh;
-    const now = Date.now();
-    
-    // Throttle checks to prevent rate limiting, unless forced
-    if (!forceRefresh && (now - lastAuthRefreshTime) < AUTH_REFRESH_THROTTLE_MS) {
-      return;
-    }
-    
     const client = window.SupabaseClient;
     let session = null;
     let user = null;
+    const forceRefresh = !!options?.forceRefresh;
 
     try {
       if (client?.getSession) {
@@ -954,7 +944,6 @@
       renderSignInButton();
     }
     applyAuthStateUI();
-    lastAuthRefreshTime = Date.now();
   }
 
   function setActiveTool(tool) {

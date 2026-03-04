@@ -163,8 +163,7 @@ async function generateFeatureSpec(prompt, context = null) {
         action: "add",
         html: json.html || "",
         css: json.css || "",
-        js: json.js || "",
-        confidence: typeof json.confidence === "number" ? json.confidence : 1.0
+        js: json.js || ""
       }
     };
   } catch (error) {
@@ -174,27 +173,14 @@ async function generateFeatureSpec(prompt, context = null) {
   }
 }
 
-let cachedAuthUser = null;
-let cachedAuthUserAt = 0;
-const AUTH_USER_CACHE_TTL = 30000;
-
-async function fetchAuthUser(force = false) {
+async function fetchAuthUser() {
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY || SUPABASE_URL.includes("YOUR_SUPABASE_URL")) {
     return { ok: false, error: "Supabase not configured", user: null };
   }
-  
-  if (!force && Date.now() - cachedAuthUserAt < AUTH_USER_CACHE_TTL) {
-    if (cachedAuthUser) {
-      return { ok: true, user: cachedAuthUser };
-    }
-  }
-
   try {
     const { data: { session } } = await SupabaseClient.getSession({ allowRefresh: false });
     const accessToken = session?.access_token;
     if (!accessToken) {
-      cachedAuthUser = null;
-      cachedAuthUserAt = Date.now();
       return { ok: true, user: null };
     }
     const response = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
@@ -205,8 +191,6 @@ async function fetchAuthUser(force = false) {
       }
     });
     if (response.status === 401 || response.status === 403) {
-      cachedAuthUser = null;
-      cachedAuthUserAt = Date.now();
       return { ok: true, user: null };
     }
     const payload = await response.json().catch(() => null);
@@ -214,8 +198,6 @@ async function fetchAuthUser(force = false) {
       const msg = payload?.msg || payload?.error_description || payload?.error || response.statusText;
       return { ok: false, error: msg || `Auth user fetch failed (${response.status})`, user: null };
     }
-    cachedAuthUser = payload;
-    cachedAuthUserAt = Date.now();
     return { ok: true, user: payload };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
