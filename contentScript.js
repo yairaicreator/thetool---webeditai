@@ -427,9 +427,9 @@ async function resolveAuthorizationState(force = false) {
   }
 
   let user = session?.user || null;
-  if (typeof client.fetchAuthUser === "function") {
+  if (!user && typeof client.fetchAuthUser === "function") {
     try {
-      const authResp = await client.fetchAuthUser();
+      const authResp = await client.fetchAuthUser(force);
       user = authResp?.ok ? authResp.user : null;
     } catch (_) {
       user = null;

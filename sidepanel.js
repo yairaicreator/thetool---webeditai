@@ -387,8 +387,7 @@
         const data = msg.content || {};
         const contentEl = document.createElement("div");
         contentEl.className = "webedit-chat-message-content";
-        const confidence = Math.round((data.confidence || 0) * 100);
-        contentEl.textContent = `Preview: ${data.feature_type || "Feature"} (${confidence}% confidence)`;
+        contentEl.textContent = `Preview: ${data.feature_type || "Feature"}`;
         msgEl.appendChild(contentEl);
 
         if (Array.isArray(data.warnings) && data.warnings.length > 0) {
@@ -897,21 +896,11 @@
     });
   }
 
-  let lastAuthRefreshTime = 0;
-  const AUTH_REFRESH_THROTTLE_MS = 10000;
-
   async function refreshAuthorization(options = {}) {
-    const forceRefresh = !!options?.forceRefresh;
-    const now = Date.now();
-    
-    // Throttle checks to prevent rate limiting, unless forced
-    if (!forceRefresh && (now - lastAuthRefreshTime) < AUTH_REFRESH_THROTTLE_MS) {
-      return;
-    }
-    
     const client = window.SupabaseClient;
     let session = null;
     let user = null;
+    const forceRefresh = !!options?.forceRefresh;
 
     try {
       if (client?.getSession) {
@@ -924,7 +913,7 @@
 
     try {
       if (client?.fetchAuthUser) {
-        const authResp = await client.fetchAuthUser();
+        const authResp = await client.fetchAuthUser(forceRefresh);
         user = authResp?.ok ? authResp.user : null;
       } else {
         user = session?.user || null;
@@ -954,7 +943,6 @@
       renderSignInButton();
     }
     applyAuthStateUI();
-    lastAuthRefreshTime = Date.now();
   }
 
   function setActiveTool(tool) {
@@ -1195,7 +1183,6 @@
             addPreviewMessage({
               previewId: previewResp.response.previewId,
               feature_type: nextSpec.action,
-              confidence: nextSpec.confidence,
               warnings: nextSpec.warnings || [],
               spec: nextSpec,
               previewKind: "spec"
@@ -1228,7 +1215,6 @@
         addPreviewMessage({
           previewId: previewResp.response.previewId,
           feature_type: nextPlan.feature_type,
-          confidence: nextPlan.confidence,
           warnings: nextPlan.warnings || [],
           plan: nextPlan,
           previewKind: "plan"
@@ -1316,7 +1302,6 @@
             addPreviewMessage({
               previewId: previewResp.response.previewId,
               feature_type: spec.action,
-              confidence: spec.confidence,
               warnings: spec.warnings || [],
               spec,
               previewKind: "spec"
@@ -1344,7 +1329,7 @@
   // Listen to messages from background/content scripts
   chrome.runtime.onMessage.addListener((message) => {
     if (message?.type === "WEBEDIT_SESSION_UPDATED") {
-      refreshAuthorization({ forceRefresh: true });
+      refreshAuthorization();
       return;
     }
     
