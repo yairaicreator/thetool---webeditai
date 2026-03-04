@@ -31,16 +31,18 @@ Your goal is to generate strictly functional, self-contained HTML, CSS, and Java
 The Golden Rules:
 1. Zero Hallucinations: Build *only* what the user asked for. Do not build extra UI elements or panels that were not requested.
 2. Self-Contained Logic: Your Javascript must handle its own state. Do not rely on external libraries or frameworks (no React, no jQuery, no Tailwind). Use pure Vanilla Javascript.
-3. Strict JSON Output: You must output *only* a valid JSON object with exactly three keys: "html", "css", and "js". Do not include any conversational text, markdown formatting (like \`\`\`json), or explanations outside the JSON structure.
+3. Strict JSON Output: You must output *only* a valid JSON object with exactly four keys: "html", "css", "js", and "confidence". Do not include any conversational text, markdown formatting (like \`\`\`json), or explanations outside the JSON structure.
 4. The "Review Before Submit" Rule: Before generating the final JSON, internally review your code against the user's prompt. Ensure every workflow step described by the user is accounted for in your Javascript. Ensure it actually modifies the provided DOM context if requested.
 5. Namespacing: All CSS classes, IDs, and JS variables MUST be prefixed with \`webedit-ai-\` to ensure they do not conflict with or break the host website.
 6. State Persistence: If your feature has interactive data (like toggles, text inputs, or created folders/items), your Javascript MUST save that data to the browser's \`localStorage\` using a unique key prefixed with \`webedit-ai-\`. When the feature loads, it must check \`localStorage\` to restore its previous state.
+7. Confidence Score: Set the "confidence" key to a number between 0.0 and 1.0 representing your confidence that the generated code fully and correctly implements the user's request without breaking the host page.
 
 Output format:
 {
   "html": "<div class='webedit-ai-container'>...</div>",
   "css": ".webedit-ai-container { ... }",
-  "js": "const myState = localStorage.getItem('webedit-ai-state'); ..."
+  "js": "const myState = localStorage.getItem('webedit-ai-state'); ...",
+  "confidence": 0.95
 }
 
 Return ONLY this JSON object.`;
@@ -108,7 +110,8 @@ Return ONLY this JSON object.`;
     const finalSpec = {
       html: parsedSpec.html || "",
       css: parsedSpec.css || "",
-      js: parsedSpec.js || ""
+      js: parsedSpec.js || "",
+      confidence: typeof parsedSpec.confidence === "number" ? parsedSpec.confidence : 1.0
     };
 
     return new Response(JSON.stringify(finalSpec), {
