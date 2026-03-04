@@ -13,7 +13,7 @@ let currentUser = null; // { id, email, ... }
 let authState = "unauthenticated"; // unauthenticated | authenticated
 let authStateCheckedAt = 0;
 let authStateEmail = null;
-const AUTH_STATE_TTL_MS = 0; // Always revalidate auth status
+const AUTH_STATE_TTL_MS = 30000; // Cache auth status for 30 seconds to prevent rate limiting
 
 // Preview Lab state
 const PREVIEW_LAB_TARGET_ATTR = "data-webedit-preview-target";
