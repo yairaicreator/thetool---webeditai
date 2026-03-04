@@ -670,6 +670,8 @@ async function saveAddFeature(spec) {
     payload: {
       action: "add",
       ...spec,
+      targetSelector: spec.targetSelector || spec.selector,
+      selector: spec.selector || spec.targetSelector,
       metadata: {
         ...(spec?.metadata || {}),
         featureClass: (isGeminiFolderController ? "gemini-folder" : (spec?.metadata?.featureClass || null)),

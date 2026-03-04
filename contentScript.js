@@ -527,7 +527,7 @@ async function fetchWebsiteIdForCurrentUrl() {
 }
 
 function normalizeEditType(row) {
-  const t = row?.edit_type || row?.type || row?.editType || row?.editType;
+  const t = row?.edit_type || row?.type || row?.editType;
   return typeof t === "string" ? t.toLowerCase() : null;
 }
 
@@ -735,7 +735,10 @@ function applyCustomizeEdit(editId, payload) {
     ? explicitCss
     : buildCssFromStyles(selector, styles || {});
 
-  if (!css || !css.trim()) return false;
+  if (!css || !css.trim()) {
+    console.debug(`[WebEdit] applyCustomizeEdit no styles id=${editId} selector=${selector}`);
+    return false;
+  }
 
   const head = document.head || document.documentElement;
   if (!head) return false;
@@ -760,8 +763,12 @@ function applyHideEdit(editId, payload) {
   let nodes = [];
   try {
     nodes = Array.from(document.querySelectorAll(selector));
-  } catch (_) {
+  } catch (e) {
+    console.debug(`[WebEdit] applyHideEdit selector failed id=${editId} selector=${selector}`, e?.message || e);
     return 0;
+  }
+  if (nodes.length === 0) {
+    console.debug(`[WebEdit] applyHideEdit no elements matched id=${editId} selector=${selector}`);
   }
   nodes.forEach((el) => {
     // Skip extension injected nodes (avoid hiding the feature UI itself)
@@ -882,7 +889,6 @@ async function applyAddEdit(editId, payload) {
 
   // Deterministic replay path: FeatureSpecExecutor only (no legacy DOM card fallback).
   const addSpec = normalizeAddPayloadToSpec(payload);
-  fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e76c3f'},body:JSON.stringify({sessionId:'e76c3f',hypothesisId:'H4',location:'contentScript.js:applyAddEdit',message:'Applying add edit',data:{editId, addSpecId: addSpec?.id},timestamp:Date.now()})}).catch(()=>{});
   if (!addSpec) {
     console.info(`[WebEdit] Skipping non-normalizable add replay id=${String(editId || "unknown")}`);
     return false;
@@ -893,8 +899,19 @@ async function applyAddEdit(editId, payload) {
   }
 
   let res = null;
+  const selectorCandidates = [
+    addSpec.targetSelector,
+    addSpec.selector,
+    payload?.rollback?.selector
+  ].filter(Boolean);
+  const uniqueSelectors = [...new Set(selectorCandidates)];
+
   for (let attempt = 1; attempt <= 4; attempt++) {
-    res = await window.FeatureSpecExecutor.applyFeatureSpec(addSpec, { replay: true, id: editId, skipPersist: true });
+    for (const sel of uniqueSelectors) {
+      const specWithSelector = { ...addSpec, targetSelector: sel, selector: sel };
+      res = await window.FeatureSpecExecutor.applyFeatureSpec(specWithSelector, { replay: true, id: editId, skipPersist: true });
+      if (res?.ok) break;
+    }
     if (res?.ok) break;
     if (typeof res?.error === "string" && res.error.includes("Could not find target")) {
       await new Promise(r => setTimeout(r, 400 * attempt));
@@ -965,11 +982,9 @@ async function rebuildCloudEdits(reason = "unknown") {
         console.info(`[WebEdit] Cloud rebuild skipped (fetch unavailable). reason=${String(reason || "unknown")} websiteId=${String(websiteId || "unknown")}`);
         return { ok: false, skipped: true, reason: "fetch-unavailable" };
       }
-      fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e76c3f'},body:JSON.stringify({sessionId:'e76c3f',hypothesisId:'H5',location:'contentScript.js:rebuildCloudEdits',message:'Fetched edits',data:{count: edits.length, ids: edits.map(e => String(e?.id || e?.edit_id || e?.editId))},timestamp:Date.now()})}).catch(()=>{});
       // Deterministic correctness: clear everything we manage, then reapply ACTIVE edits in order.
       const activeIdsSet = new Set(edits.map(e => String(e?.id || e?.edit_id || e?.editId)));
       const clearSummary = clearAppliedCloudEdits(activeIdsSet);
-      fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e76c3f'},body:JSON.stringify({sessionId:'e76c3f',hypothesisId:'H5',location:'contentScript.js:rebuildCloudEdits:cleared',message:'Cleared applied cloud edits',data:{clearSummary},timestamp:Date.now()})}).catch(()=>{});
       // stable order (server orders by created_at asc, but keep client-side fallback)
       edits.sort((a, b) => String(a?.created_at || "").localeCompare(String(b?.created_at || "")));
       const result = await applyActiveEditsInOrder(edits);
@@ -1356,7 +1371,9 @@ async function upsertStyleRule(selector, el, styles) {
   const merged = { ...baseStyles, ...(styles || {}) };
   const rule = await editRules.createRule(el, "style", { styles: merged }, currentUser, selector);
   if (window.SaveEdit?.saveCustomizeEdit) {
-    window.SaveEdit.saveCustomizeEdit(el, rule).catch(() => {});
+    window.SaveEdit.saveCustomizeEdit(el, rule).catch((err) => {
+      console.warn("[WebEdit] saveCustomizeEdit failed:", err?.message || err);
+    });
   }
   return rule;
 }
@@ -1616,7 +1633,9 @@ function removeElementBySelector(selector, targetEl = null) {
     if (!editRules) return;
     editRules.createRule(el, "hide", {}, currentUser, resolvedSelector).then((rule) => {
       if (window.SaveEdit?.saveRemoveEdit) {
-        window.SaveEdit.saveRemoveEdit(el, rule).catch(() => {});
+        window.SaveEdit.saveRemoveEdit(el, rule).catch((err) => {
+          console.warn("[WebEdit] saveRemoveEdit failed:", err?.message || err);
+        });
       }
     }).catch((err) => {
       console.warn("[WebEdit] Failed to persist hide:", err);

@@ -381,7 +381,6 @@ async function applyFeatureSpec(spec, options = {}) {
       // If this spec already rendered for this id, remove stale nodes/styles first.
       // This is required for preview placement changes (before/inside/after/replace).
       const already = safeQueryAll(`[${INSERT_MARKER_ATTR}="${CSS.escape(id)}"]`, root);
-      fetch('http://127.0.0.1:7745/ingest/6dbb3b4c-43d7-4544-a1cf-5ec2e0dc6c98',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e76c3f'},body:JSON.stringify({sessionId:'e76c3f',hypothesisId:'H6',location:'featureSpecExecutor.js:applyFeatureSpec:already',message:'Checking existing nodes',data:{id, alreadyCount: already.length, replay, skipPersist},timestamp:Date.now()})}).catch(()=>{});
 
       // Prevent MutationObserver infinite loops during SPA remounts
       if (already.length > 0 && replay && skipPersist) {
