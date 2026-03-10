@@ -34,26 +34,12 @@
     {
       "matches": ["<all_urls>"],
       "js": [
-        "supabaseClient.js",
-        "editRules.js",
-        "saveEdit.js",
-        "featureSpec.js",
-        "featureSpecExecutor.js",
         "contextExtractor.js",
-        "featureRegistry.js",
-        "featureEngine.js",
-        "featureStore.js",
         "contentScript.js"
       ],
-      "css": ["contentStyles.css"],
-      "run_at": "document_idle"
-    },
-    {
-      "matches": [
-        "https://www.webeditai.com/*",
-        "https://webeditai.com/*"
+      "css": [
+        "contentStyles.css"
       ],
-      "js": ["bridge-listener.js"],
       "run_at": "document_idle"
     }
   ]

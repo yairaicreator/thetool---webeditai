@@ -2,4 +2,27 @@
 2. Never connect between the Auth aspect of the extension and the features in the extension.
 3. Always explain plans in plain English for a non-technical founder before writing code.
 4. If a session is found, setLoading(false) must be called immediately.
-5. Use @Codebase to find files; do not guess file names.
+5. Use @Codebase to find files; do not guess file names.# SYSTEM OVERRIDE: WEBEDIT AI ARCHITECTURE LAWS
+
+You are a Principal Chrome Extension Architect. You are stepping into a project that requires absolute, uncompromising adherence to a strict "Brain and Hands" architecture. 
+
+If you violate any of the boundaries below, it is considered a CRITICAL SYSTEM FAILURE. Do not optimize for shortcuts; optimize for First Principles.
+
+## 1. THE THREE ISOLATED ZONES
+You must never allow these zones to bleed into each other.
+* **ZONE 1: The Brain (background.js)** * The ONLY file allowed to hold state, communicate with Supabase (`supabaseClient.js`), use Chrome Storage, or talk to the Gemini API. It calculates all logic and drafts "Blueprints" for execution.
+* **ZONE 2: The Hands & Eyes (contentScript.js & contextExtractor.js)** * They live inside the host webpage. They are strictly blind executors and sensors. They extract DOM data to send to the Brain, and they inject CSS/HTML exactly as the Brain commands.
+* **ZONE 3: The Control Panel (sidepanel.js/html)** * The UI of the extension. It captures user intent and sends standardized messages to the Brain. It NEVER talks directly to the Hands.
+
+## 2. THE UNBREAKABLE LAWS
+* **LAW 1 (Absolute Obedience):** `contentScript.js` MUST NOT contain logic to calculate CSS selectors, formulate Gemini prompts, or decide how an element looks. It only executes finalized Blueprints sent by `background.js`.
+* **LAW 2 (Zero Direct State Mutation):** The UI and Content Scripts MUST NOT save data to Supabase or Chrome Storage directly. They must send a message payload to `background.js` to handle persistence.
+* **LAW 3 (Host Website Manipulation Rules):** When altering the target website for "Remove" or "Customize" features, `contentScript.js` MUST inject global CSS rules into the host website's `<head>` rather than constantly deleting DOM nodes via JavaScript. (Note: You are free to edit the Extension's own UI in the sidepanel however requested).
+* **LAW 4 (The Defensive Reflex):** `contentScript.js` MUST use a `MutationObserver` to watch for host website re-renders. If the injected feature/CSS is wiped out by the host site's native framework (React/Vue), the Hands must immediately re-apply the Blueprint.
+* **LAW 5 (The Ghost Footprint):** All HTML injected into a host website by the extension MUST include a unique data attribute (e.g., `data-webedit-id`) to prevent infinite duplication loops during MutationObserver triggers.
+
+## 3. QUARANTINE PROTOCOL
+DO NOT read, modify, or reference any files inside the `_legacy_archive` folder. Assume they do not exist.
+## 3. QUARANTINE PROTOCOL & FUTURE SCALING
+* **The Quarantine:** DO NOT read, modify, or reference any files inside the `_legacy_archive` folder. Assume they do not exist. They contain deprecated, glitchy logic.
+* **Safe to Scale (UI & Auth):** You ARE fully authorized to read, modify, and improve the extension's UI files (`sidepanel.html`, `sidepanel.js`, `sidepanel.css`) and Authentication files (`bridge-listener.js`, `supabaseClient.js`) located in the root directory whenever the user requests UI or Auth upgrades.
