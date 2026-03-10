@@ -1,5 +1,7 @@
 'use strict';
 
+importScripts('supabaseClient.js');
+
 // ─── The Ledger: Storage Helpers ────────────────────────────────────────────
 
 async function getLedger() {
@@ -13,6 +15,86 @@ async function saveLedger(ledger) {
 
 function generateEditId() {
   return 'edit_' + crypto.randomUUID();
+}
+
+// ─── Supabase Dual-Write: Auth & Sync ───────────────────────────────────────
+
+async function getSessionInfo() {
+  try {
+    const { data: { session } } = await SupabaseClient.getSession();
+    if (!session?.access_token || !session?.user?.id) return null;
+    return { accessToken: session.access_token, userId: session.user.id };
+  } catch (e) {
+    console.warn('[Brain] Failed to retrieve session:', e.message);
+    return null;
+  }
+}
+
+async function syncInsertToSupabase(editId, url, editData) {
+  try {
+    const auth = await getSessionInfo();
+    if (!auth) {
+      console.warn('[Brain] No active session — skipping Supabase insert.');
+      return;
+    }
+
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/edit_rules`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${auth.accessToken}`,
+        'Prefer': 'return=minimal',
+      },
+      body: JSON.stringify({
+        id: editId,
+        user_id: auth.userId,
+        page_key: url,
+        selector: editData.selector,
+        action: editData.action.toLowerCase(),
+        metadata: editData.payload || {},
+        active: true,
+      }),
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      console.warn(`[Brain] Supabase insert failed (${response.status}):`, text);
+    }
+  } catch (e) {
+    console.warn('[Brain] Supabase insert network error:', e.message);
+  }
+}
+
+async function syncStatusToSupabase(editId, newStatus) {
+  try {
+    const auth = await getSessionInfo();
+    if (!auth) {
+      console.warn('[Brain] No active session — skipping Supabase status update.');
+      return;
+    }
+
+    const response = await fetch(
+      `${SUPABASE_URL}/rest/v1/edit_rules?id=eq.${encodeURIComponent(editId)}`,
+      {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${auth.accessToken}`,
+          'Prefer': 'return=minimal',
+        },
+        body: JSON.stringify({ active: newStatus === 'active' }),
+      }
+    );
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      console.warn(`[Brain] Supabase status update failed (${response.status}):`, text);
+    }
+  } catch (e) {
+    console.warn('[Brain] Supabase status update network error:', e.message);
+  }
 }
 
 // ─── Command Handlers ───────────────────────────────────────────────────────
@@ -41,6 +123,7 @@ async function handleSaveBlueprint(message) {
   };
 
   await saveLedger(ledger);
+  syncInsertToSupabase(editId, url, ledger[url][editId]);
   return { success: true, editId };
 }
 
@@ -62,6 +145,7 @@ async function handleToggleStatus(message) {
   ledger[url][editId].status = newStatus;
 
   await saveLedger(ledger);
+  syncStatusToSupabase(editId, newStatus);
   return { success: true, newStatus };
 }
 
