@@ -169,6 +169,22 @@ async function handleGetActiveBlueprints(message) {
   return { success: true, blueprints: activeBlueprints };
 }
 
+async function handleGenerateFeature(message) {
+  const { prompt, domContext } = message;
+
+  if (!prompt) {
+    return { success: false, error: 'INVALID_PAYLOAD' };
+  }
+
+  const result = await SupabaseClient.generateFeatureSpec(prompt, domContext || null);
+
+  if (!result.ok) {
+    return { success: false, error: 'AI Generation failed: ' + result.error };
+  }
+
+  return { success: true, spec: result.spec };
+}
+
 // ─── The Spinal Cord: Message Router ────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -185,6 +201,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           break;
         case 'GET_ACTIVE_BLUEPRINTS':
           response = await handleGetActiveBlueprints(message);
+          break;
+        case 'GENERATE_FEATURE':
+          response = await handleGenerateFeature(message);
           break;
         default:
           response = { success: false, error: 'UNKNOWN_COMMAND' };
