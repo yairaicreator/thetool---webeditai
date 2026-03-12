@@ -1,109 +1,34 @@
 'use strict';
 
-importScripts('supabaseClient.js');
+// ─── Constants ────────────────────────────────────────────────────────────────
+const LEDGER_KEY = 'webedit_ledger';
 
-// ─── The Ledger: Storage Helpers ────────────────────────────────────────────
+// ─── The Ledger: Storage Helpers ──────────────────────────────────────────────
 
 async function getLedger() {
-  const result = await chrome.storage.local.get('ledger');
-  return result.ledger || {};
+  const result = await chrome.storage.local.get(LEDGER_KEY);
+  return result[LEDGER_KEY] || {};
 }
 
-async function saveLedger(ledger) {
-  await chrome.storage.local.set({ ledger });
+async function setLedger(ledger) {
+  await chrome.storage.local.set({ [LEDGER_KEY]: ledger });
 }
+
+// ─── Unique Edit ID Generator ─────────────────────────────────────────────────
 
 function generateEditId() {
-  return 'edit_' + crypto.randomUUID();
+  const timestamp = Date.now();
+  const random = Math.random().toString(36).slice(2, 11);
+  return 'edit_' + timestamp + '_' + random;
 }
 
-// ─── Supabase Dual-Write: Auth & Sync ───────────────────────────────────────
+// ─── Command Handlers ─────────────────────────────────────────────────────────
 
-async function getSessionInfo() {
-  try {
-    const { data: { session } } = await SupabaseClient.getSession();
-    if (!session?.access_token || !session?.user?.id) return null;
-    return { accessToken: session.access_token, userId: session.user.id };
-  } catch (e) {
-    console.warn('[Brain] Failed to retrieve session:', e.message);
-    return null;
-  }
-}
-
-async function syncInsertToSupabase(editId, url, editData) {
-  try {
-    const auth = await getSessionInfo();
-    if (!auth) {
-      console.warn('[Brain] No active session — skipping Supabase insert.');
-      return;
-    }
-
-    const response = await fetch(`${SUPABASE_URL}/rest/v1/edit_rules`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': SUPABASE_ANON_KEY,
-        'Authorization': `Bearer ${auth.accessToken}`,
-        'Prefer': 'return=minimal',
-      },
-      body: JSON.stringify({
-        id: editId,
-        user_id: auth.userId,
-        page_key: url,
-        selector: editData.selector,
-        action: editData.action.toLowerCase(),
-        metadata: editData.payload || {},
-        active: true,
-      }),
-    });
-
-    if (!response.ok) {
-      const text = await response.text().catch(() => '');
-      console.warn(`[Brain] Supabase insert failed (${response.status}):`, text);
-    }
-  } catch (e) {
-    console.warn('[Brain] Supabase insert network error:', e.message);
-  }
-}
-
-async function syncStatusToSupabase(editId, newStatus) {
-  try {
-    const auth = await getSessionInfo();
-    if (!auth) {
-      console.warn('[Brain] No active session — skipping Supabase status update.');
-      return;
-    }
-
-    const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/edit_rules?id=eq.${encodeURIComponent(editId)}`,
-      {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': SUPABASE_ANON_KEY,
-          'Authorization': `Bearer ${auth.accessToken}`,
-          'Prefer': 'return=minimal',
-        },
-        body: JSON.stringify({ active: newStatus === 'active' }),
-      }
-    );
-
-    if (!response.ok) {
-      const text = await response.text().catch(() => '');
-      console.warn(`[Brain] Supabase status update failed (${response.status}):`, text);
-    }
-  } catch (e) {
-    console.warn('[Brain] Supabase status update network error:', e.message);
-  }
-}
-
-// ─── Command Handlers ───────────────────────────────────────────────────────
-
-async function handleSaveBlueprint(message) {
+async function saveBlueprint(message) {
   const { url, edit } = message;
 
   if (!url || !edit || !edit.action || !edit.selector) {
-    return { success: false, error: 'INVALID_PAYLOAD' };
+    return { success: false, error: 'Missing required fields: url, edit.action, edit.selector' };
   }
 
   const ledger = await getLedger();
@@ -117,96 +42,73 @@ async function handleSaveBlueprint(message) {
   ledger[url][editId] = {
     action: edit.action,
     selector: edit.selector,
-    status: 'active',
+    status: edit.status || 'active',
     payload: edit.payload || {},
-    createdAt: Date.now(),
   };
 
-  await saveLedger(ledger);
-  syncInsertToSupabase(editId, url, ledger[url][editId]);
+  await setLedger(ledger);
   return { success: true, editId };
 }
 
-async function handleToggleStatus(message) {
+async function toggleStatus(message) {
   const { url, editId } = message;
 
   if (!url || !editId) {
-    return { success: false, error: 'INVALID_PAYLOAD' };
+    return { success: false, error: 'Missing required fields: url, editId' };
   }
 
   const ledger = await getLedger();
 
   if (!ledger[url] || !ledger[url][editId]) {
-    return { success: false, error: 'NOT_FOUND' };
+    return { success: false, error: 'Edit not found' };
   }
 
   const current = ledger[url][editId].status;
   const newStatus = current === 'active' ? 'inactive' : 'active';
   ledger[url][editId].status = newStatus;
 
-  await saveLedger(ledger);
-  syncStatusToSupabase(editId, newStatus);
-  return { success: true, newStatus };
+  await setLedger(ledger);
+  return { success: true, status: newStatus };
 }
 
-async function handleGetActiveBlueprints(message) {
+async function getActiveBlueprints(message) {
   const { url } = message;
 
   if (!url) {
-    return { success: false, error: 'INVALID_PAYLOAD' };
+    return { success: false, error: 'Missing required field: url' };
   }
 
   const ledger = await getLedger();
   const editsForUrl = ledger[url] || {};
-  const activeBlueprints = {};
 
-  for (const [id, edit] of Object.entries(editsForUrl)) {
-    if (edit.status === 'active') {
-      activeBlueprints[id] = edit;
-    }
-  }
+  const blueprints = Object.entries(editsForUrl)
+    .filter(function (entry) { return entry[1].status === 'active'; })
+    .map(function (entry) {
+      return { editId: entry[0], action: entry[1].action, selector: entry[1].selector, status: entry[1].status, payload: entry[1].payload };
+    });
 
-  return { success: true, blueprints: activeBlueprints };
+  return { success: true, blueprints: blueprints };
 }
 
-async function handleGenerateFeature(message) {
-  const { prompt, domContext } = message;
+// ─── The Spinal Cord: Message Router ──────────────────────────────────────────
 
-  if (!prompt) {
-    return { success: false, error: 'INVALID_PAYLOAD' };
-  }
-
-  const result = await SupabaseClient.generateFeatureSpec(prompt, domContext || null);
-
-  if (!result.ok) {
-    return { success: false, error: 'AI Generation failed: ' + result.error };
-  }
-
-  return { success: true, spec: result.spec };
-}
-
-// ─── The Spinal Cord: Message Router ────────────────────────────────────────
-
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  (async () => {
+chrome.runtime.onMessage.addListener(function (message, _sender, sendResponse) {
+  (async function () {
     try {
-      let response;
+      var response;
 
-      switch (message.type) {
+      switch (message.command) {
         case 'SAVE_BLUEPRINT':
-          response = await handleSaveBlueprint(message);
+          response = await saveBlueprint(message);
           break;
         case 'TOGGLE_STATUS':
-          response = await handleToggleStatus(message);
+          response = await toggleStatus(message);
           break;
         case 'GET_ACTIVE_BLUEPRINTS':
-          response = await handleGetActiveBlueprints(message);
-          break;
-        case 'GENERATE_FEATURE':
-          response = await handleGenerateFeature(message);
+          response = await getActiveBlueprints(message);
           break;
         default:
-          response = { success: false, error: 'UNKNOWN_COMMAND' };
+          response = { success: false, error: 'Unknown command: ' + message.command };
       }
 
       sendResponse(response);

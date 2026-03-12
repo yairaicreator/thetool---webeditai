@@ -6,6 +6,15 @@
   let activeBlueprints = {};
 
   // ─── Utility: Debounce ──────────────────────────────────────────────────────
+  function blueprintsToMap(blueprints) {
+    if (!Array.isArray(blueprints)) return blueprints || {};
+    var map = {};
+    for (var i = 0; i < blueprints.length; i++) {
+      map[blueprints[i].editId] = blueprints[i];
+    }
+    return map;
+  }
+
   function debounce(fn, delay) {
     let timer = null;
     return function (...args) {
@@ -40,7 +49,7 @@
 
   // ─── The Nervous System: Initialization ─────────────────────────────────────
   chrome.runtime.sendMessage(
-    { type: 'GET_ACTIVE_BLUEPRINTS', url: window.location.href },
+    { command: 'GET_ACTIVE_BLUEPRINTS', url: window.location.href },
     function (response) {
       if (chrome.runtime.lastError) {
         console.warn('[Hands] Init failed:', chrome.runtime.lastError.message);
@@ -50,15 +59,15 @@
         console.warn('[Hands] Brain returned no active blueprints.');
         return;
       }
-      activeBlueprints = response.blueprints || {};
+      activeBlueprints = blueprintsToMap(response.blueprints);
       applyAllBlueprints();
     }
   );
 
   // ─── The Spinal Listener: Live Updates from the Brain ───────────────────────
   chrome.runtime.onMessage.addListener(function (message, _sender, sendResponse) {
-    if (message.type === 'BLUEPRINTS_UPDATED') {
-      activeBlueprints = message.blueprints || {};
+    if (message.command === 'BLUEPRINTS_UPDATED') {
+      activeBlueprints = blueprintsToMap(message.blueprints);
       applyAllBlueprints();
       sendResponse({ success: true });
     }
