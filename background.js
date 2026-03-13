@@ -2,24 +2,30 @@
 
 // ─── Side Panel Activation ───────────────────────────────────────────────────
 
-fetch('http://127.0.0.1:7745/ingest/a0177b65-52e4-48e8-a970-4dc8c4b1460d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'08b659'},body:JSON.stringify({sessionId:'08b659',location:'background.js:top',message:'Background script top level executed',data:{},timestamp:Date.now(),runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
+fetch('http://127.0.0.1:7745/ingest/a0177b65-52e4-48e8-a970-4dc8c4b1460d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'08b659'},body:JSON.stringify({sessionId:'08b659',location:'background.js:top',message:'Background script top level executed',data:{},timestamp:Date.now(),runId:'run2',hypothesisId:'H2'})}).catch(()=>{});
 
 chrome.runtime.onInstalled.addListener((details) => {
-  fetch('http://127.0.0.1:7745/ingest/a0177b65-52e4-48e8-a970-4dc8c4b1460d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'08b659'},body:JSON.stringify({sessionId:'08b659',location:'background.js:onInstalled',message:'onInstalled fired',data:{reason:details.reason},timestamp:Date.now(),runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
-  chrome.sidePanel
-    .setPanelBehavior({ openPanelOnActionClick: true })
-    .then(() => {
-      fetch('http://127.0.0.1:7745/ingest/a0177b65-52e4-48e8-a970-4dc8c4b1460d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'08b659'},body:JSON.stringify({sessionId:'08b659',location:'background.js:setPanelBehavior',message:'setPanelBehavior succeeded',data:{},timestamp:Date.now(),runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
-    })
-    .catch(function (error) { 
-      fetch('http://127.0.0.1:7745/ingest/a0177b65-52e4-48e8-a970-4dc8c4b1460d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'08b659'},body:JSON.stringify({sessionId:'08b659',location:'background.js:setPanelBehavior_catch',message:'setPanelBehavior failed',data:{error:error.toString()},timestamp:Date.now(),runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
-      console.error('[Brain] sidePanel behavior error:', error); 
-    });
+  fetch('http://127.0.0.1:7745/ingest/a0177b65-52e4-48e8-a970-4dc8c4b1460d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'08b659'},body:JSON.stringify({sessionId:'08b659',location:'background.js:onInstalled',message:'onInstalled fired',data:{reason:details.reason},timestamp:Date.now(),runId:'run2',hypothesisId:'H2'})}).catch(()=>{});
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  fetch('http://127.0.0.1:7745/ingest/a0177b65-52e4-48e8-a970-4dc8c4b1460d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'08b659'},body:JSON.stringify({sessionId:'08b659',location:'background.js:onStartup',message:'onStartup fired',data:{},timestamp:Date.now(),runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
+  fetch('http://127.0.0.1:7745/ingest/a0177b65-52e4-48e8-a970-4dc8c4b1460d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'08b659'},body:JSON.stringify({sessionId:'08b659',location:'background.js:onStartup',message:'onStartup fired',data:{},timestamp:Date.now(),runId:'run2',hypothesisId:'H2'})}).catch(()=>{});
 });
+
+// Configure side panel behavior
+if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })
+    .then(() => {
+      fetch('http://127.0.0.1:7745/ingest/a0177b65-52e4-48e8-a970-4dc8c4b1460d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'08b659'},body:JSON.stringify({sessionId:'08b659',location:'background.js:setPanelBehavior',message:'setPanelBehavior succeeded',data:{},timestamp:Date.now(),runId:'run2',hypothesisId:'H2'})}).catch(()=>{});
+    })
+    .catch((error) => {
+      fetch('http://127.0.0.1:7745/ingest/a0177b65-52e4-48e8-a970-4dc8c4b1460d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'08b659'},body:JSON.stringify({sessionId:'08b659',location:'background.js:setPanelBehavior_catch',message:'setPanelBehavior failed',data:{error:error.toString()},timestamp:Date.now(),runId:'run2',hypothesisId:'H2'})}).catch(()=>{});
+      console.error('[Brain] sidePanel behavior error:', error);
+    });
+} else {
+  fetch('http://127.0.0.1:7745/ingest/a0177b65-52e4-48e8-a970-4dc8c4b1460d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'08b659'},body:JSON.stringify({sessionId:'08b659',location:'background.js:setPanelBehavior_missing',message:'chrome.sidePanel API is not available',data:{},timestamp:Date.now(),runId:'run2',hypothesisId:'H2'})}).catch(()=>{});
+  console.warn("WebEdit AI: chrome.sidePanel API is not available in this browser version.");
+}
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const LEDGER_KEY = 'webedit_ledger';
