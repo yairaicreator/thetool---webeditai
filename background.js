@@ -3,10 +3,10 @@
 // ─── Side Panel Activation ───────────────────────────────────────────────────
 
 chrome.runtime.onInstalled.addListener(() => {
-  if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
-    chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })
-      .catch(function (error) { console.error('[Brain] sidePanel behavior error:', error); });
-  }
+  chrome.sidePanel
+    .setPanelBehavior({ openPanelOnActionClick: true })
+    .catch((error) => console.error('[Brain] sidePanel behavior error:', error));
+});
 });
 
 chrome.runtime.onStartup.addListener(() => {
