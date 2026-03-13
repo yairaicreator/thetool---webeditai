@@ -1488,14 +1488,13 @@
     });
 
     els.featureButtons.forEach((btn) => {
-      btn.addEventListener("click", () => {
-        showNotificationInChat("Pick Mode is disabled for Phase 1 testing. Please use the 'Test Remove' input box above to test the Brain/Hands connection.");
-      });
+      btn.addEventListener("click", () => startFeaturePickFlow(btn.dataset.tool));
     });
 
-    els.modeCloseBtn?.addEventListener("click", () => {
+    els.modeCloseBtn?.addEventListener("click", async () => {
       hideModeIndicator();
       pendingFeaturePickMode = null;
+      await sendToActiveTab({ type: "EXIT_FEATURES" });
     });
 
     els.customizeCloseBtn?.addEventListener("click", () => {

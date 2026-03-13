@@ -229,7 +229,19 @@ async function broadcastBlueprints(url) {
 
 // ─── The Spinal Cord: Message Router ──────────────────────────────────────────
 
-chrome.runtime.onMessage.addListener(function (message, _sender, sendResponse) {
+chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
+  // Relay specific events from content script to sidepanel
+  if (sender?.tab?.id && typeof message?.type === 'string') {
+    const relayTypes = new Set([
+      "WEBEDIT_ELEMENT_PICKED",
+      "WEBEDIT_MODE_STARTED",
+      "WEBEDIT_MODE_EXITED"
+    ]);
+    if (relayTypes.has(message.type)) {
+      chrome.runtime.sendMessage(message).catch(() => {});
+    }
+  }
+
   (async function () {
     try {
       var response;
@@ -258,6 +270,16 @@ chrome.runtime.onMessage.addListener(function (message, _sender, sendResponse) {
           break;
         case 'GET_ACTIVE_BLUEPRINTS':
           response = await getActiveBlueprints(message);
+          break;
+        case 'WEBEDIT_SIDEPANEL_COMMAND':
+          // Relay command from sidepanel to active tab
+          var tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+          if (tabs.length > 0) {
+            response = await chrome.tabs.sendMessage(tabs[0].id, message.payload).catch(e => ({ ok: false, error: e.message }));
+            if (!response) response = { ok: true };
+          } else {
+            response = { ok: false, error: 'No active tab found' };
+          }
           break;
         default:
           response = { success: false, error: 'Unknown command: ' + routingKey };

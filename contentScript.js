@@ -70,9 +70,100 @@
       activeBlueprints = blueprintsToMap(message.blueprints);
       applyAllBlueprints();
       sendResponse({ success: true });
+    } else if (message.type === 'START_PICK_MODE') {
+      startPickMode(message.reason);
+      sendResponse({ ok: true });
+    } else if (message.type === 'EXIT_FEATURES') {
+      exitPickMode();
+      sendResponse({ ok: true });
     }
     return true;
   });
+
+  // ─── Pick Mode Logic ────────────────────────────────────────────────────────
+  let isPickModeActive = false;
+  let hoveredElement = null;
+  let originalOutline = '';
+
+  function generateSelector(el) {
+    if (el.id) return '#' + el.id;
+    let path = [];
+    while (el && el.nodeType === Node.ELEMENT_NODE) {
+      let selector = el.nodeName.toLowerCase();
+      if (el.id) {
+        selector += '#' + el.id;
+        path.unshift(selector);
+        break;
+      } else {
+        let sib = el, nth = 1;
+        while (sib = sib.previousElementSibling) {
+          if (sib.nodeName.toLowerCase() == selector) nth++;
+        }
+        if (nth != 1) selector += ":nth-of-type(" + nth + ")";
+      }
+      path.unshift(selector);
+      el = el.parentNode;
+    }
+    return path.join(" > ");
+  }
+
+  function handleMouseOver(e) {
+    if (!isPickModeActive) return;
+    e.stopPropagation();
+    if (hoveredElement) {
+      hoveredElement.style.outline = originalOutline;
+    }
+    hoveredElement = e.target;
+    originalOutline = hoveredElement.style.outline;
+    hoveredElement.style.outline = '2px solid #007bff';
+    hoveredElement.style.outlineOffset = '-2px';
+  }
+
+  function handleMouseOut(e) {
+    if (!isPickModeActive) return;
+    e.stopPropagation();
+    if (hoveredElement) {
+      hoveredElement.style.outline = originalOutline;
+      hoveredElement = null;
+    }
+  }
+
+  function handleClick(e) {
+    if (!isPickModeActive) return;
+    e.preventDefault();
+    e.stopPropagation();
+    
+    const target = e.target;
+    const selector = generateSelector(target);
+    const description = target.innerText ? target.innerText.slice(0, 30) : target.tagName.toLowerCase();
+    
+    exitPickMode();
+    
+    chrome.runtime.sendMessage({
+      type: "WEBEDIT_ELEMENT_PICKED",
+      payload: { selector, description }
+    }).catch(() => {});
+  }
+
+  function startPickMode(reason) {
+    if (isPickModeActive) return;
+    isPickModeActive = true;
+    document.addEventListener('mouseover', handleMouseOver, true);
+    document.addEventListener('mouseout', handleMouseOut, true);
+    document.addEventListener('click', handleClick, true);
+  }
+
+  function exitPickMode() {
+    if (!isPickModeActive) return;
+    isPickModeActive = false;
+    if (hoveredElement) {
+      hoveredElement.style.outline = originalOutline;
+      hoveredElement = null;
+    }
+    document.removeEventListener('mouseover', handleMouseOver, true);
+    document.removeEventListener('mouseout', handleMouseOut, true);
+    document.removeEventListener('click', handleClick, true);
+  }
 
   // ─── The Watchdog: Debounced MutationObserver ───────────────────────────────
   const debouncedApply = debounce(applyAllBlueprints, 50);
