@@ -337,6 +337,25 @@ const SupabaseClient = {
    * Set/update the session in chrome.storage.local
    */
   async setSession(session) {
+    if (chrome?.runtime?.id) {
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: "WEBEDIT_STORE_SUPABASE_SESSION",
+          session: session || null
+        });
+        if (response?.ok || response?.success || response?.unchanged) {
+          if (session) {
+            console.log("💾 [SupabaseClient] Stored session for", session.user?.email || "unknown user");
+          } else {
+            console.log("🧹 [SupabaseClient] Cleared stored session");
+          }
+          return { data: { session: session || null }, error: null };
+        }
+      } catch (_) {
+        // Fall back to direct storage writes when the background worker is unavailable.
+      }
+    }
+
     return new Promise((resolve) => {
       if (session) {
         chrome.storage.local.set({

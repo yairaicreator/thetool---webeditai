@@ -5,6 +5,13 @@
 
 const SESSION_MESSAGE_TYPE = "WEBEDIT_SUPABASE_SESSION";
 const SESSION_MESSAGE_SOURCE = "webedit-website";
+const EXTENSION_SESSION_MESSAGE_TYPE = "WEBEDIT_EXTENSION_SESSION_CHANGED";
+const EXTENSION_SYNC_SOURCE = "webedit-extension";
+const SUPABASE_PROJECT_REF = "eqfjkvjwsswjxkmomxax";
+const DEFAULT_SESSION_STORAGE_KEYS = [
+  `sb-${SUPABASE_PROJECT_REF}-auth-token`,
+  "supabase.auth.token"
+];
 
 function isContextInvalidMessage(message) {
   const text = String(message || "");
@@ -52,6 +59,207 @@ function normalizeSessionPayload(raw, context = "unknown") {
     return { session: null, valid: false, explicitSignOut: false };
   }
   return { session, valid: true, explicitSignOut: false };
+}
+
+function isAuthStorageKey(key) {
+  return !!key && (
+    (key.startsWith("sb-") && key.endsWith("-auth-token")) ||
+    key === "supabase.auth.token"
+  );
+}
+
+function safeParseJson(value) {
+  if (!value) return null;
+  try {
+    return JSON.parse(value);
+  } catch (_) {
+    return null;
+  }
+}
+
+function getKnownSessionStorageKeys() {
+  const keys = new Set(DEFAULT_SESSION_STORAGE_KEYS);
+  try {
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (isAuthStorageKey(key)) {
+        keys.add(key);
+      }
+    }
+  } catch (_) {}
+  return Array.from(keys);
+}
+
+function getCurrentWebsiteSession() {
+  const keys = getKnownSessionStorageKeys();
+  for (const key of keys) {
+    const parsed = safeParseJson(localStorage.getItem(key));
+    const result = normalizeSessionPayload(parsed, `localStorage:${key}`);
+    if (result.valid && result.session) {
+      return {
+        session: result.session,
+        key,
+        parsed
+      };
+    }
+  }
+  return { session: null, key: null, parsed: null };
+}
+
+function sessionsMatch(a, b) {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  return (
+    String(a.access_token || "") === String(b.access_token || "") &&
+    String(a.refresh_token || "") === String(b.refresh_token || "") &&
+    Number(a.expires_at || 0) === Number(b.expires_at || 0) &&
+    String(a.user?.id || "") === String(b.user?.id || "")
+  );
+}
+
+function getSessionFingerprint(session) {
+  if (!session) return "";
+  return JSON.stringify({
+    access_token: session.access_token || null,
+    refresh_token: session.refresh_token || null,
+    expires_at: session.expires_at || null,
+    user_id: session.user?.id || null
+  });
+}
+
+function buildPersistedSessionValue(key, session, parsed) {
+  if (!session) return null;
+  const nextExpiresAtMs = session?.expires_at ? Number(session.expires_at) * 1000 : null;
+
+  if (parsed && typeof parsed === "object") {
+    if (parsed.currentSession || parsed.currentUser || parsed.expiresAt) {
+      return JSON.stringify({
+        ...parsed,
+        currentSession: session,
+        currentUser: session.user || parsed.currentUser || null,
+        expiresAt: nextExpiresAtMs || parsed.expiresAt || null
+      });
+    }
+    if (parsed.session) {
+      return JSON.stringify({
+        ...parsed,
+        session
+      });
+    }
+    if (parsed.data && typeof parsed.data === "object") {
+      return JSON.stringify({
+        ...parsed,
+        data: {
+          ...parsed.data,
+          session
+        }
+      });
+    }
+  }
+
+  if (key === "supabase.auth.token") {
+    return JSON.stringify({
+      currentSession: session,
+      currentUser: session.user || null,
+      expiresAt: nextExpiresAtMs
+    });
+  }
+
+  return JSON.stringify(session);
+}
+
+function dispatchSyntheticStorageEvent(key, oldValue, newValue) {
+  try {
+    const event = new StorageEvent("storage", {
+      key,
+      oldValue,
+      newValue,
+      storageArea: localStorage,
+      url: location.href
+    });
+    window.dispatchEvent(event);
+  } catch (_) {}
+}
+
+function notifyWebsiteOfExtensionSync(session, reason) {
+  const payload = {
+    source: EXTENSION_SYNC_SOURCE,
+    type: "WEBEDIT_EXTENSION_SESSION_SYNC",
+    payload: session || null,
+    reason: reason || "extension"
+  };
+
+  try {
+    window.postMessage(payload, "*");
+  } catch (_) {}
+
+  try {
+    window.dispatchEvent(new CustomEvent("webedit:session-sync", {
+      detail: {
+        session: session || null,
+        reason: reason || "extension"
+      }
+    }));
+  } catch (_) {}
+}
+
+function applyExtensionSessionToWebsite(session, reason = "extension") {
+  const current = getCurrentWebsiteSession();
+  if (sessionsMatch(current.session, session || null)) {
+    return false;
+  }
+
+  let changed = false;
+  const keys = getKnownSessionStorageKeys();
+
+  if (!session) {
+    keys.forEach((key) => {
+      const oldValue = localStorage.getItem(key);
+      if (oldValue !== null) {
+        localStorage.removeItem(key);
+        dispatchSyntheticStorageEvent(key, oldValue, null);
+        changed = true;
+      }
+    });
+    if (changed) {
+      notifyWebsiteOfExtensionSync(null, reason);
+    }
+    return changed;
+  }
+
+  keys.forEach((key) => {
+    const oldValue = localStorage.getItem(key);
+    const parsed = safeParseJson(oldValue);
+    const newValue = buildPersistedSessionValue(key, session, parsed);
+    if (oldValue !== newValue) {
+      localStorage.setItem(key, newValue);
+      dispatchSyntheticStorageEvent(key, oldValue, newValue);
+      changed = true;
+    }
+  });
+
+  if (changed) {
+    notifyWebsiteOfExtensionSync(session, reason);
+  }
+  return changed;
+}
+
+function requestExtensionSessionBootstrap() {
+  if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.id) {
+    return;
+  }
+
+  chrome.runtime.sendMessage({ type: "WEBEDIT_GET_SESSION" }, (response) => {
+    if (chrome.runtime.lastError) {
+      return;
+    }
+
+    const extensionSession = response?.session || null;
+    const websiteSession = getCurrentWebsiteSession().session;
+    if (extensionSession && !websiteSession) {
+      applyExtensionSessionToWebsite(extensionSession, "bootstrap");
+    }
+  });
 }
 
 // Helper to send session (including sign-out) to background
@@ -132,32 +340,12 @@ function forwardSessionToBackground(session, source, attempt = 0) {
 function checkLocalStorageForSession() {
   try {
     console.log("🔍 Checking localStorage for existing session...");
-    
-    // Iterate through all keys to find Supabase token
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      
-      // Look for standard Supabase auth token patterns
-      // Format: sb-<project-id>-auth-token or supabase.auth.token
-      if ((key.startsWith('sb-') && key.endsWith('-auth-token')) || 
-          key === 'supabase.auth.token') {
-        
-        const item = localStorage.getItem(key);
-        if (item) {
-          try {
-            const parsed = JSON.parse(item);
-            const result = normalizeSessionPayload(parsed, `localStorage:${key}`);
-            if (result.valid && result.session) {
-              const session = result.session;
-              console.log("✅ Found existing session in localStorage:", key);
-              forwardSessionToBackground(session, "localStorage");
-              return true;
-            }
-          } catch (e) {
-            console.error("❌ [Bridge] Failed to parse session stored in localStorage:", e);
-          }
-        }
-      }
+
+    const stored = getCurrentWebsiteSession();
+    if (stored.session) {
+      console.log("✅ Found existing session in localStorage:", stored.key);
+      forwardSessionToBackground(stored.session, "localStorage");
+      return true;
     }
   } catch (e) {
     console.error("Error checking localStorage:", e);
@@ -207,8 +395,35 @@ window.addEventListener("message", (event) => {
   }
 });
 
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type !== EXTENSION_SESSION_MESSAGE_TYPE) {
+    return false;
+  }
+
+  try {
+    const changed = applyExtensionSessionToWebsite(message.session || null, "background-message");
+    sendResponse({ ok: true, changed });
+  } catch (error) {
+    const text = error instanceof Error ? error.message : String(error);
+    sendResponse({ ok: false, error: text });
+  }
+  return true;
+});
+
 // Initial check when script loads
 checkLocalStorageForSession();
+requestExtensionSessionBootstrap();
+
+let lastObservedWebsiteSessionFingerprint = getSessionFingerprint(getCurrentWebsiteSession().session);
+setInterval(() => {
+  const currentSession = getCurrentWebsiteSession().session;
+  const nextFingerprint = getSessionFingerprint(currentSession);
+  if (nextFingerprint === lastObservedWebsiteSessionFingerprint) {
+    return;
+  }
+  lastObservedWebsiteSessionFingerprint = nextFingerprint;
+  forwardSessionToBackground(currentSession || null, "poll");
+}, 1500);
 
 // Poll for session in case it's set asynchronously (e.g. during hydration)
 let pollCount = 0;
@@ -224,17 +439,22 @@ const pollInterval = setInterval(() => {
 
 // Listen for storage changes (in case login happens in another tab/window)
 window.addEventListener('storage', (event) => {
-  if ((event.key && event.key.startsWith('sb-') && event.key.endsWith('-auth-token')) || 
-      event.key === 'supabase.auth.token') {
+  if (isAuthStorageKey(event.key)) {
     console.log("📦 Storage changed, re-checking session");
-    checkLocalStorageForSession();
+    if (event.newValue === null) {
+      forwardSessionToBackground(null, "storage");
+    } else {
+      checkLocalStorageForSession();
+    }
   }
 });
 
 // Also re-check when window gets focus (user switches back to this tab)
 window.addEventListener('focus', () => {
   console.log("👁️ Window focused, re-checking session");
-  checkLocalStorageForSession();
+  if (!checkLocalStorageForSession()) {
+    requestExtensionSessionBootstrap();
+  }
 });
 
 console.log("🔐 WebEdit AI: Bridge listener initialized on", window.location.href);
