@@ -90,6 +90,25 @@ async function getActiveBlueprints(message) {
   return { success: true, blueprints: blueprints };
 }
 
+// ─── Broadcast: Notify Hands + Panel after state changes ─────────────────────
+
+async function broadcastBlueprints(url) {
+  var result = await getActiveBlueprints({ url: url });
+  var blueprints = result.success ? result.blueprints : [];
+
+  // Notify content scripts on matching tabs (Hands use `command`)
+  var tabs = [];
+  try {
+    tabs = await chrome.tabs.query({ url: url });
+  } catch (_) {}
+  tabs.forEach(function (tab) {
+    chrome.tabs.sendMessage(tab.id, { command: 'BLUEPRINTS_UPDATED', blueprints: blueprints }).catch(function () {});
+  });
+
+  // Notify sidepanel / other extension pages (Panel uses `type`)
+  chrome.runtime.sendMessage({ type: 'BLUEPRINTS_UPDATED', blueprints: blueprints }).catch(function () {});
+}
+
 // ─── The Spinal Cord: Message Router ──────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener(function (message, _sender, sendResponse) {
@@ -97,18 +116,22 @@ chrome.runtime.onMessage.addListener(function (message, _sender, sendResponse) {
     try {
       var response;
 
-      switch (message.command) {
+      var routingKey = message.type || message.command;
+
+      switch (routingKey) {
         case 'SAVE_BLUEPRINT':
           response = await saveBlueprint(message);
+          if (response.success) { await broadcastBlueprints(message.url); }
           break;
         case 'TOGGLE_STATUS':
           response = await toggleStatus(message);
+          if (response.success) { await broadcastBlueprints(message.url); }
           break;
         case 'GET_ACTIVE_BLUEPRINTS':
           response = await getActiveBlueprints(message);
           break;
         default:
-          response = { success: false, error: 'Unknown command: ' + message.command };
+          response = { success: false, error: 'Unknown command: ' + routingKey };
       }
 
       sendResponse(response);

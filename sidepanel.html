@@ -35,6 +35,7 @@
 
     <!-- Main Content Area -->
     <div class="webedit-main-content">
+      <div id="webedit-blueprint-list" class="webedit-blueprint-list"></div>
       <div class="webedit-chat-messages" id="webedit-chat-messages">
         <div class="webedit-chat-placeholder">
           <p>Select Remove, Add, or Customize below to get started</p>
@@ -126,6 +127,12 @@
       </div>
     </div>
 
+    <!-- Temporary Test Remove (dev tool - remove once Hands support pick mode) -->
+    <div class="webedit-test-remove" id="webedit-test-remove">
+      <input type="text" id="webedit-test-selector" placeholder="e.g. .ad-banner" />
+      <button id="webedit-test-remove-btn" type="button">Test Remove</button>
+    </div>
+
     <!-- Bottom Controls -->
     <div class="webedit-bottom-controls">
       <div class="webedit-feature-controls">
@@ -158,7 +165,6 @@
       <input class="webedit-file-input" id="webedit-file-input" type="file" multiple accept="image/*,.pdf,.doc,.docx,.txt,.json,.csv,.md" />
     </div>
   </div>
-  <script src="messages.js"></script>
   <script src="supabaseClient.js"></script>
   <script src="sidepanel.js"></script>
 </body>

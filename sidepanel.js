@@ -69,6 +69,72 @@
   
   let customizeReviewApplied = false;
   let lastPickedTarget = null; // { selector, description }
+
+  // ─── Brain Communication Helpers ─────────────────────────────────────────────
+
+  async function getCurrentTabUrl() {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    return tab?.url || '';
+  }
+
+  async function sendToBrain(type, payload = {}) {
+    try {
+      const response = await chrome.runtime.sendMessage({ type, ...payload });
+      return response || { success: false, error: 'No response' };
+    } catch (err) {
+      console.error('[Panel] sendToBrain error:', err);
+      return { success: false, error: err.message };
+    }
+  }
+
+  // ─── Blueprint List Rendering ────────────────────────────────────────────────
+
+  async function renderBlueprintList(blueprints) {
+    const container = document.getElementById('webedit-blueprint-list');
+    if (!container) return;
+    container.innerHTML = '';
+
+    if (!Array.isArray(blueprints) || blueprints.length === 0) {
+      container.innerHTML = '<div class="webedit-blueprint-empty">No active edits</div>';
+      return;
+    }
+
+    const url = await getCurrentTabUrl();
+
+    blueprints.forEach((bp) => {
+      const item = document.createElement('div');
+      item.className = 'webedit-blueprint-item';
+
+      const label = document.createElement('span');
+      label.className = 'webedit-blueprint-label';
+      label.textContent = `[${bp.action}] ${bp.selector.length > 30 ? bp.selector.slice(0, 27) + '...' : bp.selector}`;
+      item.appendChild(label);
+
+      const toggleBtn = document.createElement('button');
+      toggleBtn.className = 'webedit-blueprint-toggle';
+      toggleBtn.textContent = bp.status === 'active' ? 'Disable' : 'Enable';
+      toggleBtn.addEventListener('click', async () => {
+        const resp = await sendToBrain('TOGGLE_STATUS', { url, editId: bp.editId });
+        if (resp.success) {
+          loadBlueprints();
+        }
+      });
+      item.appendChild(toggleBtn);
+
+      container.appendChild(item);
+    });
+  }
+
+  async function loadBlueprints() {
+    const url = await getCurrentTabUrl();
+    if (!url) return;
+    const resp = await sendToBrain('GET_ACTIVE_BLUEPRINTS', { url });
+    if (resp.success) {
+      renderBlueprintList(resp.blueprints);
+    }
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
         
   function ensureFeatureControlsLayout() {
     const legacySelectors = [
@@ -1337,6 +1403,11 @@
       // placeholder
       return;
     }
+
+    if (message?.type === 'BLUEPRINTS_UPDATED') {
+      renderBlueprintList(message.blueprints || []);
+      return;
+    }
     
     if (message?.type === "WEBEDIT_ELEMENT_PICKED") {
       lastPickedTarget = message.payload || null;
@@ -1350,9 +1421,14 @@
       pendingFeaturePickMode = null;
       if (pickedTool === "remove" && lastPickedTarget?.selector) {
         (async () => {
-          const resp = await sendToActiveTab({ type: "REMOVE_ELEMENT", selector: lastPickedTarget.selector });
-          if (resp?.response?.ok) {
+          const url = await getCurrentTabUrl();
+          const resp = await sendToBrain('SAVE_BLUEPRINT', {
+            url,
+            edit: { action: 'remove', selector: lastPickedTarget.selector, payload: {} }
+          });
+          if (resp.success) {
             showNotificationInChat(`Removed: ${lastPickedTarget.description || lastPickedTarget.selector}`);
+            loadBlueprints();
           }
         })();
       } else if (pickedTool === "customize" && lastPickedTarget?.selector) {
@@ -1465,6 +1541,26 @@
         handleSend();
       }
     });
+
+    // Temporary Test Remove (dev tool -- wires to Brain's SAVE_BLUEPRINT)
+    const testRemoveBtn = document.getElementById('webedit-test-remove-btn');
+    const testSelectorInput = document.getElementById('webedit-test-selector');
+    testRemoveBtn?.addEventListener('click', async () => {
+      const selector = (testSelectorInput?.value || '').trim();
+      if (!selector) return;
+      const url = await getCurrentTabUrl();
+      const resp = await sendToBrain('SAVE_BLUEPRINT', {
+        url,
+        edit: { action: 'remove', selector, payload: {} }
+      });
+      if (resp.success) {
+        showNotificationInChat(`Saved remove blueprint for: ${selector}`);
+        testSelectorInput.value = '';
+        loadBlueprints();
+      } else {
+        showNotificationInChat(`Save failed: ${resp.error}`);
+      }
+    });
   }
 
   // Wire UI
@@ -1478,5 +1574,6 @@
     initializeFeatureHandlers();
     setActiveTool("add");
     renderChatMessages();
+    loadBlueprints();
   })();
 })();
