@@ -1488,13 +1488,14 @@
     });
 
     els.featureButtons.forEach((btn) => {
-      btn.addEventListener("click", () => startFeaturePickFlow(btn.dataset.tool));
+      btn.addEventListener("click", () => {
+        showNotificationInChat("Pick Mode is disabled for Phase 1 testing. Please use the 'Test Remove' input box above to test the Brain/Hands connection.");
+      });
     });
 
-    els.modeCloseBtn?.addEventListener("click", async () => {
+    els.modeCloseBtn?.addEventListener("click", () => {
       hideModeIndicator();
       pendingFeaturePickMode = null;
-      await sendToActiveTab({ type: "EXIT_FEATURES" });
     });
 
     els.customizeCloseBtn?.addEventListener("click", () => {
