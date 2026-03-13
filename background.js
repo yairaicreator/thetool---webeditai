@@ -2,7 +2,9 @@
 
 // ─── Side Panel Activation ───────────────────────────────────────────────────
 
-chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+chrome.sidePanel
+  .setPanelBehavior({ openPanelOnActionClick: true })
+  .catch(function (error) { console.error('[Brain] sidePanel behavior error:', error); });
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const LEDGER_KEY = 'webedit_ledger';
