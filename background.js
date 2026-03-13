@@ -2,10 +2,23 @@
 
 // ─── Side Panel Activation ───────────────────────────────────────────────────
 
-chrome.runtime.onInstalled.addListener(() => {
+fetch('http://127.0.0.1:7745/ingest/a0177b65-52e4-48e8-a970-4dc8c4b1460d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'08b659'},body:JSON.stringify({sessionId:'08b659',location:'background.js:top',message:'Background script top level executed',data:{},timestamp:Date.now(),runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
+
+chrome.runtime.onInstalled.addListener((details) => {
+  fetch('http://127.0.0.1:7745/ingest/a0177b65-52e4-48e8-a970-4dc8c4b1460d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'08b659'},body:JSON.stringify({sessionId:'08b659',location:'background.js:onInstalled',message:'onInstalled fired',data:{reason:details.reason},timestamp:Date.now(),runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
   chrome.sidePanel
     .setPanelBehavior({ openPanelOnActionClick: true })
-    .catch(function (error) { console.error('[Brain] sidePanel behavior error:', error); });
+    .then(() => {
+      fetch('http://127.0.0.1:7745/ingest/a0177b65-52e4-48e8-a970-4dc8c4b1460d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'08b659'},body:JSON.stringify({sessionId:'08b659',location:'background.js:setPanelBehavior',message:'setPanelBehavior succeeded',data:{},timestamp:Date.now(),runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
+    })
+    .catch(function (error) { 
+      fetch('http://127.0.0.1:7745/ingest/a0177b65-52e4-48e8-a970-4dc8c4b1460d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'08b659'},body:JSON.stringify({sessionId:'08b659',location:'background.js:setPanelBehavior_catch',message:'setPanelBehavior failed',data:{error:error.toString()},timestamp:Date.now(),runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
+      console.error('[Brain] sidePanel behavior error:', error); 
+    });
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  fetch('http://127.0.0.1:7745/ingest/a0177b65-52e4-48e8-a970-4dc8c4b1460d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'08b659'},body:JSON.stringify({sessionId:'08b659',location:'background.js:onStartup',message:'onStartup fired',data:{},timestamp:Date.now(),runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
 });
 
 // ─── Constants ────────────────────────────────────────────────────────────────
