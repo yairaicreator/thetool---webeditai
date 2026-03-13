@@ -1,5 +1,9 @@
 'use strict';
 
+// ─── Side Panel Activation ───────────────────────────────────────────────────
+
+chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 const LEDGER_KEY = 'webedit_ledger';
 
