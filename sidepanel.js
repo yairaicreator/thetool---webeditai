@@ -3,8 +3,10 @@
 
 (() => {
   const els = {
+    chatPanel: document.getElementById("webedit-chat-panel"),
     headerHamburger: document.getElementById("webedit-header-hamburger"),
     homeBtn: document.getElementById("webedit-home-btn"),
+    editHistoryBtn: document.getElementById("webedit-edit-history-btn"),
     signinBtn: document.getElementById("webedit-signin-btn"),
     authGuard: document.getElementById("webedit-auth-guard"),
     authGuardTitle: document.getElementById("webedit-auth-guard-title"),
@@ -13,12 +15,20 @@
     historySidebar: document.getElementById("webedit-history-sidebar"),
     historyList: document.getElementById("webedit-history-list"),
     newChatBtn: document.getElementById("webedit-new-chat-btn"),
+    mainContent: document.querySelector(".webedit-main-content"),
+    blueprintList: document.getElementById("webedit-blueprint-list"),
     chatMessages: document.getElementById("webedit-chat-messages"),
     referencesContainer: document.getElementById("webedit-references-container"),
+    editHistoryView: document.getElementById("webedit-edit-history-view"),
+    historyDomainList: document.getElementById("webedit-history-domain-list"),
+    historyCategoryTabs: document.getElementById("webedit-history-category-tabs"),
+    historyCategoryTabButtons: Array.from(document.querySelectorAll(".webedit-history-category-tab")),
+    historyCardList: document.getElementById("webedit-history-card-list"),
     featureButtons: Array.from(document.querySelectorAll(".webedit-feature-btn")),
     removeBtn: document.getElementById("webedit-remove-btn"),
     addBtn: document.getElementById("webedit-add-btn"),
     customizeBtn: document.getElementById("webedit-customize-btn"),
+    bottomControls: document.querySelector(".webedit-bottom-controls"),
     modeIndicator: document.getElementById("webedit-mode-indicator"),
     modeText: document.getElementById("webedit-mode-text"),
     modeCloseBtn: document.getElementById("webedit-mode-close-btn"),
@@ -40,7 +50,8 @@
     moveDownBtn: document.getElementById("webedit-move-down-btn"),
     alignBtns: Array.from(document.querySelectorAll(".webedit-align-btn")),
     chatInput: document.getElementById("webedit-chat-input"),
-    sendBtn: document.getElementById("webedit-send-btn")
+    sendBtn: document.getElementById("webedit-send-btn"),
+    inputContainer: document.getElementById("webedit-input-container")
   };
 
   const CHAT_HISTORY_KEY = "webedit-sidepanel-chat-history-v1";
@@ -52,6 +63,11 @@
     UNAUTHENTICATED: "unauthenticated",
     AUTHENTICATED: "authenticated"
   };
+  const PANEL_VIEWS = {
+    CHAT: "chat",
+    EDIT_HISTORY: "editHistory"
+  };
+  const HISTORY_CATEGORIES = ["remove", "customize", "add"];
 
   let authState = AUTH_STATES.UNAUTHENTICATED;
   let signedInUser = null;
@@ -59,6 +75,10 @@
   let lastUserId = null;
   let currentSessionId = null;
   let chatMessages = [];
+  let currentPanelView = PANEL_VIEWS.CHAT;
+  let editHistoryItems = [];
+  let selectedHistoryDomain = "";
+  let selectedHistoryCategory = "remove";
   let activeHistoryRenameForm = null;
   let currentTool = "add";
   let pendingFeaturePickMode = null; // null | add | remove | customize
@@ -84,6 +104,211 @@
     } catch (err) {
       console.error('[Panel] sendToBrain error:', err);
       return { success: false, error: err.message };
+    }
+  }
+
+  function getMockHistoryData() {
+    return [
+      {
+        editId: "edit_youtube_remove_nav_ads",
+        domain: "youtube.com",
+        category: "remove",
+        title: "Hide side ads",
+        description: "Removed the sponsored ad rail and promoted recommendation modules from the homepage sidebar so browsing feels calmer and the main video feed stays focused on organic content.",
+        status: "active"
+      },
+      {
+        editId: "edit_youtube_customize_player_theme",
+        domain: "youtube.com",
+        category: "customize",
+        title: "Darken player card",
+        description: "Customized the video player container with a deeper charcoal background, softer borders, and slightly larger metadata spacing so the watch page feels cleaner and easier to scan during long sessions.",
+        status: "inactive"
+      },
+      {
+        editId: "edit_twitter_add_quick_summary",
+        domain: "twitter.com",
+        category: "add",
+        title: "Thread summary box",
+        description: "Added a generated summary panel above long threads that groups the main points into a short overview, making fast catch-up easier before reading the full conversation.",
+        status: "active"
+      },
+      {
+        editId: "edit_notion_customize_callouts",
+        domain: "notion.so",
+        category: "customize",
+        title: "Calmer callouts",
+        description: "Updated callout blocks with muted blue backgrounds, a slightly smaller icon scale, and more generous padding so highlighted notes are still noticeable without overpowering the page.",
+        status: "active"
+      },
+      {
+        editId: "edit_amazon_remove_buy_now",
+        domain: "amazon.com",
+        category: "remove",
+        title: "Hide buy now",
+        description: "Removed the high-pressure Buy Now shortcut and several urgency prompts from product pages so purchase decisions feel less rushed and the layout is easier to review deliberately.",
+        status: "inactive"
+      },
+      {
+        editId: "edit_github_add_review_panel",
+        domain: "github.com",
+        category: "add",
+        title: "PR checklist panel",
+        description: "Added a compact generated checklist beside pull request conversations with testing, risk, and rollout reminders so reviews stay consistent across repositories.",
+        status: "active"
+      }
+    ];
+  }
+
+  function getHistoryDomains() {
+    return Array.from(new Set(editHistoryItems.map((item) => item.domain)));
+  }
+
+  function ensureHistorySelections() {
+    const domains = getHistoryDomains();
+    if (!domains.includes(selectedHistoryDomain)) {
+      selectedHistoryDomain = domains[0] || "";
+    }
+    if (!HISTORY_CATEGORIES.includes(selectedHistoryCategory)) {
+      selectedHistoryCategory = HISTORY_CATEGORIES[0];
+    }
+  }
+
+  function getFilteredHistoryItems() {
+    return editHistoryItems.filter((item) => {
+      return item.domain === selectedHistoryDomain && item.category === selectedHistoryCategory;
+    });
+  }
+
+  function renderHistoryDomains() {
+    if (!els.historyDomainList) return;
+    ensureHistorySelections();
+    els.historyDomainList.innerHTML = "";
+
+    getHistoryDomains().forEach((domain) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "webedit-domain-chip";
+      button.dataset.domain = domain;
+      button.setAttribute("role", "tab");
+      button.setAttribute("aria-selected", String(domain === selectedHistoryDomain));
+      button.classList.toggle("active", domain === selectedHistoryDomain);
+      button.textContent = domain;
+      button.addEventListener("click", () => {
+        selectedHistoryDomain = domain;
+        renderEditHistoryView();
+      });
+      els.historyDomainList.appendChild(button);
+    });
+  }
+
+  function renderHistoryCategoryTabs() {
+    els.historyCategoryTabButtons.forEach((button) => {
+      const isActive = button.dataset.category === selectedHistoryCategory;
+      button.classList.toggle("active", isActive);
+      button.setAttribute("aria-selected", String(isActive));
+      button.setAttribute("tabindex", isActive ? "0" : "-1");
+    });
+  }
+
+  function createHistoryStatusButton(item) {
+    const button = document.createElement("button");
+    const isActive = item.status === "active";
+    button.type = "button";
+    button.className = "webedit-history-status-btn";
+    button.classList.toggle("is-undone", !isActive);
+    button.textContent = isActive ? "Undo" : "Redo";
+    button.setAttribute("aria-pressed", String(!isActive));
+    button.addEventListener("click", async () => {
+      const nextStatus = isActive ? "inactive" : "active";
+      editHistoryItems = editHistoryItems.map((historyItem) => {
+        if (historyItem.editId !== item.editId) return historyItem;
+        return { ...historyItem, status: nextStatus };
+      });
+      renderEditHistoryView();
+      const response = await sendToBrain("TOGGLE_STATUS", { editId: item.editId });
+      if (!response?.success) {
+        console.warn("[SidePanel] Failed to toggle mock history item:", item.editId, response?.error || "unknown error");
+      }
+    });
+    return button;
+  }
+
+  function renderHistoryCards() {
+    if (!els.historyCardList) return;
+    const filteredItems = getFilteredHistoryItems();
+    els.historyCardList.innerHTML = "";
+
+    if (filteredItems.length === 0) {
+      const emptyState = document.createElement("div");
+      emptyState.className = "webedit-history-empty-state";
+      emptyState.textContent = "No edits in this category for the selected website yet.";
+      els.historyCardList.appendChild(emptyState);
+      return;
+    }
+
+    filteredItems.forEach((item) => {
+      const card = document.createElement("article");
+      card.className = `webedit-history-card webedit-history-card-${item.category}`;
+
+      const topRow = document.createElement("div");
+      topRow.className = "webedit-history-card-top";
+
+      const textBlock = document.createElement("div");
+      textBlock.className = "webedit-history-card-text";
+
+      const title = document.createElement("h3");
+      title.className = "webedit-history-card-title";
+      title.textContent = item.title;
+      textBlock.appendChild(title);
+
+      const description = document.createElement("p");
+      description.className = "webedit-history-card-description";
+      description.textContent = item.description;
+      textBlock.appendChild(description);
+
+      topRow.appendChild(textBlock);
+      topRow.appendChild(createHistoryStatusButton(item));
+      card.appendChild(topRow);
+
+      if (item.category === "customize") {
+        const preview = document.createElement("div");
+        preview.className = "webedit-history-preview-placeholder";
+        preview.innerHTML = `
+          <div class="webedit-history-preview-pane">Before</div>
+          <div class="webedit-history-preview-pane">After</div>
+        `;
+        card.appendChild(preview);
+      }
+
+      els.historyCardList.appendChild(card);
+    });
+  }
+
+  function renderEditHistoryView() {
+    ensureHistorySelections();
+    renderHistoryDomains();
+    renderHistoryCategoryTabs();
+    renderHistoryCards();
+  }
+
+  function setPanelView(view) {
+    currentPanelView = view === PANEL_VIEWS.EDIT_HISTORY ? PANEL_VIEWS.EDIT_HISTORY : PANEL_VIEWS.CHAT;
+    const isEditHistory = currentPanelView === PANEL_VIEWS.EDIT_HISTORY;
+
+    els.chatPanel?.classList.toggle("webedit-view-edit-history", isEditHistory);
+    els.editHistoryView?.classList.toggle("hidden", !isEditHistory);
+    els.blueprintList?.classList.toggle("hidden", isEditHistory);
+    els.chatMessages?.classList.toggle("hidden", isEditHistory);
+    els.referencesContainer?.classList.toggle("hidden", isEditHistory);
+    els.bottomControls?.classList.toggle("hidden", isEditHistory);
+    els.inputContainer?.classList.toggle("hidden", isEditHistory);
+    els.editHistoryBtn?.classList.toggle("active", isEditHistory);
+    els.homeBtn?.classList.toggle("active", !isEditHistory);
+
+    if (isEditHistory) {
+      toggleHistorySidebar(false);
+      renderEditHistoryView();
     }
   }
 
@@ -940,7 +1165,20 @@
 
     if (els.homeBtn) {
       els.homeBtn.addEventListener("click", () => {
+        if (currentPanelView !== PANEL_VIEWS.CHAT) {
+          setPanelView(PANEL_VIEWS.CHAT);
+          return;
+        }
         window.open("https://webeditai.com/", "_blank");
+      });
+    }
+
+    if (els.editHistoryBtn) {
+      els.editHistoryBtn.addEventListener("click", () => {
+        const nextView = currentPanelView === PANEL_VIEWS.EDIT_HISTORY
+          ? PANEL_VIEWS.CHAT
+          : PANEL_VIEWS.EDIT_HISTORY;
+        setPanelView(nextView);
       });
     }
   }
@@ -1534,6 +1772,15 @@
       });
     });
 
+    els.historyCategoryTabButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        const category = button.dataset.category;
+        if (!HISTORY_CATEGORIES.includes(category)) return;
+        selectedHistoryCategory = category;
+        renderEditHistoryView();
+      });
+    });
+
     els.sendBtn?.addEventListener("click", handleSend);
     els.chatInput?.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) {
@@ -1570,8 +1817,11 @@
   // Init
   (async () => {
     ensureFeatureControlsLayout();
+    editHistoryItems = getMockHistoryData();
+    renderEditHistoryView();
     await refreshAuthorization();
     initializeFeatureHandlers();
+    setPanelView(PANEL_VIEWS.CHAT);
     setActiveTool("add");
     renderChatMessages();
     loadBlueprints();

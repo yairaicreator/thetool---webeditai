@@ -12,6 +12,7 @@
     <div class="webedit-panel-header">
       <button class="webedit-header-hamburger" id="webedit-header-hamburger" type="button" aria-label="Open chat history">☰</button>
       <button class="webedit-nav-btn logo-btn" id="webedit-home-btn" type="button">WebEdit AI</button>
+      <button class="webedit-nav-btn history-btn" id="webedit-edit-history-btn" type="button" aria-label="Open edit history view">EditHistory</button>
       <button class="webedit-nav-btn signin-btn" id="webedit-signin-btn" type="button">Log in</button>
       <!-- Resize and Close buttons are not needed in Side Panel as it's managed by Chrome -->
     </div>
@@ -42,6 +43,30 @@
         </div>
       </div>
       <div class="webedit-references-container" id="webedit-references-container"></div>
+      <section class="webedit-edit-history-view hidden" id="webedit-edit-history-view" aria-label="Edit history view">
+        <div class="webedit-edit-history-header">
+          <div>
+            <p class="webedit-edit-history-eyebrow">All websites</p>
+            <h2>Edit History</h2>
+          </div>
+          <p class="webedit-edit-history-subtitle">Manage saved edits across domains.</p>
+        </div>
+
+        <div class="webedit-domain-strip-section">
+          <div class="webedit-domain-strip-label-row">
+            <span class="webedit-edit-history-label">Websites</span>
+          </div>
+          <div class="webedit-domain-strip" id="webedit-history-domain-list" role="tablist" aria-label="Website domains"></div>
+        </div>
+
+        <div class="webedit-history-category-tabs" id="webedit-history-category-tabs" role="tablist" aria-label="Edit categories">
+          <button class="webedit-history-category-tab" data-category="remove" type="button" role="tab">Remove</button>
+          <button class="webedit-history-category-tab" data-category="customize" type="button" role="tab">Customize</button>
+          <button class="webedit-history-category-tab" data-category="add" type="button" role="tab">Add</button>
+        </div>
+
+        <div class="webedit-history-card-list" id="webedit-history-card-list" aria-live="polite"></div>
+      </section>
     </div>
 
     <!-- Customize Panel (collapsible) -->
