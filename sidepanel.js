@@ -81,7 +81,6 @@
   let selectedHistoryCategory = "remove";
   let activeHistoryRenameForm = null;
   let currentTool = "add";
-  let pendingFeaturePickMode = null; // null | add | remove | customize
   let pendingPreviewRefine = null;
   let pendingComplexDecomposition = null;
   let pendingDecompositionExecution = null;
@@ -1065,8 +1064,6 @@
     if (!enabled) {
       els.customizePanel?.classList.remove("visible");
       hideModeIndicator();
-      
-      pendingFeaturePickMode = null;
       customizeReviewApplied = false;
       pendingAiAnchorRequest = null;
       lastPickedTarget = null;
@@ -1265,50 +1262,6 @@
   function hideModeIndicator() {
     if (!els.modeIndicator) return;
     els.modeIndicator.classList.add("hidden");
-  }
-
-  async function startFeaturePickFlow(tool) {
-    if (tool === "remove" && !requireAuth("remove elements")) return;
-    if (tool === "customize" && !requireAuth("customize elements")) return;
-    if (tool === "add" && !requireAuth("add features")) return;
-
-    setActiveTool(tool);
-    pendingPreviewRefine = null;
-    
-    customizeReviewApplied = false;
-    els.customizePanel?.classList.remove("visible");
-
-    if (tool === "remove") {
-      showNotificationInChat("Pick an element to remove.");
-      showModeIndicator("Remove: pick an element to remove");
-    }
-    if (tool === "customize") {
-      showNotificationInChat("Pick an element to customize.");
-      showModeIndicator("Customize: pick an element");
-    }
-    if (tool === "add") {
-      showNotificationInChat("Pick an element to add content near it.");
-      showModeIndicator("Add: pick an anchor element");
-    }
-
-    pendingFeaturePickMode = tool;
-
-    // Best-effort reset to avoid stale mode races before starting a new pick cycle.
-    await sendToActiveTab({ type: "EXIT_FEATURES" });
-
-    let resp = await sendToActiveTab({ type: "START_PICK_MODE", reason: tool });
-    if (!commandSucceeded(resp)) {
-      await new Promise((resolve) => setTimeout(resolve, 180));
-      resp = await sendToActiveTab({ type: "START_PICK_MODE", reason: tool });
-    }
-    if (!commandSucceeded(resp)) {
-      hideModeIndicator();
-      pendingFeaturePickMode = null;
-      const detail = formatStageError(resp, "Could not enter pick mode");
-      showNotificationInChat(`Pick mode failed: ${detail}`);
-      return;
-    }
-    showModeIndicator("Pick mode active - Click an element to select it");
   }
 
   function buildCustomizeDraftStyles() {
@@ -1647,51 +1600,7 @@
       return;
     }
     
-    if (message?.type === "WEBEDIT_ELEMENT_PICKED") {
-      lastPickedTarget = message.payload || null;
-      if (lastPickedTarget?.description) {
-        showPickReference(lastPickedTarget.description);
-      }
-      hideModeIndicator();
-      els.customizePanel?.classList.remove("visible");
-
-      const pickedTool = pendingFeaturePickMode;
-      pendingFeaturePickMode = null;
-      if (pickedTool === "remove" && lastPickedTarget?.selector) {
-        (async () => {
-          const url = await getCurrentTabUrl();
-          const resp = await sendToBrain('SAVE_BLUEPRINT', {
-            url,
-            edit: { action: 'remove', selector: lastPickedTarget.selector, payload: {} }
-          });
-          if (resp.success) {
-            showNotificationInChat(`Removed: ${lastPickedTarget.description || lastPickedTarget.selector}`);
-            loadBlueprints();
-          }
-        })();
-      } else if (pickedTool === "customize" && lastPickedTarget?.selector) {
-        (async () => {
-          const resp = await sendToActiveTab({ type: "START_CUSTOMIZE_SESSION", selector: lastPickedTarget.selector });
-          if (!resp?.response?.ok) {
-            els.customizePanel?.classList.remove("visible");
-            return;
-          }
-          customizeReviewApplied = false;
-          els.customizePanel?.classList.add("visible");
-          showNotificationInChat(`Element picked for customize: ${lastPickedTarget.description || lastPickedTarget.selector}`);
-        })();
-      } else if (pickedTool === "add" && lastPickedTarget?.selector) {
-        addChatMessage(
-          "system",
-          "Great, anchor selected. (Add flow logic removed for clean slate)"
-        );
-      }
-
-            return;
-    }
     if (message?.type === "WEBEDIT_MODE_EXITED") {
-      // Ignore stale exit events while a pick flow is actively pending.
-      if (pendingFeaturePickMode) return;
       hideModeIndicator();
       return;
     }
@@ -1726,13 +1635,13 @@
     });
 
     els.featureButtons.forEach((btn) => {
-      btn.addEventListener("click", () => startFeaturePickFlow(btn.dataset.tool));
+      btn.addEventListener("click", () => {
+        console.log("[Purge] Feature button clicked - Logic disabled for rebuild.");
+      });
     });
 
-    els.modeCloseBtn?.addEventListener("click", async () => {
+    els.modeCloseBtn?.addEventListener("click", () => {
       hideModeIndicator();
-      pendingFeaturePickMode = null;
-      await sendToActiveTab({ type: "EXIT_FEATURES" });
     });
 
     els.customizeCloseBtn?.addEventListener("click", () => {
