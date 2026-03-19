@@ -323,24 +323,6 @@
       font-weight: 600;
     }
 
-    .pick-btn {
-      border: none;
-      border-radius: 999px;
-      padding: 10px 20px;
-      font-size: 13px;
-      font-weight: 600;
-      cursor: pointer;
-      background: linear-gradient(90deg, #a78bfa, #ec4899);
-      color: white;
-      transition: transform 0.2s, box-shadow 0.2s;
-      box-shadow: 0 2px 8px rgba(167, 139, 250, 0.3);
-    }
-
-    .pick-btn:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 4px 12px rgba(167, 139, 250, 0.4);
-    }
-
     /* Chat Input Bar at Bottom */
     .input-container {
       padding: 12px 20px 20px;
@@ -399,7 +381,7 @@
     <!-- Main Content Area -->
     <div class="main-content">
       <div class="chat-placeholder">
-        <p>Select a tool from Visual Edit menu below to get started</p>
+        <p>Describe what you want to change to get started</p>
       </div>
     </div>
 
@@ -419,7 +401,6 @@
           <button class="tool-option" data-tool="customize">Customize</button>
         </div>
       </div>
-      <button class="pick-btn">Pick element</button>
     </div>
 
     <!-- Chat Input Bar -->
@@ -467,7 +448,6 @@
         toolOptions.forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         toolsMenu.classList.remove('visible');
-        console.log('Selected:', btn.textContent);
       });
     });
 
@@ -477,11 +457,6 @@
       btn.addEventListener('click', () => {
         console.log(btn.textContent, 'clicked');
       });
-    });
-
-    const pickBtn = document.querySelector('.pick-btn');
-    pickBtn.addEventListener('click', () => {
-      console.log('Pick element mode activated');
     });
 
     const chatInput = document.querySelector('.chat-input');

@@ -1,12 +1,10 @@
-// WebEdit AI Side Panel UI (Chrome Side Panel)
-// Implements the full panel UI and relays actions to the active tab content script.
+// WebEdit AI Side Panel UI
+// The Remove, Customize, and Add buttons are visual-only.
 
 (() => {
   const els = {
-    chatPanel: document.getElementById("webedit-chat-panel"),
     headerHamburger: document.getElementById("webedit-header-hamburger"),
     homeBtn: document.getElementById("webedit-home-btn"),
-    editHistoryBtn: document.getElementById("webedit-edit-history-btn"),
     signinBtn: document.getElementById("webedit-signin-btn"),
     authGuard: document.getElementById("webedit-auth-guard"),
     authGuardTitle: document.getElementById("webedit-auth-guard-title"),
@@ -15,43 +13,10 @@
     historySidebar: document.getElementById("webedit-history-sidebar"),
     historyList: document.getElementById("webedit-history-list"),
     newChatBtn: document.getElementById("webedit-new-chat-btn"),
-    mainContent: document.querySelector(".webedit-main-content"),
-    blueprintList: document.getElementById("webedit-blueprint-list"),
-    chatMessages: document.getElementById("webedit-chat-messages"),
-    referencesContainer: document.getElementById("webedit-references-container"),
-    editHistoryView: document.getElementById("webedit-edit-history-view"),
-    historyDomainList: document.getElementById("webedit-history-domain-list"),
-    historyCategoryTabs: document.getElementById("webedit-history-category-tabs"),
-    historyCategoryTabButtons: Array.from(document.querySelectorAll(".webedit-history-category-tab")),
-    historyCardList: document.getElementById("webedit-history-card-list"),
     featureButtons: Array.from(document.querySelectorAll(".webedit-feature-btn")),
-    removeBtn: document.getElementById("webedit-remove-btn"),
-    addBtn: document.getElementById("webedit-add-btn"),
-    customizeBtn: document.getElementById("webedit-customize-btn"),
-    bottomControls: document.querySelector(".webedit-bottom-controls"),
-    modeIndicator: document.getElementById("webedit-mode-indicator"),
-    modeText: document.getElementById("webedit-mode-text"),
-    modeCloseBtn: document.getElementById("webedit-mode-close-btn"),
-    customizePanel: document.getElementById("webedit-customize-panel"),
-    customizeCloseBtn: document.getElementById("webedit-customize-close-btn"),
-    applyBtn: document.getElementById("webedit-apply-btn"),
-    resetBtn: document.getElementById("webedit-reset-btn"),
-    reviewBtn: document.getElementById("webedit-review-btn"),
-    bgColorInput: document.getElementById("webedit-bg-color"),
-    textColorInput: document.getElementById("webedit-text-color"),
-    fontSizeInput: document.getElementById("webedit-font-size"),
-    widthValueInput: document.getElementById("webedit-width-value"),
-    widthUnitSelect: document.getElementById("webedit-width-unit"),
-    heightValueInput: document.getElementById("webedit-height-value"),
-    heightUnitSelect: document.getElementById("webedit-height-unit"),
-    scaleInput: document.getElementById("webedit-scale-input"),
-    scaleValue: document.getElementById("webedit-scale-value"),
-    moveUpBtn: document.getElementById("webedit-move-up-btn"),
-    moveDownBtn: document.getElementById("webedit-move-down-btn"),
-    alignBtns: Array.from(document.querySelectorAll(".webedit-align-btn")),
+    chatMessages: document.getElementById("webedit-chat-messages"),
     chatInput: document.getElementById("webedit-chat-input"),
-    sendBtn: document.getElementById("webedit-send-btn"),
-    inputContainer: document.getElementById("webedit-input-container")
+    sendBtn: document.getElementById("webedit-send-btn")
   };
 
   const CHAT_HISTORY_KEY = "webedit-sidepanel-chat-history-v1";
@@ -63,11 +28,6 @@
     UNAUTHENTICATED: "unauthenticated",
     AUTHENTICATED: "authenticated"
   };
-  const PANEL_VIEWS = {
-    CHAT: "chat",
-    EDIT_HISTORY: "editHistory"
-  };
-  const HISTORY_CATEGORIES = ["remove", "customize", "add"];
 
   let authState = AUTH_STATES.UNAUTHENTICATED;
   let signedInUser = null;
@@ -75,379 +35,8 @@
   let lastUserId = null;
   let currentSessionId = null;
   let chatMessages = [];
-  let currentPanelView = PANEL_VIEWS.CHAT;
-  let editHistoryItems = [];
-  let selectedHistoryDomain = "";
-  let selectedHistoryCategory = "remove";
   let activeHistoryRenameForm = null;
-  let currentTool = "add";
-  let pendingPreviewRefine = null;
-  let pendingComplexDecomposition = null;
-  let pendingDecompositionExecution = null;
-  let pendingAiAnchorRequest = null;
-  
-  let customizeReviewApplied = false;
-  let lastPickedTarget = null; // { selector, description }
-
-  // ─── Brain Communication Helpers ─────────────────────────────────────────────
-
-  async function getCurrentTabUrl() {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    return tab?.url || '';
-  }
-
-  async function sendToBrain(type, payload = {}) {
-    try {
-      const response = await chrome.runtime.sendMessage({ type, ...payload });
-      return response || { success: false, error: 'No response' };
-    } catch (err) {
-      console.error('[Panel] sendToBrain error:', err);
-      return { success: false, error: err.message };
-    }
-  }
-
-  function getMockHistoryData() {
-    return [
-      {
-        editId: "edit_youtube_remove_nav_ads",
-        domain: "youtube.com",
-        category: "remove",
-        title: "Hide side ads",
-        description: "Removed the sponsored ad rail and promoted recommendation modules from the homepage sidebar so browsing feels calmer and the main video feed stays focused on organic content.",
-        status: "active"
-      },
-      {
-        editId: "edit_youtube_customize_player_theme",
-        domain: "youtube.com",
-        category: "customize",
-        title: "Darken player card",
-        description: "Customized the video player container with a deeper charcoal background, softer borders, and slightly larger metadata spacing so the watch page feels cleaner and easier to scan during long sessions.",
-        status: "inactive"
-      },
-      {
-        editId: "edit_twitter_add_quick_summary",
-        domain: "twitter.com",
-        category: "add",
-        title: "Thread summary box",
-        description: "Added a generated summary panel above long threads that groups the main points into a short overview, making fast catch-up easier before reading the full conversation.",
-        status: "active"
-      },
-      {
-        editId: "edit_notion_customize_callouts",
-        domain: "notion.so",
-        category: "customize",
-        title: "Calmer callouts",
-        description: "Updated callout blocks with muted blue backgrounds, a slightly smaller icon scale, and more generous padding so highlighted notes are still noticeable without overpowering the page.",
-        status: "active"
-      },
-      {
-        editId: "edit_amazon_remove_buy_now",
-        domain: "amazon.com",
-        category: "remove",
-        title: "Hide buy now",
-        description: "Removed the high-pressure Buy Now shortcut and several urgency prompts from product pages so purchase decisions feel less rushed and the layout is easier to review deliberately.",
-        status: "inactive"
-      },
-      {
-        editId: "edit_github_add_review_panel",
-        domain: "github.com",
-        category: "add",
-        title: "PR checklist panel",
-        description: "Added a compact generated checklist beside pull request conversations with testing, risk, and rollout reminders so reviews stay consistent across repositories.",
-        status: "active"
-      }
-    ];
-  }
-
-  function getHistoryDomains() {
-    return Array.from(new Set(editHistoryItems.map((item) => item.domain)));
-  }
-
-  function ensureHistorySelections() {
-    const domains = getHistoryDomains();
-    if (!domains.includes(selectedHistoryDomain)) {
-      selectedHistoryDomain = domains[0] || "";
-    }
-    if (!HISTORY_CATEGORIES.includes(selectedHistoryCategory)) {
-      selectedHistoryCategory = HISTORY_CATEGORIES[0];
-    }
-  }
-
-  function getFilteredHistoryItems() {
-    return editHistoryItems.filter((item) => {
-      return item.domain === selectedHistoryDomain && item.category === selectedHistoryCategory;
-    });
-  }
-
-  function renderHistoryDomains() {
-    if (!els.historyDomainList) return;
-    ensureHistorySelections();
-    els.historyDomainList.innerHTML = "";
-
-    getHistoryDomains().forEach((domain) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "webedit-domain-chip";
-      button.dataset.domain = domain;
-      button.setAttribute("role", "tab");
-      button.setAttribute("aria-selected", String(domain === selectedHistoryDomain));
-      button.classList.toggle("active", domain === selectedHistoryDomain);
-      button.textContent = domain;
-      button.addEventListener("click", () => {
-        selectedHistoryDomain = domain;
-        renderEditHistoryView();
-      });
-      els.historyDomainList.appendChild(button);
-    });
-  }
-
-  function renderHistoryCategoryTabs() {
-    els.historyCategoryTabButtons.forEach((button) => {
-      const isActive = button.dataset.category === selectedHistoryCategory;
-      button.classList.toggle("active", isActive);
-      button.setAttribute("aria-selected", String(isActive));
-      button.setAttribute("tabindex", isActive ? "0" : "-1");
-    });
-  }
-
-  function createHistoryStatusButton(item) {
-    const button = document.createElement("button");
-    const isActive = item.status === "active";
-    button.type = "button";
-    button.className = "webedit-history-status-btn";
-    button.classList.toggle("is-undone", !isActive);
-    button.textContent = isActive ? "Undo" : "Redo";
-    button.setAttribute("aria-pressed", String(!isActive));
-    button.addEventListener("click", async () => {
-      const nextStatus = isActive ? "inactive" : "active";
-      editHistoryItems = editHistoryItems.map((historyItem) => {
-        if (historyItem.editId !== item.editId) return historyItem;
-        return { ...historyItem, status: nextStatus };
-      });
-      renderEditHistoryView();
-      const response = await sendToBrain("TOGGLE_STATUS", { editId: item.editId });
-      if (!response?.success) {
-        console.warn("[SidePanel] Failed to toggle mock history item:", item.editId, response?.error || "unknown error");
-      }
-    });
-    return button;
-  }
-
-  function renderHistoryCards() {
-    if (!els.historyCardList) return;
-    const filteredItems = getFilteredHistoryItems();
-    els.historyCardList.innerHTML = "";
-
-    if (filteredItems.length === 0) {
-      const emptyState = document.createElement("div");
-      emptyState.className = "webedit-history-empty-state";
-      emptyState.textContent = "No edits in this category for the selected website yet.";
-      els.historyCardList.appendChild(emptyState);
-      return;
-    }
-
-    filteredItems.forEach((item) => {
-      const card = document.createElement("article");
-      card.className = `webedit-history-card webedit-history-card-${item.category}`;
-
-      const topRow = document.createElement("div");
-      topRow.className = "webedit-history-card-top";
-
-      const textBlock = document.createElement("div");
-      textBlock.className = "webedit-history-card-text";
-
-      const title = document.createElement("h3");
-      title.className = "webedit-history-card-title";
-      title.textContent = item.title;
-      textBlock.appendChild(title);
-
-      const description = document.createElement("p");
-      description.className = "webedit-history-card-description";
-      description.textContent = item.description;
-      textBlock.appendChild(description);
-
-      topRow.appendChild(textBlock);
-      topRow.appendChild(createHistoryStatusButton(item));
-      card.appendChild(topRow);
-
-      if (item.category === "customize") {
-        const preview = document.createElement("div");
-        preview.className = "webedit-history-preview-placeholder";
-        preview.innerHTML = `
-          <div class="webedit-history-preview-pane">Before</div>
-          <div class="webedit-history-preview-pane">After</div>
-        `;
-        card.appendChild(preview);
-      }
-
-      els.historyCardList.appendChild(card);
-    });
-  }
-
-  function renderEditHistoryView() {
-    ensureHistorySelections();
-    renderHistoryDomains();
-    renderHistoryCategoryTabs();
-    renderHistoryCards();
-  }
-
-  function setPanelView(view) {
-    currentPanelView = view === PANEL_VIEWS.EDIT_HISTORY ? PANEL_VIEWS.EDIT_HISTORY : PANEL_VIEWS.CHAT;
-    const isEditHistory = currentPanelView === PANEL_VIEWS.EDIT_HISTORY;
-
-    els.chatPanel?.classList.toggle("webedit-view-edit-history", isEditHistory);
-    els.editHistoryView?.classList.toggle("hidden", !isEditHistory);
-    els.blueprintList?.classList.toggle("hidden", isEditHistory);
-    els.chatMessages?.classList.toggle("hidden", isEditHistory);
-    els.referencesContainer?.classList.toggle("hidden", isEditHistory);
-    els.bottomControls?.classList.toggle("hidden", isEditHistory);
-    els.inputContainer?.classList.toggle("hidden", isEditHistory);
-    els.editHistoryBtn?.classList.toggle("active", isEditHistory);
-    els.homeBtn?.classList.toggle("active", !isEditHistory);
-
-    if (isEditHistory) {
-      toggleHistorySidebar(false);
-      renderEditHistoryView();
-    }
-  }
-
-  // ─── Blueprint List Rendering ────────────────────────────────────────────────
-
-  async function renderBlueprintList(blueprints) {
-    const container = document.getElementById('webedit-blueprint-list');
-    if (!container) return;
-    container.innerHTML = '';
-
-    if (!Array.isArray(blueprints) || blueprints.length === 0) {
-      container.innerHTML = '<div class="webedit-blueprint-empty">No active edits</div>';
-      return;
-    }
-
-    const url = await getCurrentTabUrl();
-
-    blueprints.forEach((bp) => {
-      const item = document.createElement('div');
-      item.className = 'webedit-blueprint-item';
-
-      const label = document.createElement('span');
-      label.className = 'webedit-blueprint-label';
-      label.textContent = `[${bp.action}] ${bp.selector.length > 30 ? bp.selector.slice(0, 27) + '...' : bp.selector}`;
-      item.appendChild(label);
-
-      const toggleBtn = document.createElement('button');
-      toggleBtn.className = 'webedit-blueprint-toggle';
-      toggleBtn.textContent = bp.status === 'active' ? 'Disable' : 'Enable';
-      toggleBtn.addEventListener('click', async () => {
-        const resp = await sendToBrain('TOGGLE_STATUS', { url, editId: bp.editId });
-        if (resp.success) {
-          loadBlueprints();
-        }
-      });
-      item.appendChild(toggleBtn);
-
-      container.appendChild(item);
-    });
-  }
-
-  async function loadBlueprints() {
-    const url = await getCurrentTabUrl();
-    if (!url) return;
-    const resp = await sendToBrain('GET_ACTIVE_BLUEPRINTS', { url });
-    if (resp.success) {
-      renderBlueprintList(resp.blueprints);
-    }
-  }
-
-  // ────────────────────────────────────────────────────────────────────────────
-        
-  function ensureFeatureControlsLayout() {
-    const legacySelectors = [
-      ".webedit-visual-edit",
-      ".webedit-tool-label",
-      ".webedit-hamburger-btn",
-      ".webedit-tools-menu",
-      ".webedit-tool-btn",
-      ".webedit-pick-btn-bottom",
-      ".pick-btn",
-      ".tool-label"
-    ];
-    legacySelectors.forEach((selector) => {
-      document.querySelectorAll(selector).forEach((node) => {
-        try { node.remove(); } catch (_) {}
-      });
-    });
-
-    const bottomControls = document.querySelector(".webedit-bottom-controls");
-    if (!bottomControls) return;
-
-    let controls = bottomControls.querySelector(".webedit-feature-controls");
-    if (!controls) {
-      controls = document.createElement("div");
-      controls.className = "webedit-feature-controls";
-      bottomControls.prepend(controls);
-    }
-
-    const buttonDefs = [
-      { id: "webedit-remove-btn", tool: "remove", label: "Remove" },
-      { id: "webedit-add-btn", tool: "add", label: "Add" },
-      { id: "webedit-customize-btn", tool: "customize", label: "Customize" }
-    ];
-
-    buttonDefs.forEach((def) => {
-      let btn = controls.querySelector(`#${def.id}`);
-      if (!btn) {
-        btn = document.createElement("button");
-        btn.id = def.id;
-        controls.appendChild(btn);
-      }
-      btn.type = "button";
-      btn.className = "webedit-feature-btn";
-      btn.dataset.tool = def.tool;
-      btn.textContent = def.label;
-    });
-
-    const orderedButtons = buttonDefs
-      .map((def) => controls.querySelector(`#${def.id}`))
-      .filter(Boolean);
-    controls.innerHTML = "";
-    orderedButtons.forEach((btn) => controls.appendChild(btn));
-
-    els.featureButtons = orderedButtons;
-    els.removeBtn = controls.querySelector("#webedit-remove-btn");
-    els.addBtn = controls.querySelector("#webedit-add-btn");
-    els.customizeBtn = controls.querySelector("#webedit-customize-btn");
-  }
-
-  // References shown after picking an element should be ephemeral.
-  const PICK_REFERENCE_TTL_MS = 8000;
-  let pickReferenceDismissTimeout = null;
-
-  function clearPickReferences(options = {}) {
-    const shouldPersist = options.persist === true;
-    if (pickReferenceDismissTimeout) {
-      clearTimeout(pickReferenceDismissTimeout);
-      pickReferenceDismissTimeout = null;
-    }
-    const beforeCount = chatMessages.length;
-    chatMessages = chatMessages.filter((m) => m.type !== "reference");
-    if (chatMessages.length !== beforeCount) {
-      renderChatMessages();
-      if (shouldPersist) {
-        saveChatHistory();
-      }
-    }
-  }
-
-  function showPickReference(description) {
-    if (!description) return;
-    // Remove old references immediately so only one shows at a time.
-    clearPickReferences({ persist: false });
-    addChatMessage("reference", `Reference: ${description}`);
-    // Auto-dismiss so reference never lingers.
-    pickReferenceDismissTimeout = setTimeout(() => {
-      clearPickReferences({ persist: true });
-    }, PICK_REFERENCE_TTL_MS);
-  }
+  let selectedFeature = "remove";
 
   function escapeHtml(str = "") {
     return String(str)
@@ -472,166 +61,6 @@
     return getScopedKey(CURRENT_SESSION_KEY);
   }
 
-  async function sendToActiveTab(payload) {
-    const commandType = String(payload?.type || "");
-    const stateChangingCommands = new Set([
-      "COMMIT_FEATURE_SPEC",
-      "COMMIT_FEATURE",
-      "APPLY_STYLES",
-      "REMOVE_ELEMENT",
-      "UNDO_LAST",
-      "REDO_LAST",
-      "UNDO_BY_ID",
-      "RESET_STYLES"
-    ]);
-    const shouldUseStrongAuthRefresh = stateChangingCommands.has(commandType);
-
-    if (!isAuthenticated()) {
-      await refreshAuthorization({ forceRefresh: shouldUseStrongAuthRefresh });
-      if (!isAuthenticated()) {
-        return { ok: false, stage: "auth", error: "Not authorized" };
-      }
-    }
-    try {
-      let resp = await chrome.runtime.sendMessage({
-        type: "WEBEDIT_SIDEPANEL_COMMAND",
-        payload
-      });
-      const responseError = String(resp?.response?.error || "").toLowerCase();
-      const directError = String(resp?.error || "").toLowerCase();
-      const isAuthError =
-        responseError.includes("not authorized") ||
-        directError.includes("not authorized");
-      if (isAuthError) {
-        await refreshAuthorization({ forceRefresh: true });
-        if (isAuthenticated()) {
-          // One retry after auth refresh for transient session desync.
-          resp = await chrome.runtime.sendMessage({
-            type: "WEBEDIT_SIDEPANEL_COMMAND",
-            payload
-          });
-        }
-      }
-      if (!resp?.ok) {
-        const errorText = String(resp?.error || "unknown");
-        const isTransientRuntimeIssue =
-          errorText.includes("Page is still initializing") ||
-          errorText.includes("Receiving end does not exist");
-        if (isTransientRuntimeIssue) {
-          // One light client-side retry to smooth SW/content-script startup races.
-          await new Promise((resolve) => setTimeout(resolve, 260));
-          const retryResp = await chrome.runtime.sendMessage({
-            type: "WEBEDIT_SIDEPANEL_COMMAND",
-            payload
-          });
-          if (retryResp?.ok) {
-            resp = retryResp;
-          }
-        }
-      }
-      if (!resp?.ok) {
-        const errorText = String(resp?.error || "unknown");
-        const isTabContextIssue =
-          errorText.includes("No active tab found") ||
-          errorText.includes("Authentication in progress on webeditai.com") ||
-          errorText.includes("You're currently on webeditai.com") ||
-          errorText.includes("Page is still initializing");
-        if (isTabContextIssue) {
-          showNotificationInChat(errorText);
-        } else {
-          showNotificationInChat(`Error talking to page: ${errorText}`);
-        }
-      }
-      if (resp?.ok && resp?.response && resp.response.ok === false) {
-        showNotificationInChat(`Page error: ${resp.response.error || "unknown"}`);
-      }
-      return resp;
-    } catch (error) {
-      showNotificationInChat(`Error talking to page: ${error?.message || String(error)}`);
-      return { ok: false, error: error?.message || String(error) };
-    }
-  }
-
-  function formatStageError(resp, fallback = "Operation failed") {
-    const stage = resp?.response?.stage || resp?.stage || "";
-    const detail = resp?.response?.error || resp?.error || fallback;
-    if (!stage) return detail;
-    const labels = {
-      auth: "authorization required",
-      parse: "parse failure",
-      capability: "capability mismatch",
-      generation: "generation failed",
-      complexity: "complexity gate",
-      decomposition: "decomposition needed",
-      generation_quality_failed: "generation quality failed",
-      validation: "behavior tests failed",
-      apply: "apply migration failed"
-    };
-    return `${labels[stage] || stage}: ${detail}`;
-  }
-
-  async function handlePreviewApply(previewId) {
-    if (!requireAuth("apply features")) return;
-    const msgIndex = chatMessages.findIndex(m => m.type === "preview" && m.content?.previewId === previewId);
-    if (msgIndex !== -1) {
-      chatMessages.splice(msgIndex, 1);
-    }
-    const thinking = addChatMessage("assistant", "Applying feature...");
-    const resp = await sendToActiveTab({ type: "COMMIT_FEATURE_SPEC", previewId });
-    if (resp?.response?.ok) {
-      thinking.content = "✅ Applied successfully!";
-    } else {
-      thinking.content = `❌ Apply failed: ${resp?.response?.error || "unknown"}`;
-    }
-    renderChatMessages();
-    saveChatHistory();
-  }
-
-  async function handlePreviewUndo(previewId) {
-    const msgIndex = chatMessages.findIndex(m => m.type === "preview" && m.content?.previewId === previewId);
-    if (msgIndex !== -1) chatMessages.splice(msgIndex, 1);
-    addChatMessage("system", "Preview discarded.");
-    await sendToActiveTab({ type: "UNDO_FEATURE", previewId });
-    renderChatMessages();
-    saveChatHistory();
-  }
-
-  async function handlePreviewRefine(previewId) {
-    const msg = chatMessages.find(m => m.type === "preview" && m.content?.previewId === previewId);
-    if (!msg) return;
-    pendingPreviewRefine = {
-      previewId,
-      spec: msg.content.spec,
-      mode: "spec"
-    };
-    addChatMessage("system", "How should I change this feature? Type your request below.");
-  }
-
-  async function handlePreviewReopen(previewId) {
-    const msg = chatMessages.find(m => m.type === "preview" && m.content?.previewId === previewId);
-    if (!msg) return;
-    addChatMessage("system", "Reopening preview...");
-    await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec: msg.content.spec, previewId });
-  }
-
-  function showNotificationInChat(text) {
-    addChatMessage("system", text);
-  }
-
-  function commandSucceeded(resp) {
-    if (!resp?.ok) return false;
-    if (resp?.response && resp.response.ok === false) return false;
-    return true;
-  }
-
-  
-
-  
-
-  
-
-  
-
   function addChatMessage(type, content) {
     const msg = { type, content, timestamp: Date.now() };
     chatMessages.push(msg);
@@ -643,136 +72,50 @@
     return msg;
   }
 
-  function addPreviewMessage(content) {
-    const msg = { type: "preview", content, timestamp: Date.now() };
-    chatMessages.push(msg);
-    if (chatMessages.length > MAX_MESSAGES) {
-      chatMessages = chatMessages.slice(-MAX_MESSAGES);
-    }
-    renderChatMessages();
-    saveChatHistory();
-    return msg;
+  function showNotificationInChat(text) {
+    addChatMessage("system", text);
   }
 
   function renderChatMessages() {
-    if (!els.chatMessages || !els.referencesContainer) return;
+    if (!els.chatMessages) return;
     els.chatMessages.innerHTML = "";
-    els.referencesContainer.innerHTML = "";
 
     if (chatMessages.length === 0) {
       const placeholder = document.createElement("div");
       placeholder.className = "webedit-chat-placeholder";
-      placeholder.innerHTML = "<p>Select Remove, Add, or Customize below to get started</p>";
+      placeholder.innerHTML = "<p>Describe what you want to change to get started</p>";
       els.chatMessages.appendChild(placeholder);
       return;
     }
 
-    const regular = chatMessages.filter(m => m.type !== "reference");
-    const references = chatMessages.filter(m => m.type === "reference");
-
-    regular.forEach((msg) => {
+    chatMessages.forEach((msg) => {
       const msgEl = document.createElement("div");
       msgEl.className = `webedit-chat-message webedit-chat-message-${msg.type}`;
-      if (msg.type === "preview") {
-        const data = msg.content || {};
-        const contentEl = document.createElement("div");
-        contentEl.className = "webedit-chat-message-content";
-        contentEl.textContent = `Preview: ${data.feature_type || "Feature"}`;
-        msgEl.appendChild(contentEl);
 
-        if (Array.isArray(data.warnings) && data.warnings.length > 0) {
-          const warnEl = document.createElement("div");
-          warnEl.className = "webedit-chat-message-content";
-          warnEl.textContent = `Warnings: ${data.warnings.join("; ")}`;
-          msgEl.appendChild(warnEl);
-        }
+      const contentEl = document.createElement("div");
+      contentEl.className = "webedit-chat-message-content";
+      contentEl.textContent = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content || "");
+      msgEl.appendChild(contentEl);
 
-        const actions = document.createElement("div");
-        actions.className = "webedit-preview-actions";
-        const applyBtn = document.createElement("button");
-        applyBtn.className = "webedit-btn-small webedit-btn-primary";
-        applyBtn.textContent = "Apply";
-        applyBtn.addEventListener("click", () => handlePreviewApply(data.previewId));
-        const undoBtn = document.createElement("button");
-        undoBtn.className = "webedit-btn-small webedit-btn-secondary";
-        undoBtn.textContent = "Undo";
-        undoBtn.addEventListener("click", () => handlePreviewUndo(data.previewId));
-        const refineBtn = document.createElement("button");
-        refineBtn.className = "webedit-btn-small webedit-btn-secondary";
-        refineBtn.textContent = "Refine";
-        refineBtn.addEventListener("click", () => handlePreviewRefine(data.previewId));
-        const reopenBtn = document.createElement("button");
-        reopenBtn.className = "webedit-btn-small webedit-btn-secondary";
-        reopenBtn.textContent = "Reopen";
-        reopenBtn.addEventListener("click", () => handlePreviewReopen(data.previewId));
-        actions.appendChild(applyBtn);
-        actions.appendChild(undoBtn);
-        actions.appendChild(refineBtn);
-        actions.appendChild(reopenBtn);
-        msgEl.appendChild(actions);
-      } else if (msg.type === "decomposition") {
-        const data = msg.content || {};
-        const titleEl = document.createElement("div");
-        titleEl.className = "webedit-chat-message-content";
-        titleEl.textContent = "Choose the first step to implement:";
-        msgEl.appendChild(titleEl);
-
-        const steps = Array.isArray(data.steps) ? data.steps : [];
-        const listEl = document.createElement("div");
-        listEl.className = "webedit-chat-message-content";
-        listEl.textContent = steps.map((step, index) => `${index + 1}. ${String(step?.title || "").trim()}`).join("\n");
-        msgEl.appendChild(listEl);
-
-        const actions = document.createElement("div");
-        actions.className = "webedit-preview-actions";
-        steps.forEach((_, index) => {
-          const stepBtn = document.createElement("button");
-          stepBtn.className = "webedit-btn-small webedit-btn-secondary";
-          stepBtn.textContent = `Step ${index + 1}`;
-          stepBtn.addEventListener("click", () => handleSend(String(index + 1)));
-          actions.appendChild(stepBtn);
-        });
-        msgEl.appendChild(actions);
-      } else {
-        const contentEl = document.createElement("div");
-        contentEl.className = "webedit-chat-message-content";
-        contentEl.textContent = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content || "");
-        msgEl.appendChild(contentEl);
-      }
       els.chatMessages.appendChild(msgEl);
-    });
-
-    references.forEach((msg) => {
-      const msgEl = document.createElement("div");
-      msgEl.className = `webedit-chat-message webedit-chat-message-${msg.type}`;
-      const content = msg.content || "";
-      const labelEl = document.createElement("span");
-      labelEl.className = "webedit-reference-label";
-      labelEl.textContent = "Reference:";
-      const textEl = document.createElement("div");
-      textEl.className = "webedit-reference-text";
-      textEl.textContent = content.startsWith("Reference:") ? content.substring(10).trim() : content;
-      msgEl.appendChild(labelEl);
-      msgEl.appendChild(textEl);
-      els.referencesContainer.appendChild(msgEl);
     });
 
     els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
   }
 
   function getDefaultSessionTitle(messages = []) {
-    const firstUser = messages.find(m => m.type === "user" && m.content && m.content.trim());
+    const firstUser = messages.find((m) => m.type === "user" && m.content && String(m.content).trim());
     if (firstUser) {
-      const t = firstUser.content.trim();
-      return t.length > 40 ? `${t.substring(0, 37)}...` : t;
+      const title = String(firstUser.content).trim();
+      return title.length > 40 ? `${title.substring(0, 37)}...` : title;
     }
     return "New chat";
   }
 
   function getSessionDisplayName(session) {
-    const title = session?.title && session.title.trim();
+    const title = session?.title && String(session.title).trim();
     if (title) return title;
-    const preview = session?.preview && session.preview.trim();
+    const preview = session?.preview && String(session.preview).trim();
     if (preview) return preview.length > 60 ? `${preview.substring(0, 57)}...` : preview;
     return "Untitled chat";
   }
@@ -783,11 +126,28 @@
         if (activeHistoryRenameForm.parentNode.contains(activeHistoryRenameForm)) {
           activeHistoryRenameForm.parentNode.removeChild(activeHistoryRenameForm);
         }
-      } catch (e) {
-        // ignore removal errors (e.g. node already removed)
-      }
+      } catch (_) {}
     }
     activeHistoryRenameForm = null;
+  }
+
+  function renameChatSession(sessionId, newName) {
+    const key = getHistoryStorageKey();
+    if (!key) return false;
+    try {
+      chrome.storage.local.get([key], (result) => {
+        const history = Array.isArray(result[key]) ? result[key] : [];
+        const session = history.find((entry) => entry.id === sessionId);
+        if (!session) return;
+        const trimmed = (newName || "").trim();
+        session.title = trimmed || getDefaultSessionTitle(session.messages || []);
+        chrome.storage.local.set({ [key]: history }, () => renderHistoryList(history));
+      });
+      return true;
+    } catch (error) {
+      console.error("[SidePanel] rename failed:", error);
+      return false;
+    }
   }
 
   function openHistoryRenameInput(session, hostEl) {
@@ -829,17 +189,23 @@
       renderHistoryList();
     };
 
-    form.addEventListener("click", (e) => e.stopPropagation());
-    form.addEventListener("submit", (e) => { e.preventDefault(); commit(true); });
-    cancelBtn.addEventListener("click", (e) => { e.preventDefault(); commit(false); });
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
+    form.addEventListener("click", (event) => event.stopPropagation());
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      commit(true);
+    });
+    cancelBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      commit(false);
+    });
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
         commit(false);
       }
     });
-    input.addEventListener("blur", (e) => {
-      if (e.relatedTarget === saveBtn || e.relatedTarget === cancelBtn) return;
+    input.addEventListener("blur", (event) => {
+      if (event.relatedTarget === saveBtn || event.relatedTarget === cancelBtn) return;
       commit(true);
     });
 
@@ -849,30 +215,10 @@
     input.select();
   }
 
-  function renameChatSession(sessionId, newName) {
-    const key = getHistoryStorageKey();
-    if (!key) return false;
-    try {
-      chrome.storage.local.get([key], (result) => {
-        const history = Array.isArray(result[key]) ? result[key] : [];
-        const s = history.find(x => x.id === sessionId);
-        if (!s) return;
-        const trimmed = (newName || "").trim();
-        s.title = trimmed || getDefaultSessionTitle(s.messages || []);
-        chrome.storage.local.set({ [key]: history }, () => renderHistoryList(history));
-      });
-      return true;
-    } catch (e) {
-      console.error("[SidePanel] rename failed:", e);
-      return false;
-    }
-  }
-
   function renderHistoryList(historyData = null) {
     if (!els.historyList) return;
     if (!currentUser?.id) {
-      const msg = "Log in to view history";
-      els.historyList.innerHTML = `<div style="padding:10px; color:#9ca3af; font-size:12px; text-align:center">${msg}</div>`;
+      els.historyList.innerHTML = '<div style="padding:10px; color:#9ca3af; font-size:12px; text-align:center">Log in to view history</div>';
       return;
     }
 
@@ -914,8 +260,8 @@
         renameBtn.type = "button";
         renameBtn.setAttribute("aria-label", "Rename chat");
         renameBtn.innerHTML = "✏︎";
-        renameBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
+        renameBtn.addEventListener("click", (event) => {
+          event.stopPropagation();
           openHistoryRenameInput(session, item);
         });
         main.appendChild(renameBtn);
@@ -925,20 +271,25 @@
         deleteBtn.type = "button";
         deleteBtn.setAttribute("aria-label", "Delete chat");
         deleteBtn.innerHTML = "🗑";
-        deleteBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
+        deleteBtn.addEventListener("click", (event) => {
+          event.stopPropagation();
           deleteChatSession(session.id);
         });
         main.appendChild(deleteBtn);
 
         const dateEl = document.createElement("div");
         dateEl.className = "webedit-history-date";
-        const ts = session.timestamp || Date.now();
-        dateEl.textContent = new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+        const timestamp = session.timestamp || Date.now();
+        dateEl.textContent = new Date(timestamp).toLocaleDateString(undefined, {
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit"
+        });
 
         const previewEl = document.createElement("div");
         previewEl.className = "webedit-history-preview";
-        previewEl.textContent = session.preview || "New Chat";
+        previewEl.textContent = session.preview || "New chat";
 
         item.appendChild(main);
         item.appendChild(dateEl);
@@ -960,23 +311,24 @@
 
     chrome.storage.local.get([historyKey], (result) => {
       const history = Array.isArray(result[historyKey]) ? result[historyKey] : [];
-      const existing = history.find(s => s.id === currentSessionId);
+      const existing = history.find((entry) => entry.id === currentSessionId);
       const preservedTitle = existing?.title || null;
 
       const session = {
         id: currentSessionId,
         timestamp: Date.now(),
         messages: chatMessages,
-        preview: chatMessages.find(m => m.type === "user")?.content || "New Chat",
+        preview: chatMessages.find((message) => message.type === "user")?.content || "New chat",
         title: preservedTitle || getDefaultSessionTitle(chatMessages)
       };
 
-      const idx = history.findIndex(s => s.id === currentSessionId);
-      if (idx >= 0) {
-        history[idx] = session;
+      const index = history.findIndex((entry) => entry.id === currentSessionId);
+      if (index >= 0) {
+        history[index] = session;
       } else {
         history.unshift(session);
       }
+
       const trimmed = history.slice(0, MAX_SESSIONS);
       chrome.storage.local.set({ [historyKey]: trimmed, [sessionKey]: currentSessionId }, () => {
         renderHistoryList(trimmed);
@@ -987,13 +339,13 @@
   function loadSession(sessionId) {
     if (!currentUser?.id) return;
     closeActiveHistoryRenameForm();
-    clearPickReferences({ persist: false });
     const historyKey = getHistoryStorageKey();
     const sessionKey = getSessionStorageKey();
     if (!historyKey || !sessionKey) return;
+
     chrome.storage.local.get([historyKey], (result) => {
       const history = Array.isArray(result[historyKey]) ? result[historyKey] : [];
-      const session = history.find(s => s.id === sessionId);
+      const session = history.find((entry) => entry.id === sessionId);
       if (!session) return;
       currentSessionId = sessionId;
       chatMessages = Array.isArray(session.messages) ? session.messages : [];
@@ -1008,7 +360,6 @@
     if (!currentUser?.id) return;
     currentSessionId = Date.now().toString();
     chatMessages = [];
-    clearPickReferences({ persist: false });
     renderChatMessages();
     saveChatHistory();
   }
@@ -1038,41 +389,18 @@
     }
   }
 
-  function setFeatureControlsEnabled(enabled) {
-    const controls = [
-      els.newChatBtn,
-      els.removeBtn,
-      els.addBtn,
-      els.customizeBtn,
-      els.applyBtn,
-      els.resetBtn,
-      els.reviewBtn,
-      els.moveUpBtn,
-      els.moveDownBtn,
-      els.sendBtn,
-      els.chatInput,
-      ...els.alignBtns
-    ].filter(Boolean);
-
-    controls.forEach((el) => {
+  function setControlsEnabled(enabled) {
+    [els.newChatBtn, els.sendBtn, els.chatInput].filter(Boolean).forEach((el) => {
       if ("disabled" in el) {
         el.disabled = !enabled;
       }
       el.setAttribute("aria-disabled", enabled ? "false" : "true");
     });
-
-    if (!enabled) {
-      els.customizePanel?.classList.remove("visible");
-      hideModeIndicator();
-      customizeReviewApplied = false;
-      pendingAiAnchorRequest = null;
-      lastPickedTarget = null;
-    }
   }
 
   function applyAuthStateUI() {
     updateAuthGuardUI();
-    setFeatureControlsEnabled(isAuthenticated());
+    setControlsEnabled(isAuthenticated());
     if (isAuthenticated()) {
       renderHistoryList();
       return;
@@ -1099,8 +427,7 @@
 
     const avatar = document.createElement("div");
     avatar.className = "webedit-avatar";
-    const initial = (user?.email || "U")[0].toUpperCase();
-    avatar.textContent = initial;
+    avatar.textContent = (user?.email || "U")[0].toUpperCase();
     els.signinBtn.appendChild(avatar);
 
     const menu = document.createElement("div");
@@ -1116,66 +443,53 @@
     `;
     els.signinBtn.appendChild(menu);
 
-    avatar.addEventListener("click", (e) => {
-            e.preventDefault();
-      e.stopPropagation();
+    avatar.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
       menu.classList.toggle("visible");
     });
 
     document.addEventListener("click", () => menu.classList.remove("visible"));
-    menu.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const action = e.target?.closest(".webedit-avatar-menu-item")?.dataset?.action;
+    menu.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const action = event.target?.closest(".webedit-avatar-menu-item")?.dataset?.action;
       if (!action) return;
       menu.classList.remove("visible");
       if (action === "signout") {
-        // Requirement: sign out fully inside the extension (no website redirect) using Supabase session only.
-        // We call `supabase.auth.signOut()` in the side panel context, then clear/broadcast via background.
         Promise.resolve(window.supabase?.auth?.signOut?.())
           .catch(() => {})
           .finally(() => chrome.runtime.sendMessage({ type: "WEBEDIT_SIGN_OUT" }));
-        }
+      }
     });
-}
+  }
 
   function toggleHistorySidebar(forceState = null) {
     if (!els.historySidebar) return;
-    const willShow = forceState === null ? !els.historySidebar.classList.contains("visible") : !!forceState;
+    const willShow = forceState === null
+      ? !els.historySidebar.classList.contains("visible")
+      : !!forceState;
     els.historySidebar.classList.toggle("visible", willShow);
   }
 
   function attachHeaderEventListeners() {
     if (els.headerHamburger && els.historySidebar) {
-      els.headerHamburger.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
+      els.headerHamburger.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
         toggleHistorySidebar();
       });
 
-      document.addEventListener("click", (e) => {
+      document.addEventListener("click", (event) => {
         if (!els.historySidebar.classList.contains("visible")) return;
-        if (els.historySidebar.contains(e.target)) return;
-        if (els.headerHamburger.contains(e.target)) return;
+        if (els.historySidebar.contains(event.target)) return;
+        if (els.headerHamburger.contains(event.target)) return;
         toggleHistorySidebar(false);
       });
     }
 
     if (els.homeBtn) {
       els.homeBtn.addEventListener("click", () => {
-        if (currentPanelView !== PANEL_VIEWS.CHAT) {
-          setPanelView(PANEL_VIEWS.CHAT);
-          return;
-        }
         window.open("https://webeditai.com/", "_blank");
-      });
-    }
-
-    if (els.editHistoryBtn) {
-      els.editHistoryBtn.addEventListener("click", () => {
-        const nextView = currentPanelView === PANEL_VIEWS.EDIT_HISTORY
-          ? PANEL_VIEWS.CHAT
-          : PANEL_VIEWS.EDIT_HISTORY;
-        setPanelView(nextView);
       });
     }
   }
@@ -1183,9 +497,10 @@
   function deleteChatSession(sessionId) {
     const historyKey = getHistoryStorageKey();
     if (!historyKey) return;
+
     chrome.storage.local.get([historyKey], (result) => {
       const history = Array.isArray(result[historyKey]) ? result[historyKey] : [];
-      const next = history.filter(s => s.id !== sessionId);
+      const next = history.filter((entry) => entry.id !== sessionId);
       chrome.storage.local.set({ [historyKey]: next }, () => {
         if (currentSessionId === sessionId) {
           currentSessionId = null;
@@ -1232,7 +547,6 @@
 
     const nextUserId = signedInUser?.id || null;
     if (nextUserId !== lastUserId) {
-      console.log(`[SidePanel Auth] user changed: ${lastUserId || "none"} -> ${nextUserId || "none"}`);
       lastUserId = nextUserId;
       currentSessionId = null;
       chatMessages = [];
@@ -1246,493 +560,60 @@
     applyAuthStateUI();
   }
 
-  function setActiveTool(tool) {
-    currentTool = tool;
-    els.featureButtons.forEach((btn) => {
-      btn.classList.toggle("active", btn.dataset.tool === tool);
+  function setSelectedFeature(tool) {
+    selectedFeature = tool;
+    els.featureButtons.forEach((button) => {
+      button.classList.toggle("active", button.dataset.tool === tool);
     });
   }
 
-  function showModeIndicator(text) {
-    if (!els.modeIndicator || !els.modeText) return;
-    els.modeText.textContent = text;
-    els.modeIndicator.classList.remove("hidden");
-  }
-
-  function hideModeIndicator() {
-    if (!els.modeIndicator) return;
-    els.modeIndicator.classList.add("hidden");
-  }
-
-  function buildCustomizeDraftStyles() {
-    const widthValue = (els.widthValueInput?.value || "").trim();
-    const widthUnit = els.widthUnitSelect?.value || "px";
-    const heightValue = (els.heightValueInput?.value || "").trim();
-    const heightUnit = els.heightUnitSelect?.value || "px";
-    const scalePct = Number(els.scaleInput?.value || 100);
-    const scale = Number.isFinite(scalePct) ? Math.max(0.1, scalePct / 100) : 1;
-
-    return {
-      backgroundColor: els.bgColorInput?.value || "#ffffff",
-      color: els.textColorInput?.value || "#000000",
-      fontSize: (els.fontSizeInput?.value || "16") + "px",
-      ...(widthValue ? { width: `${widthValue}${widthUnit}` } : {}),
-      ...(heightValue ? { height: `${heightValue}${heightUnit}` } : {}),
-      ...(scale !== 1 ? { transform: `scale(${scale})`, transformOrigin: "center" } : {})
-    };
-  }
-
-  async function reviewCustomize() {
-    if (!requireAuth("review customizations")) return;
-    if (!lastPickedTarget?.selector) {
-      showNotificationInChat("Pick an element first.");
-      return;
-    }
-    const styles = buildCustomizeDraftStyles();
-    const resp = await sendToActiveTab({ type: "PREVIEW_STYLES", selector: lastPickedTarget.selector, styles });
-    if (resp?.response?.ok) {
-      showNotificationInChat("Preview updated. Apply to save permanently.");
-      customizeReviewApplied = false;
-    }
-  }
-
-  async function applyCustomize() {
-    if (!requireAuth("apply customizations")) return;
-    if (!lastPickedTarget?.selector) {
-      showNotificationInChat("Pick an element first.");
-      return;
-    }
-    const styles = buildCustomizeDraftStyles();
-    const resp = await sendToActiveTab({ type: "APPLY_STYLES", selector: lastPickedTarget.selector, styles });
-    if (resp?.response?.ok) {
-      customizeReviewApplied = true;
-      showNotificationInChat("Customization applied and saved.");
-    }
-  }
-
-  async function resetCustomize() {
-    if (!requireAuth("reset customizations")) return;
-    if (!lastPickedTarget?.selector) return;
-    const resetType = customizeReviewApplied ? "RESET_STYLES" : "RESET_PREVIEW_STYLES";
-    await sendToActiveTab({ type: resetType, selector: lastPickedTarget.selector });
-    if (els.widthValueInput) els.widthValueInput.value = "";
-    if (els.heightValueInput) els.heightValueInput.value = "";
-    if (els.scaleInput) els.scaleInput.value = "100";
-    if (els.scaleValue) els.scaleValue.textContent = "100%";
-    customizeReviewApplied = false;
-    showNotificationInChat("Element reset to original state.");
-  }
-
-  async function handleSend(textOverride = null) {
-    const text = (typeof textOverride === "string" ? textOverride : (els.chatInput?.value || "")).trim();
+  function handleSend() {
+    const text = (els.chatInput?.value || "").trim();
     if (!text) return;
     if (!requireAuth("use WebEdit")) return;
-    if (typeof textOverride !== "string") els.chatInput.value = "";
 
-    if (pendingComplexDecomposition) {
-      const state = pendingComplexDecomposition;
-      if (state.awaiting === "confirm") {
-        addChatMessage("user", text);
-        if (isYesText(text)) {
-          state.awaiting = "pick_step";
-          addChatMessage("assistant", "Great. Choose the first step to implement by number.");
-          addChatMessage("decomposition", { steps: state.steps });
-        } else if (isNoText(text)) {
-          pendingComplexDecomposition = null;
-          pendingDecompositionExecution = null;
-          addChatMessage("assistant", "Understood. I won't break it down now.");
-        } else {
-          addChatMessage("assistant", "Please reply yes or no.");
-        }
-        renderChatMessages();
-        saveChatHistory();
-        return;
-      }
-
-      if (state.awaiting === "pick_step") {
-        addChatMessage("user", text);
-        const parsed = parseDecompositionStepSelection(text, state.steps.length);
-        if (parsed.ambiguous) {
-          addChatMessage("assistant", `I found multiple step numbers in your pasted text. Please send only one step number (1-${state.steps.length}).`);
-          renderChatMessages();
-          saveChatHistory();
-          return;
-        }
-
-        const stepNumber = parsed.stepNumber;
-        if (Number.isInteger(stepNumber) && stepNumber >= 1 && stepNumber <= state.steps.length) {
-          const chosenStep = state.steps[stepNumber - 1] || {};
-          pendingComplexDecomposition = null;
-          pendingDecompositionExecution = {
-            id: String(chosenStep.id || `step_${stepNumber}`),
-            title: String(chosenStep.title || "").trim()
-          };
-          addChatMessage("assistant", `Implementing step ${stepNumber}: ${String(chosenStep.title || "").trim()}`);
-          
-          renderChatMessages();
-          saveChatHistory();
-          handleSend(String(chosenStep.executionPrompt || chosenStep.title || ""));
-          return;
-        }
-        addChatMessage("assistant", `Please pick a number between 1 and ${state.steps.length}.`);
-        renderChatMessages();
-        saveChatHistory();
-        return;
-      }
-    }
-
-    if (pendingPreviewRefine) {
-      const { previewId, plan, spec, mode } = pendingPreviewRefine;
-      pendingPreviewRefine = null;
-      addChatMessage("user", text);
-      const thinking = addChatMessage("assistant", "Refining preview...");
-
-      if (mode === "spec") {
-        const pageContextResp = await sendToActiveTab({ type: "GET_PAGE_CONTEXT" });
-        const pageContext = pageContextResp?.response?.pageContext || {};
-        if (lastPickedTarget && lastPickedTarget.selector) {
-          pageContext.anchorElement = lastPickedTarget;
-        }
-        if (spec) {
-          pageContext.previousSpec = spec;
-        }
-        let nextSpec = null;
-        const refineTraceId = `trace-${Date.now()}`;
-        const aiResp = window.SupabaseClient?.generateFeatureSpec
-          ? await window.SupabaseClient.generateFeatureSpec(text, pageContext)
-          : null;
-        if (!aiResp?.ok) {
-          thinking.content = `❌ ${aiResp?.error || "AI is not available right now."}`;
-          renderChatMessages();
-          saveChatHistory();
-          return;
-        }
-        nextSpec = aiResp.spec;
-
-        if (!nextSpec || nextSpec.action === "chat" || nextSpec.action === "undo" || nextSpec.action === "reveal") {
-          thinking.content = "❌ I couldn't generate a new preview for that refinement.";
-        } else {
-          // Keep Add refinements anchored to the originally picked element.
-          if (spec?.action === "add") {
-            if (nextSpec.action !== "add") {
-              thinking.content = "❌ Refinement must still describe an Add feature. Please refine with UI/workflow/goal for a new feature.";
-              renderChatMessages();
-              saveChatHistory();
-              return;
-            }
-            const anchorSelector = lastPickedTarget?.selector || spec.targetSelector || spec.selector || "";
-            if (!anchorSelector) {
-              thinking.content = "❌ I lost the selected anchor. Please pick the target section again and retry.";
-              renderChatMessages();
-              saveChatHistory();
-              return;
-            }
-            nextSpec.targetSelector = anchorSelector;
-            if (!nextSpec.selector) nextSpec.selector = anchorSelector;
-          }
-          const traceId = String(nextSpec?.metadata?.traceId || refineTraceId);
-          console.info(`[SidePanel Add][${traceId}] refine-preview-start`);
-          thinking.content = "Updating preview...";
-          renderChatMessages();
-          let previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec: nextSpec, previewId, traceId });
-          
-          if (previewResp?.response?.ok) {
-            addPreviewMessage({
-              previewId: previewResp.response.previewId,
-              feature_type: nextSpec.action,
-              warnings: nextSpec.warnings || [],
-              spec: nextSpec,
-              previewKind: "spec"
-            });
-            thinking.content = "✅ Updated preview.";
-          } else {
-            thinking.content = `❌ ${formatStageError(previewResp, "Preview failed")}`;
-          }
-        }
-        renderChatMessages();
-        saveChatHistory();
-        return;
-      }
-
-      const selector = plan?.targetSelector || lastPickedTarget?.selector || "";
-      const ctxResp = await sendToActiveTab({ type: "GET_ADD_CONTEXT", selector });
-      const context = ctxResp?.response?.context || null;
-      const planner = window.FeaturePlanner;
-      if (!planner || typeof planner.plan !== "function") {
-        thinking.content = "❌ FeaturePlanner not available.";
-        renderChatMessages();
-        saveChatHistory();
-        return;
-      }
-      const nextPlan = planner.plan(text, context);
-      nextPlan.targetSelector = selector;
-      await sendToActiveTab({ type: "UNDO_FEATURE", previewId });
-      const previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE", plan: nextPlan, previewId });
-      if (previewResp?.response?.ok) {
-        addPreviewMessage({
-          previewId: previewResp.response.previewId,
-          feature_type: nextPlan.feature_type,
-          warnings: nextPlan.warnings || [],
-          plan: nextPlan,
-          previewKind: "plan"
-        });
-        thinking.content = "✅ Updated preview.";
-      } else {
-        thinking.content = `❌ Preview failed: ${previewResp?.response?.error || "unknown error"}`;
-      }
-      renderChatMessages();
-      saveChatHistory();
-      return;
-    }
-
-    const lower = text.toLowerCase();
-    if (lower === "undo" || lower === "/undo") {
-      addChatMessage("user", text);
-      const thinking = addChatMessage("assistant", "Undoing last change...");
-      const resp = await sendToActiveTab({ type: "UNDO_LAST" });
-      thinking.content = resp?.response?.ok ? "✅ Undid the last change." : `❌ ${resp?.response?.error || "Undo failed"}`;
-      renderChatMessages();
-      saveChatHistory();
-      return;
-    }
-
-    if (lower === "redo" || lower === "/redo") {
-      addChatMessage("user", text);
-      const thinking = addChatMessage("assistant", "Redoing last change...");
-      const resp = await sendToActiveTab({ type: "REDO_LAST" });
-      thinking.content = resp?.response?.ok ? "✅ Redid the last change." : `❌ ${resp?.response?.error || "Redo failed"}`;
-      renderChatMessages();
-      saveChatHistory();
-      return;
-    }
-
-    // General chat / Conversation / Edit Commands
+    els.chatInput.value = "";
     addChatMessage("user", text);
-    const thinking = addChatMessage("assistant", "🤖 Thinking...");
-
-    try {
-      const pageContextResp = await sendToActiveTab({ type: "GET_PAGE_CONTEXT" });
-      const pageContext = pageContextResp?.response?.pageContext || {};
-
-      // Inject user-picked anchor if available (crucial for user-guided retry flow)
-      if (lastPickedTarget && lastPickedTarget.selector) {
-        pageContext.anchorElement = lastPickedTarget;
-      }
-
-      // Use generateFeatureSpec for everything - it handles both edits and chat now.
-      const aiResp = window.SupabaseClient?.generateFeatureSpec
-        ? await window.SupabaseClient.generateFeatureSpec(text, pageContext)
-        : null;
-
-      if (!aiResp?.ok) {
-        thinking.content = `❌ ${aiResp?.error || "AI is not available right now."}`;
-      } else {
-        let spec = aiResp.spec;
-        
-        if (spec.action === "chat") {
-          thinking.content = spec.content || "I couldn't generate a response.";
-        } else if (spec.action === "undo") {
-          thinking.content = "Reverting that change for you...";
-          const undoResp = await sendToActiveTab({ type: "UNDO_BY_ID", targetId: spec.targetId });
-          thinking.content = undoResp?.response?.ok ? "✅ Done! I've restored that element." : `❌ Sorry, I couldn't undo that: ${undoResp?.response?.error || "unknown error"}`;
-        } else if (spec.action === "reveal") {
-          thinking.content = "Trying to reveal hidden UI elements...";
-          const revealResp = await sendToActiveTab({ type: "REVEAL_HEADER" });
-          thinking.content = revealResp?.response?.ok
-            ? `✅ Done. Revealed ${revealResp.response.count || 0} element(s).`
-            : `❌ ${revealResp?.response?.error || "Reveal failed"}`;
-        } else {
-          if (spec.action === "add") {
-            if (lastPickedTarget?.selector) {
-              spec.targetSelector = lastPickedTarget.selector;
-              if (!spec.selector) spec.selector = lastPickedTarget.selector;
-            }
-          }
-          // It's an edit command (hide, customize, add, text)
-          thinking.content = "Generating a preview...";
-          renderChatMessages();
-          
-          const previewTraceId = String(spec?.metadata?.traceId || `trace-${Date.now()}`);
-          console.info(`[SidePanel Add][${previewTraceId}] general-preview-start action=${String(spec?.action || "unknown")}`);
-          const previewResp = await sendToActiveTab({ type: "PREVIEW_FEATURE_SPEC", spec, traceId: previewTraceId });
-          if (previewResp?.response?.ok) {
-            addPreviewMessage({
-              previewId: previewResp.response.previewId,
-              feature_type: spec.action,
-              warnings: spec.warnings || [],
-              spec,
-              previewKind: "spec"
-            });
-            thinking.content = "✅ Preview ready. Review and click Apply.";
-          } else {
-            const err = previewResp?.response?.error || "preview failed";
-            if (typeof err === "string" && err.includes("Could not find target for selector")) {
-              thinking.content = "❌ I couldn't find the exact element. Click Add, Remove, or Customize, pick an anchor, then re-send your request.";
-              pendingAiAnchorRequest = { text };
-            } else {
-              thinking.content = `❌ ${formatStageError(previewResp, `I tried to do that, but: ${err}`)}`;
-            }
-          }
-        }
-      }
-    } catch (e) {
-      thinking.content = `❌ Something went wrong: ${e?.message || String(e)}`;
-    }
-
-    renderChatMessages();
-    saveChatHistory();
+    addChatMessage(
+      "assistant",
+      `The ${selectedFeature} feature is currently unavailable. Remove, Customize, and Add are visual-only buttons right now.`
+    );
   }
 
-  // Listen to messages from background/content scripts
-  chrome.runtime.onMessage.addListener((message) => {
-    if (message?.type === "WEBEDIT_SESSION_UPDATED") {
-      refreshAuthorization();
-      return;
-    }
-    
-    if (message?.type === "WEBEDIT_TAB_EVENT") {
-      // placeholder
-      return;
-    }
-
-    if (message?.type === 'BLUEPRINTS_UPDATED') {
-      renderBlueprintList(message.blueprints || []);
-      return;
-    }
-    
-    if (message?.type === "WEBEDIT_MODE_EXITED") {
-      hideModeIndicator();
-      return;
-    }
-
-    if (message?.type === "WEBEDIT_PREVIEW_ACTION") {
-      const { action, previewId } = message.payload || {};
-      if (!previewId) return;
-      if (action === "apply") {
-        handlePreviewApply(previewId);
-      } else if (action === "refine") {
-        handlePreviewRefine(previewId);
-      } else if (action === "undo") {
-        handlePreviewUndo(previewId);
-      }
-      return;
-    }
-    if (message?.type === "WEBEDIT_MODE_STARTED") {
-      const mode = message.payload?.mode;
-      if (mode === "pick") {
-        showModeIndicator("Pick mode active - Click an element to select it");
-      } else if (mode === "remove") {
-        showModeIndicator("Remove mode active - Click an element to hide it");
-      }
-      return;
-    }
-  });
-
-  function initializeFeatureHandlers() {
+  function initializeHandlers() {
     els.newChatBtn?.addEventListener("click", () => {
       if (!requireAuth("create a chat")) return;
       startNewChat();
     });
 
-    els.featureButtons.forEach((btn) => {
-      btn.addEventListener("click", () => {
-        console.log("[Purge] Feature button clicked - Logic disabled for rebuild.");
-      });
-    });
-
-    els.modeCloseBtn?.addEventListener("click", () => {
-      hideModeIndicator();
-    });
-
-    els.customizeCloseBtn?.addEventListener("click", () => {
-      els.customizePanel?.classList.remove("visible");
-    });
-    els.reviewBtn?.addEventListener("click", reviewCustomize);
-    els.applyBtn?.addEventListener("click", applyCustomize);
-    els.resetBtn?.addEventListener("click", resetCustomize);
-
-    els.scaleInput?.addEventListener("input", () => {
-      if (els.scaleValue) {
-        els.scaleValue.textContent = `${els.scaleInput.value}%`;
-      }
-    });
-
-    els.moveUpBtn?.addEventListener("click", async () => {
-      if (!requireAuth("move elements")) return;
-      if (!lastPickedTarget?.selector) return;
-      await sendToActiveTab({ type: "MOVE_ELEMENT", selector: lastPickedTarget.selector, direction: "up" });
-      showNotificationInChat("Moved up.");
-    });
-
-    els.moveDownBtn?.addEventListener("click", async () => {
-      if (!requireAuth("move elements")) return;
-      if (!lastPickedTarget?.selector) return;
-      await sendToActiveTab({ type: "MOVE_ELEMENT", selector: lastPickedTarget.selector, direction: "down" });
-      showNotificationInChat("Moved down.");
-    });
-
-    els.alignBtns.forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        if (!requireAuth("align elements")) return;
-        if (!lastPickedTarget?.selector) return;
-        const align = btn.dataset.align;
-        await sendToActiveTab({ type: "ALIGN_ELEMENT", selector: lastPickedTarget.selector, align });
-        showNotificationInChat(`Aligned ${align}.`);
-      });
-    });
-
-    els.historyCategoryTabButtons.forEach((button) => {
-      button.addEventListener("click", () => {
-        const category = button.dataset.category;
-        if (!HISTORY_CATEGORIES.includes(category)) return;
-        selectedHistoryCategory = category;
-        renderEditHistoryView();
-      });
+    els.featureButtons.forEach((button) => {
+      button.addEventListener("click", () => setSelectedFeature(button.dataset.tool || "remove"));
     });
 
     els.sendBtn?.addEventListener("click", handleSend);
-    els.chatInput?.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
+    els.chatInput?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
         handleSend();
-      }
-    });
-
-    // Temporary Test Remove (dev tool -- wires to Brain's SAVE_BLUEPRINT)
-    const testRemoveBtn = document.getElementById('webedit-test-remove-btn');
-    const testSelectorInput = document.getElementById('webedit-test-selector');
-    testRemoveBtn?.addEventListener('click', async () => {
-      const selector = (testSelectorInput?.value || '').trim();
-      if (!selector) return;
-      const url = await getCurrentTabUrl();
-      const resp = await sendToBrain('SAVE_BLUEPRINT', {
-        url,
-        edit: { action: 'remove', selector, payload: {} }
-      });
-      if (resp.success) {
-        showNotificationInChat(`Saved remove blueprint for: ${selector}`);
-        testSelectorInput.value = '';
-        loadBlueprints();
-      } else {
-        showNotificationInChat(`Save failed: ${resp.error}`);
       }
     });
   }
 
-  // Wire UI
-  attachHeaderEventListeners();
-  els.authGuardSignin?.addEventListener("click", () => window.open("https://webeditai.com/#/signup?from=extension", "_blank"));
+  chrome.runtime.onMessage.addListener((message) => {
+    if (message?.type === "WEBEDIT_SESSION_UPDATED") {
+      refreshAuthorization();
+    }
+  });
 
-  // Init
+  attachHeaderEventListeners();
+  els.authGuardSignin?.addEventListener("click", () => {
+    window.open("https://webeditai.com/#/signup?from=extension", "_blank");
+  });
+
   (async () => {
-    ensureFeatureControlsLayout();
-    editHistoryItems = getMockHistoryData();
-    renderEditHistoryView();
+    setSelectedFeature(selectedFeature);
     await refreshAuthorization();
-    initializeFeatureHandlers();
-    setPanelView(PANEL_VIEWS.CHAT);
-    setActiveTool("add");
+    initializeHandlers();
     renderChatMessages();
-    loadBlueprints();
   })();
 })();

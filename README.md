@@ -1,15 +1,12 @@
 # WebEdit AI Chrome Extension
 
-A Chrome extension that injects an AI-powered chat panel into any webpage, allowing you to visually edit, hide, customize, or add elements through natural conversation.
+A Chrome extension that injects an AI-powered side panel into any webpage, with chat history, account syncing, and placeholder feature controls.
 
 ## 🚀 Features
 
 - **In-Page AI Chat Panel**: Sider-style right-side panel that pushes content left
-- **Natural Language Editing**: Describe what you want to change in plain English
-- **Visual Element Picker**: Hover and click to select elements with visual feedback
-- **Remove/Hide**: Click to hide any element on a webpage
-- **Customize**: Change background color, text color, and font size of elements
-- **Add**: Insert new styled elements at any location
+- **Panel Chat UI**: Keep conversation history inside the side panel
+- **Feature Buttons**: `Remove`, `Customize`, and `Add` remain visible as placeholder controls
 - **Smart AI Responses**: Context-aware suggestions based on your requests
 
 ## 📁 Project Structure
@@ -49,43 +46,25 @@ webedit-extension/
 
 ### Basic Workflow
 
-1. **Type your request** in the chat input at the bottom
-   - Examples: "I want to hide an element", "Customize the header", "Add new content"
-2. **The AI will guide you** with step-by-step instructions
-3. **Click the hamburger menu** (☰) to see the three editing tools:
-   - Remove / hide
+1. **Open the side panel** from the extension icon
+2. **Use the chat area** to keep notes and conversation history
+3. **Use the three buttons** to switch the visible placeholder state:
+   - Remove
    - Customize
    - Add
-4. **Click "Pick element"** to activate element selection
-5. **Hover and click** an element on the page to apply your chosen action
 
 ### Chat Features
 
 - **Suggestion Chips**: Quick-start actions for common tasks
-- **Smart Responses**: The AI automatically selects the right tool based on your message
+- **Smart Responses**: Supporting integrations remain in the codebase for future reconnect
 - **Conversation History**: See all your interactions in the chat thread
-- **Visual Feedback**: Blue outline on hover, pink outline on selection
+- **Visual Feedback**: The selected placeholder button is highlighted in the panel
 
-### Remove/Hide Mode
+### Current Status
 
-- Select an element and it will immediately be hidden
-- Perfect for removing ads, popups, or unwanted content
-
-### Customize Mode
-
-- After selecting an element, the customization panel appears
-- Adjust:
-  - **Background color** (color picker)
-  - **Text color** (color picker)
-  - **Font size** (8-72px)
-- Click **Apply** to save changes
-- Click **Reset** to remove all custom styles
-
-### Add Mode
-
-- Select an element as a reference point
-- A new styled element will be inserted after your selection
-- You can then customize the new element
+- `Remove`, `Customize`, and `Add` are visual-only controls
+- Feature execution logic has been removed from the live panel
+- Supabase and API integrations remain in the project but are not wired to those three features
 
 ### Panel Controls
 
@@ -96,10 +75,10 @@ webedit-extension/
 ## 💡 Example Conversations
 
 **User:** "I want to hide the cookie banner"
-**AI:** "Got it! I'll help you hide an element. 1. Make sure 'Remove / hide' is selected 2. Click 'Pick element' 3. Hover and click the element you want to hide"
+**AI:** "Feature execution is currently unavailable. The Remove, Customize, and Add buttons are visual-only right now."
 
 **User:** "Change the color of the header"
-**AI:** "Perfect! Let's customize an element. 1. Select 'Customize' from the Visual Edit menu 2. Click 'Pick element' 3. Choose the header 4. Use the customization panel to adjust colors"
+**AI:** "Feature execution is currently unavailable. The Remove, Customize, and Add buttons are visual-only right now."
 
 ## 🛠️ Technical Details
 
@@ -128,8 +107,8 @@ webedit-extension/
 ### Content Scripts
 
 The extension automatically injects:
-- `contentScript.js`: Panel creation, chat logic, element manipulation
-- `contentStyles.css`: Visual feedback for element picking
+- `contentScript.js`: Lightweight runtime placeholder
+- `contentStyles.css`: Legacy styling kept in the repo
 - `panel.css`: Complete panel styling with gradients and animations
 
 ### Message Passing
@@ -165,12 +144,11 @@ The extension automatically injects:
 
 ## 🔮 Future Enhancements
 
-- **Real AI Integration**: Connect to OpenAI/Anthropic for intelligent editing
+- **Real AI Integration**: Reconnect the preserved API helpers when feature work resumes
 - **Supabase Backend**: Store edits in the cloud
 - **User Authentication**: Sign in with OAuth
 - **Edit History**: View, restore, and share previous edits
 - **Sync Across Devices**: Access your edits anywhere
-- **Advanced Add Tool**: Rich text editor and component library
 - **Voice Commands**: Speak your edits naturally
 - **Element Templates**: Pre-built components to insert
 - **CSS Export**: Download your changes as a stylesheet
@@ -179,10 +157,9 @@ The extension automatically injects:
 
 ### Current Implementation
 
-- All edits are **local only** (not persisted)
-- AI responses are **rule-based** (simple keyword matching)
-- Refreshing the page will **clear all changes**
-- Each edited element gets a unique `data-webedit-id` attribute
+- The visible `Remove`, `Customize`, and `Add` buttons are **UI placeholders only**
+- The side panel keeps **chat history and account state**
+- Supabase and API helpers remain in the codebase but are **not wired to the three feature buttons**
 
 ### Code Structure
 

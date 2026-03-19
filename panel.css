@@ -24,10 +24,6 @@
   transform: translateX(100%);
 }
 
-.hidden {
-  display: none !important;
-}
-
 /* Header Navigation Bar */
 .webedit-panel-header {
   display: flex;
@@ -58,21 +54,12 @@
   background: rgba(255, 255, 255, 0.15);
 }
 
-.webedit-nav-btn.active {
-  background: rgba(255, 255, 255, 0.22);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
-}
-
 .webedit-nav-btn.logo-btn {
   background: rgba(59, 130, 246, 0.3);
 }
 
 .webedit-nav-btn.signin-btn {
   background: rgba(236, 72, 153, 0.3);
-}
-
-.webedit-nav-btn.history-btn {
-  background: rgba(15, 23, 42, 0.18);
 }
 
 /* Avatar container */
@@ -334,229 +321,6 @@
   position: relative;
 }
 
-.webedit-edit-history-view {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding: 20px 20px 18px;
-  overflow: hidden;
-}
-
-.webedit-edit-history-header {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.webedit-edit-history-eyebrow,
-.webedit-edit-history-label {
-  margin: 0;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #475569;
-}
-
-.webedit-edit-history-header h2 {
-  margin: 0;
-  font-size: 22px;
-  line-height: 1.1;
-  color: #0f172a;
-}
-
-.webedit-edit-history-subtitle {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.5;
-  color: #475569;
-}
-
-.webedit-domain-strip-section {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.webedit-domain-strip-label-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.webedit-domain-strip {
-  display: flex;
-  gap: 10px;
-  overflow-x: auto;
-  padding-bottom: 4px;
-  scrollbar-width: thin;
-}
-
-.webedit-domain-chip {
-  flex: 0 0 auto;
-  border: 1px solid rgba(15, 23, 42, 0.12);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.88);
-  color: #0f172a;
-  padding: 10px 14px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s, background 0.2s;
-  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.06);
-}
-
-.webedit-domain-chip:hover {
-  transform: translateY(-1px);
-  border-color: rgba(67, 56, 202, 0.35);
-}
-
-.webedit-domain-chip.active {
-  background: linear-gradient(135deg, #312e81, #7c3aed);
-  color: #ffffff;
-  border-color: transparent;
-  box-shadow: 0 10px 22px rgba(76, 29, 149, 0.28);
-}
-
-.webedit-history-category-tabs {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-  padding: 6px;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.72);
-  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.2);
-}
-
-.webedit-history-category-tab {
-  border: none;
-  border-radius: 14px;
-  background: transparent;
-  color: #334155;
-  padding: 10px 12px;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: background 0.2s, color 0.2s, box-shadow 0.2s;
-}
-
-.webedit-history-category-tab.active {
-  background: #ffffff;
-  color: #0f172a;
-  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
-}
-
-.webedit-history-card-list {
-  flex: 1;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding-right: 4px;
-}
-
-.webedit-history-card {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.92));
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  border-radius: 20px;
-  padding: 16px;
-  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
-}
-
-.webedit-history-card-top {
-  display: flex;
-  align-items: flex-start;
-  gap: 14px;
-}
-
-.webedit-history-card-text {
-  flex: 1;
-  min-width: 0;
-}
-
-.webedit-history-card-title {
-  margin: 0 0 8px;
-  font-size: 15px;
-  line-height: 1.3;
-  color: #0f172a;
-}
-
-.webedit-history-card-description {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.6;
-  color: #475569;
-}
-
-.webedit-history-status-btn {
-  flex: 0 0 auto;
-  min-width: 76px;
-  border: none;
-  border-radius: 999px;
-  padding: 10px 14px;
-  background: linear-gradient(135deg, #ef4444, #f97316);
-  color: #ffffff;
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-  box-shadow: 0 8px 20px rgba(239, 68, 68, 0.24);
-  transition: transform 0.2s, box-shadow 0.2s, opacity 0.2s;
-}
-
-.webedit-history-status-btn:hover {
-  transform: translateY(-1px);
-}
-
-.webedit-history-status-btn.is-undone {
-  background: linear-gradient(135deg, #0ea5e9, #2563eb);
-  box-shadow: 0 8px 20px rgba(37, 99, 235, 0.24);
-}
-
-.webedit-history-preview-placeholder {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 10px;
-  margin-top: 14px;
-}
-
-.webedit-history-preview-pane {
-  min-height: 88px;
-  border: 1px dashed rgba(99, 102, 241, 0.35);
-  border-radius: 16px;
-  background:
-    linear-gradient(135deg, rgba(224, 231, 255, 0.75), rgba(255, 255, 255, 0.95)),
-    repeating-linear-gradient(
-      -45deg,
-      rgba(99, 102, 241, 0.04) 0,
-      rgba(99, 102, 241, 0.04) 10px,
-      transparent 10px,
-      transparent 20px
-    );
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  font-weight: 700;
-  color: #4338ca;
-}
-
-.webedit-history-empty-state {
-  padding: 24px 16px;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.72);
-  color: #64748b;
-  font-size: 13px;
-  text-align: center;
-  border: 1px dashed rgba(148, 163, 184, 0.4);
-}
-
-.webedit-view-edit-history .webedit-customize-panel,
-.webedit-view-edit-history .webedit-mode-indicator {
-  display: none !important;
-}
-
 .webedit-auth-guard {
   position: absolute;
   top: 48px;
@@ -689,252 +453,8 @@
   margin-top: 10px;
 }
 
-/* References container - holds all reference messages at bottom */
-.webedit-references-container {
-  margin-top: auto;
-  /* Push references to bottom */
-  padding-top: 16px;
-  padding-right: 32px;
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-/* Reference message - keep high contrast */
-.webedit-chat-message-reference {
-  background: #ffffff;
-  color: #0f172a;
-  align-self: flex-start;
-  border-left: 4px solid #0ea5e9;
-  padding: 12px 16px;
-  box-shadow: 0 6px 16px rgba(6, 182, 212, 0.12);
-  max-width: 90%;
-}
-
 .webedit-chat-message-content {
   margin: 0;
-}
-
-/* Reference label styling */
-.webedit-reference-label {
-  font-weight: 700;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: #0ea5e9;
-  margin-bottom: 6px;
-  display: block;
-}
-
-.webedit-reference-text {
-  font-size: 13px;
-  font-weight: 500;
-  color: #0f172a;
-  font-family: inherit;
-  word-break: break-word;
-}
-
-/* Customize Panel (collapsible) */
-.webedit-customize-panel {
-  background: white;
-  border-radius: 12px;
-  padding: 12px 16px;
-  margin: 0 20px 12px;
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.1);
-  display: none;
-  flex-direction: column;
-  gap: 10px;
-  flex-shrink: 0;
-}
-
-.webedit-customize-panel.visible {
-  display: flex;
-}
-
-.webedit-customize-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 4px;
-}
-
-.webedit-customize-header h3 {
-  font-size: 14px;
-  margin: 0;
-  color: #111827;
-  font-weight: 600;
-}
-
-.webedit-customize-close-btn {
-  background: #f3f4f6;
-  border: none;
-  color: #6b7280;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  cursor: pointer;
-  font-size: 18px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s;
-  line-height: 1;
-  padding: 0;
-}
-
-.webedit-customize-close-btn:hover {
-  background: #e5e7eb;
-  color: #374151;
-  transform: scale(1.1);
-}
-
-.webedit-customize-info {
-  font-size: 11px;
-  color: #6b7280;
-  margin: 0 0 8px;
-  line-height: 1.4;
-}
-
-.webedit-field-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.webedit-field-row label {
-  font-size: 12px;
-  color: #374151;
-  font-weight: 500;
-}
-
-.webedit-field-row input[type="color"] {
-  width: 50px;
-  height: 28px;
-  border-radius: 6px;
-  border: 1px solid #d1d5db;
-  padding: 2px;
-  cursor: pointer;
-}
-
-.webedit-field-row input[type="number"] {
-  width: 80px;
-  padding: 6px 10px;
-  border-radius: 6px;
-  border: 1px solid #d1d5db;
-  font-size: 12px;
-  outline: none;
-}
-
-.webedit-field-row input[type="number"]:focus {
-  border-color: #6366f1;
-}
-
-.webedit-field-group {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.webedit-size-input-group {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-}
-
-.webedit-size-input-group input[type="number"] {
-  flex: 1;
-}
-
-.webedit-size-input-group select {
-  border-radius: 6px;
-  border: 1px solid #d1d5db;
-  padding: 6px 8px;
-  font-size: 12px;
-  background: #fff;
-  color: #111827;
-}
-
-.webedit-scale-input {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-}
-
-.webedit-scale-input input[type="range"] {
-  flex: 1;
-  accent-color: #6366f1;
-}
-
-.webedit-scale-value {
-  font-size: 12px;
-  color: #4b5563;
-  min-width: 48px;
-  text-align: right;
-}
-
-.webedit-panel-divider {
-  height: 1px;
-  background: #e5e7eb;
-  margin: 6px 0;
-}
-
-.webedit-layout-section {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.webedit-section-label {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  color: #6b7280;
-  letter-spacing: 0.04em;
-}
-
-.webedit-layout-actions,
-.webedit-align-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.webedit-layout-btn,
-.webedit-align-btn {
-  flex: 1;
-  min-width: 0;
-  border: 1px solid #cbd5df;
-  border-radius: 8px;
-  padding: 8px 10px;
-  background: #f8fafc;
-  color: #1f2937;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.webedit-layout-btn:hover,
-.webedit-align-btn:hover {
-  border-color: #94a3b8;
-  background: #eef2ff;
-}
-
-.webedit-align-btn.active {
-  border-color: #6366f1;
-  background: rgba(99, 102, 241, 0.12);
-  color: #4338ca;
-}
-
-.webedit-customize-actions {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 4px;
 }
 
 .webedit-btn-small {
@@ -965,58 +485,13 @@
   background: #e0e7ff;
 }
 
-/* Bottom Controls */
 .webedit-bottom-controls {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 8px 32px 6px;
+  padding: 8px 28px 6px;
   background: #d7fbff;
   flex-shrink: 0;
-}
-
-.webedit-mode-indicator {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 0 24px 12px;
-  padding: 10px 16px;
-  border-radius: 12px;
-  background: #0f172a;
-  color: #f8fafc;
-  font-size: 12px;
-  font-weight: 500;
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.15);
-}
-
-.webedit-mode-indicator.hidden {
-  display: none;
-}
-
-.webedit-mode-text {
-  flex: 1;
-}
-
-.webedit-mode-close-btn {
-  border: none;
-  background: rgba(255, 255, 255, 0.2);
-  color: #ffffff;
-  width: 24px;
-  height: 24px;
-  border-radius: 999px;
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.2s, transform 0.2s;
-}
-
-.webedit-mode-close-btn:hover {
-  background: rgba(255, 255, 255, 0.35);
-  transform: scale(1.05);
 }
 
 .webedit-feature-controls {
@@ -1028,63 +503,28 @@
 .webedit-feature-btn {
   flex: 1;
   min-width: 0;
-  border: 2px solid #64748b;
+  border: 1px solid #cbd5e1;
   border-radius: 12px;
-  padding: 11px 10px;
+  padding: 10px 12px;
   background: #ffffff;
-  color: #0f172a;
+  color: #334155;
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
-  transition: all 0.2s;
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+  transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s, background 0.2s;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
 }
 
 .webedit-feature-btn:hover {
-  border-color: #334155;
   transform: translateY(-1px);
-  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.12);
+  border-color: #94a3b8;
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.12);
 }
 
 .webedit-feature-btn.active {
-  border-color: #4338ca;
-  background: #eef2ff;
-  color: #312e81;
-  box-shadow: 0 8px 18px rgba(67, 56, 202, 0.18);
-}
-
-.webedit-feature-btn:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-  transform: none;
-  box-shadow: none;
-}
-
-.webedit-feature-btn[data-tool="remove"] {
-  border-color: #b91c1c;
-  color: #7f1d1d;
-}
-
-.webedit-feature-btn[data-tool="add"] {
-  border-color: #4338ca;
-  color: #312e81;
-}
-
-.webedit-feature-btn[data-tool="customize"] {
-  border-color: #0369a1;
-  color: #0c4a6e;
-}
-
-.webedit-feature-btn[data-tool="remove"].active {
-  background: #fee2e2;
-}
-
-.webedit-feature-btn[data-tool="add"].active {
-  background: #e0e7ff;
-}
-
-.webedit-feature-btn[data-tool="customize"].active {
-  background: #e0f2fe;
+  border-color: #5b8def;
+  background: #eef4ff;
+  color: #1d4ed8;
 }
 
 /* Legacy controls retained for compatibility but hidden in new layout */
@@ -1092,24 +532,8 @@
 .webedit-tool-label,
 .webedit-hamburger-btn,
 .webedit-tools-menu,
-.webedit-tool-btn,
-.webedit-pick-btn-bottom {
+.webedit-tool-btn {
   display: none !important;
-}
-
-.webedit-mode-indicator {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 0 24px 12px;
-  padding: 10px 16px;
-  border-radius: 12px;
-  background: #0f172a;
-  color: #f8fafc;
-  font-size: 12px;
-  font-weight: 500;
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.15);
 }
 
 /* Chat Input Bar at Bottom */
