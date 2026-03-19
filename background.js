@@ -7,7 +7,6 @@ chrome.runtime.onInstalled.addListener(() => {
     .setPanelBehavior({ openPanelOnActionClick: true })
     .catch((error) => console.error('[Brain] sidePanel behavior error:', error));
 });
-});
 
 chrome.runtime.onStartup.addListener(() => {
   if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
