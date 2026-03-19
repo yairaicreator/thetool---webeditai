@@ -26,9 +26,8 @@
     "storage",
     "activeTab",
     "scripting",
-    "action", {
-      "default_title":"Open WebEdit AI"
-    }
+    "action", 
+      {"default_title": "Open WebEdit AI"}
   ], 
   "host_permissions": [
     "https://eqfjkvjwsswjxkmomxax.supabase.co/*",
