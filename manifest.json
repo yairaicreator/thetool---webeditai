@@ -26,7 +26,7 @@
     "storage",
     "activeTab",
     "scripting",
-    "action": {
+    "action", {
       "default_title":"Open WebEdit AI"
     }
   ], 
