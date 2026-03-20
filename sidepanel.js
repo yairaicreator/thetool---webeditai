@@ -16,6 +16,7 @@
 const els = {
   headerHamburger: document.getElementById('webedit-header-hamburger'),
   homeBtn:         document.getElementById('webedit-home-btn'),
+  editHistoryBtn:  document.getElementById('webedit-edit-history-btn'),
   signinBtn:       document.getElementById('webedit-signin-btn'),
   authGuard:       document.getElementById('webedit-auth-guard'),
   authGuardTitle:  document.getElementById('webedit-auth-guard-title'),
@@ -24,9 +25,13 @@ const els = {
   historySidebar:  document.getElementById('webedit-history-sidebar'),
   historyList:     document.getElementById('webedit-history-list'),
   newChatBtn:      document.getElementById('webedit-new-chat-btn'),
+  mainContent:     document.getElementById('webedit-main-content'),
   featureButtons:  Array.from(document.querySelectorAll('.webedit-feature-btn')),
   blueprintList:   document.getElementById('webedit-blueprint-list'),
   chatMessages:    document.getElementById('webedit-chat-messages'),
+  editHistoryView: document.getElementById('webedit-edit-history-view'),
+  bottomControls:  document.getElementById('webedit-bottom-controls'),
+  inputContainer:  document.getElementById('webedit-input-container'),
   chatInput:       document.getElementById('webedit-chat-input'),
   sendBtn:         document.getElementById('webedit-send-btn'),
 };
@@ -39,6 +44,20 @@ const els = {
 async function getCurrentTabUrl() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab?.url || '';
+}
+
+function normalizePageKey(url) {
+  if (!url) return '';
+  try {
+    const parsed = new URL(url);
+    parsed.hash = '';
+    if (parsed.pathname !== '/' && parsed.pathname.endsWith('/')) {
+      parsed.pathname = parsed.pathname.replace(/\/+$/, '');
+    }
+    return parsed.toString();
+  } catch (_) {
+    return String(url).trim();
+  }
 }
 
 async function sendToBrain(type, payload = {}) {
@@ -63,6 +82,8 @@ const PANEL_SCHEMAS = {
   SAVE_BLUEPRINT:        ['url', 'edit.action', 'edit.selector'],
   TOGGLE_STATUS:         ['url', 'editId'],
   GET_ACTIVE_BLUEPRINTS: ['url'],
+  FETCH_FULL_HISTORY:    [],
+  TOGGLE_HISTORY_EDIT:   ['editId'],
   START_PICK_MODE:       ['feature'],
   CANCEL_FLOW:           [],
   GENERATE_FEATURE:      ['prompt'],
@@ -136,8 +157,14 @@ let chatMessages = [];
 let currentSessionId = null;
 let chatSessions = [];
 let activeBlueprints = {};
+let currentBlueprintPageKey = '';
 let selectedFeature = 'remove';
 let activeHistoryRenameForm = null;
+let currentPanelMode = 'chat';
+let historySites = [];
+let historyLoading = false;
+let historyError = '';
+let selectedHistoryPageKey = '';
 
 function isAuthenticated() {
   return authState === 'authenticated';
@@ -156,6 +183,30 @@ function escapeHtml(str = '') {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function formatHistoryDate(value) {
+  const stamp = Date.parse(value || '');
+  if (!stamp) return 'Unknown time';
+  return new Date(stamp).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
+function setHistorySites(nextSites) {
+  historySites = Array.isArray(nextSites) ? nextSites : [];
+  if (!historySites.length) {
+    selectedHistoryPageKey = '';
+    return;
+  }
+
+  const stillExists = historySites.some(function (site) { return site.pageKey === selectedHistoryPageKey; });
+  if (!stillExists) {
+    selectedHistoryPageKey = historySites[0].pageKey;
+  }
 }
 
 function addChatMessage(type, content) {
@@ -200,6 +251,126 @@ function renderChatMessages() {
   els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
 }
 
+function renderHistoryPreview(token) {
+  const preview = token || {};
+  return (
+    '<div class="webedit-edit-history-preview-card">' +
+      '<div class="webedit-edit-history-preview-swatch" style="--preview-color:' + escapeHtml(preview.color || '#cbd5e1') + '; --preview-accent:' + escapeHtml(preview.accent || '#f8fafc') + ';"></div>' +
+      '<span>' + escapeHtml(preview.label || 'Preview') + '</span>' +
+    '</div>'
+  );
+}
+
+function renderHistoryCategory(title, key, edits) {
+  const items = Array.isArray(edits) ? edits : [];
+  let html = '<section class="webedit-edit-history-category">';
+  html += '<div class="webedit-edit-history-category-header">';
+  html += '<h3>' + escapeHtml(title) + '</h3>';
+  html += '<span>' + items.length + '</span>';
+  html += '</div>';
+
+  if (!items.length) {
+    html += '<div class="webedit-edit-history-empty-card">No ' + escapeHtml(title.toLowerCase()) + ' edits yet.</div>';
+    html += '</section>';
+    return html;
+  }
+
+  items.forEach(function (edit) {
+    html += '<article class="webedit-edit-history-card">';
+    html += '<div class="webedit-edit-history-card-main">';
+    html += '<div class="webedit-edit-history-card-topline">';
+    html += '<div>';
+    html += '<div class="webedit-edit-history-card-title">' + escapeHtml(edit.summary || 'Untitled edit') + '</div>';
+    html += '<div class="webedit-edit-history-card-meta">' + escapeHtml(formatHistoryDate(edit.updatedAt || edit.createdAt)) + '</div>';
+    html += '</div>';
+    html += '<button class="webedit-edit-action-btn" type="button" data-edit-id="' + escapeHtml(edit.id) + '" data-page-key="' + escapeHtml(edit.pageKey) + '">';
+    html += edit.isActive ? 'Undo' : 'Redo';
+    html += '</button>';
+    html += '</div>';
+    html += '<p class="webedit-edit-history-card-description">' + escapeHtml(edit.description || '') + '</p>';
+    if (key === 'customize') {
+      html += '<div class="webedit-edit-history-previews">';
+      html += renderHistoryPreview(edit.previews?.before);
+      html += renderHistoryPreview(edit.previews?.after);
+      html += '</div>';
+    }
+    html += '</div>';
+    html += '</article>';
+  });
+
+  html += '</section>';
+  return html;
+}
+
+function renderEditHistoryView() {
+  if (!els.editHistoryView) return;
+
+  if (!isAuthenticated()) {
+    els.editHistoryView.innerHTML =
+      '<div class="webedit-edit-history-state">' +
+        '<h3>Log in to view EditHistory</h3>' +
+        '<p>Your edit timeline appears here after authentication.</p>' +
+      '</div>';
+    return;
+  }
+
+  if (historyLoading) {
+    els.editHistoryView.innerHTML =
+      '<div class="webedit-edit-history-state">' +
+        '<h3>Loading EditHistory</h3>' +
+        '<p>Fetching your edits from the Brain.</p>' +
+      '</div>';
+    return;
+  }
+
+  if (historyError) {
+    els.editHistoryView.innerHTML =
+      '<div class="webedit-edit-history-state">' +
+        '<h3>Could not load EditHistory</h3>' +
+        '<p>' + escapeHtml(historyError) + '</p>' +
+      '</div>';
+    return;
+  }
+
+  if (!historySites.length) {
+    els.editHistoryView.innerHTML =
+      '<div class="webedit-edit-history-state">' +
+        '<h3>No edits yet</h3>' +
+        '<p>Once you make edits on websites, they will appear here.</p>' +
+      '</div>';
+    return;
+  }
+
+  const currentSite = historySites.find(function (site) { return site.pageKey === selectedHistoryPageKey; }) || historySites[0];
+  selectedHistoryPageKey = currentSite.pageKey;
+
+  let html = '<div class="webedit-edit-history-shell">';
+  html += '<div class="webedit-edit-history-sites" role="tablist" aria-label="Edited websites">';
+  historySites.forEach(function (site) {
+    const activeClass = site.pageKey === currentSite.pageKey ? ' active' : '';
+    html += '<button class="webedit-edit-history-site-tab' + activeClass + '" type="button" data-page-key="' + escapeHtml(site.pageKey) + '">';
+    html += '<span class="webedit-edit-history-site-host">' + escapeHtml(site.hostname) + '</span>';
+    html += '<span class="webedit-edit-history-site-path">' + escapeHtml(site.pageLabel) + '</span>';
+    html += '</button>';
+  });
+  html += '</div>';
+
+  html += '<div class="webedit-edit-history-site-panel">';
+  html += '<div class="webedit-edit-history-site-header">';
+  html += '<div>';
+  html += '<h2>' + escapeHtml(currentSite.hostname) + '</h2>';
+  html += '<p>' + escapeHtml(currentSite.pageLabel) + '</p>';
+  html += '</div>';
+  html += '</div>';
+  html += renderHistoryCategory('Remove', 'remove', currentSite.categories?.remove);
+  html += renderHistoryCategory('Add', 'add', currentSite.categories?.add);
+  html += renderHistoryCategory('Customize', 'customize', currentSite.categories?.customize);
+  html += '</div>';
+  html += '</div>';
+
+  els.editHistoryView.innerHTML = html;
+}
+
 function renderBlueprintList() {
   if (!els.blueprintList) return;
   els.blueprintList.innerHTML = '';
@@ -225,6 +396,7 @@ function renderBlueprintList() {
     toggleBtn.textContent = bp.status === 'active' ? 'Disable' : 'Enable';
     toggleBtn.addEventListener('click', debounce(async function () {
       const url = await getCurrentTabUrl();
+      currentBlueprintPageKey = normalizePageKey(url);
       if (!validateBeforeSend('TOGGLE_STATUS', { url, editId })) return;
       await sendToBrain('TOGGLE_STATUS', { url, editId });
     }));
@@ -232,6 +404,37 @@ function renderBlueprintList() {
 
     els.blueprintList.appendChild(item);
   });
+}
+
+async function loadEditHistory(forceRefresh) {
+  if (!isAuthenticated()) {
+    historyLoading = false;
+    historyError = '';
+    setHistorySites([]);
+    renderEditHistoryView();
+    return;
+  }
+
+  if (historyLoading) return;
+  if (!forceRefresh && historySites.length > 0) {
+    renderEditHistoryView();
+    return;
+  }
+
+  historyLoading = true;
+  historyError = '';
+  renderEditHistoryView();
+
+  const resp = await sendToBrain('FETCH_FULL_HISTORY');
+  historyLoading = false;
+  if (resp.success) {
+    historyError = '';
+    setHistorySites(resp.sites);
+  } else {
+    historyError = resp.error || 'Unknown error';
+    setHistorySites([]);
+  }
+  renderEditHistoryView();
 }
 
 function getSessionDisplayName(session) {
@@ -414,8 +617,14 @@ function updateAuthUI() {
   renderHistoryList();
   if (!isAuthenticated()) {
     chatMessages = [];
+    historyError = '';
+    historyLoading = false;
+    setHistorySites([]);
     renderChatMessages();
+  } else if (currentPanelMode === 'history' && historySites.length === 0 && !historyLoading) {
+    loadEditHistory(false);
   }
+  renderEditHistoryView();
 }
 
 function renderSignInButton() {
@@ -474,6 +683,26 @@ function setSelectedFeature(tool) {
   });
 }
 
+function setPanelMode(mode) {
+  currentPanelMode = mode === 'history' ? 'history' : 'chat';
+  const showHistory = currentPanelMode === 'history';
+
+  els.blueprintList?.classList.toggle('hidden', showHistory);
+  els.chatMessages?.classList.toggle('hidden', showHistory);
+  els.editHistoryView?.classList.toggle('hidden', !showHistory);
+  els.bottomControls?.classList.toggle('hidden', showHistory);
+  els.inputContainer?.classList.toggle('hidden', showHistory);
+  els.mainContent?.classList.toggle('history-mode', showHistory);
+  els.editHistoryBtn?.classList.toggle('active-view', showHistory);
+
+  if (showHistory) {
+    loadEditHistory(false);
+  } else {
+    renderChatMessages();
+    renderBlueprintList();
+  }
+}
+
 function toggleHistorySidebar(forceState) {
   if (!els.historySidebar) return;
   const willShow = forceState === undefined
@@ -527,8 +756,20 @@ chrome.runtime.onMessage.addListener(function (message) {
     }
 
     case 'BLUEPRINTS_UPDATED':
-      activeBlueprints = message.blueprints || {};
-      renderBlueprintList();
+      if (!message.pageKey || normalizePageKey(message.pageKey) === currentBlueprintPageKey) {
+        activeBlueprints = message.blueprints || {};
+        if (message.pageKey) {
+          currentBlueprintPageKey = normalizePageKey(message.pageKey);
+        }
+        renderBlueprintList();
+      }
+      break;
+
+    case 'EDIT_HISTORY_UPDATED':
+      historyLoading = false;
+      historyError = message.error || '';
+      setHistorySites(message.sites);
+      renderEditHistoryView();
       break;
 
     case 'FLOW_STATE_CHANGED':
@@ -562,6 +803,10 @@ function registerEventListeners() {
       window.open('https://webeditai.com/', '_blank');
     });
   }
+
+  els.editHistoryBtn?.addEventListener('click', function () {
+    setPanelMode(currentPanelMode === 'history' ? 'chat' : 'history');
+  });
 
   // Auth guard sign-in
   els.authGuardSignin?.addEventListener('click', function () {
@@ -621,6 +866,36 @@ function registerEventListeners() {
       handleSend();
     }
   });
+
+  els.editHistoryView?.addEventListener('click', function (e) {
+    const siteTab = e.target.closest('.webedit-edit-history-site-tab');
+    if (siteTab?.dataset?.pageKey) {
+      selectedHistoryPageKey = siteTab.dataset.pageKey;
+      renderEditHistoryView();
+      return;
+    }
+
+    const actionBtn = e.target.closest('.webedit-edit-action-btn');
+    if (!actionBtn?.dataset?.editId) return;
+
+    const payload = {
+      editId: actionBtn.dataset.editId,
+      pageKey: actionBtn.dataset.pageKey || ''
+    };
+    if (!validateBeforeSend('TOGGLE_HISTORY_EDIT', payload)) return;
+
+    actionBtn.disabled = true;
+    sendToBrain('TOGGLE_HISTORY_EDIT', payload).then(function (resp) {
+      actionBtn.disabled = false;
+      if (!resp.success) {
+        showNotification(resp.error || 'Could not update edit history');
+        return;
+      }
+      historyError = '';
+      setHistorySites(resp.sites);
+      renderEditHistoryView();
+    });
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -647,6 +922,7 @@ function registerEventListeners() {
     const bpResp = await sendToBrain('GET_ACTIVE_BLUEPRINTS', { url });
     if (bpResp.success) {
       activeBlueprints = bpResp.blueprints || {};
+      currentBlueprintPageKey = normalizePageKey(bpResp.pageKey || url);
     }
   }
   renderBlueprintList();
@@ -662,6 +938,8 @@ function registerEventListeners() {
   // 6. Register all event listeners
   setSelectedFeature(selectedFeature);
   renderChatMessages();
+  renderEditHistoryView();
+  setPanelMode(currentPanelMode);
   registerEventListeners();
 })();
 

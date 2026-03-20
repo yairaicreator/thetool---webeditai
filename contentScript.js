@@ -17,6 +17,9 @@
   // ═══════════════════════════════════════════════════════════════════════════════
 
   var STYLE_ID_PREFIX = 'webedit-style-';
+  var CUSTOM_STYLE_ID_PREFIX = 'webedit-custom-style-';
+  var ADD_CONTAINER_PREFIX = 'webedit-node-';
+  var ADD_SCRIPT_PREFIX = 'webedit-script-';
   var WEBEDIT_CONTAINER_ID = 'webedit-injected-container';
   var CIRCUIT_BREAKER_THRESHOLD = 3;
   var DEBOUNCE_DELAY = 50;
@@ -65,6 +68,21 @@
 
   var headWipeCount = {};
 
+  function isPlainObject(value) {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+  }
+
+  function getBlueprintCategory(edit) {
+    var action = String(edit && edit.action || '').toLowerCase();
+    if (action === 'remove' || action === 'hide') return 'remove';
+    if (action === 'add' || action === 'text') return 'add';
+    return 'customize';
+  }
+
+  function getBlueprintPayload(edit) {
+    return isPlainObject(edit && edit.payload) ? edit.payload : {};
+  }
+
   function getInjectionTarget(editId) {
     var wipeCount = headWipeCount[editId] || 0;
 
@@ -105,6 +123,155 @@
     }
   }
 
+  function removeStaleCustomArtifacts() {
+    var customTags = document.querySelectorAll('style[id^="' + CUSTOM_STYLE_ID_PREFIX + '"]');
+    for (var i = 0; i < customTags.length; i++) {
+      var styleEditId = customTags[i].id.slice(CUSTOM_STYLE_ID_PREFIX.length);
+      if (!activeBlueprints[styleEditId]) {
+        customTags[i].remove();
+      }
+    }
+
+    var addContainers = document.querySelectorAll('[id^="' + ADD_CONTAINER_PREFIX + '"]');
+    for (var j = 0; j < addContainers.length; j++) {
+      var containerEditId = addContainers[j].id.slice(ADD_CONTAINER_PREFIX.length);
+      if (!activeBlueprints[containerEditId]) {
+        addContainers[j].remove();
+      }
+    }
+
+    var addScripts = document.querySelectorAll('script[id^="' + ADD_SCRIPT_PREFIX + '"]');
+    for (var k = 0; k < addScripts.length; k++) {
+      var scriptEditId = addScripts[k].id.slice(ADD_SCRIPT_PREFIX.length);
+      if (!activeBlueprints[scriptEditId]) {
+        addScripts[k].remove();
+      }
+    }
+  }
+
+  function buildCssText(edit, payload, category) {
+    if (payload.cssText) return String(payload.cssText);
+    if (payload.css) return String(payload.css);
+    if (payload.ruleText) return String(payload.ruleText);
+    if (payload.style) return String(edit.selector || '') + ' { ' + String(payload.style) + ' }';
+    if (isPlainObject(payload.styles) && edit.selector) {
+      var declarations = Object.keys(payload.styles).map(function (key) {
+        return key + ': ' + payload.styles[key] + ';';
+      }).join(' ');
+      return declarations ? String(edit.selector) + ' { ' + declarations + ' }' : '';
+    }
+
+    if (category === 'remove' && edit.selector) {
+      return String(edit.selector) + ' { display: none !important; }';
+    }
+
+    return '';
+  }
+
+  function applyStyleBlueprint(editId, edit, stylePrefix, category) {
+    var styleId = stylePrefix + editId;
+    var style = document.getElementById(styleId);
+    var injection = getInjectionTarget(editId);
+    var payload = getBlueprintPayload(edit);
+    var cssText = buildCssText(edit, payload, category);
+
+    if (!cssText) return;
+
+    if (!style) {
+      style = document.createElement('style');
+      style.id = styleId;
+      style.setAttribute('data-webedit-id', editId);
+      injection.target.appendChild(style);
+    } else if (style.parentNode !== injection.target) {
+      injection.target.appendChild(style);
+    }
+
+    style.textContent = cssText;
+  }
+
+  function insertContainerAtTarget(container, target, position) {
+    if (!target) {
+      (document.body || document.documentElement).appendChild(container);
+      return;
+    }
+
+    switch (position) {
+      case 'prepend':
+      case 'afterbegin':
+        target.insertBefore(container, target.firstChild);
+        break;
+      case 'beforebegin':
+        if (target.parentNode) {
+          target.parentNode.insertBefore(container, target);
+          break;
+        }
+        (document.body || document.documentElement).appendChild(container);
+        break;
+      case 'afterend':
+        if (target.parentNode) {
+          target.parentNode.insertBefore(container, target.nextSibling);
+          break;
+        }
+        (document.body || document.documentElement).appendChild(container);
+        break;
+      case 'append':
+      case 'beforeend':
+      default:
+        target.appendChild(container);
+        break;
+    }
+  }
+
+  function applyAddBlueprint(editId, edit) {
+    var payload = getBlueprintPayload(edit);
+    var containerId = ADD_CONTAINER_PREFIX + editId;
+    var container = document.getElementById(containerId);
+    var targetSelector = payload.targetSelector || edit.selector;
+    var target = null;
+    var position = String(payload.position || payload.placement || 'beforeend').toLowerCase();
+
+    if (targetSelector) {
+      try {
+        target = document.querySelector(targetSelector);
+      } catch (_) {
+        target = null;
+      }
+    }
+
+    if (!target) {
+      target = document.body || document.documentElement;
+    }
+
+    if (!container) {
+      container = document.createElement('div');
+      container.id = containerId;
+      container.setAttribute('data-webedit-id', editId);
+      insertContainerAtTarget(container, target, position);
+    } else if (!container.parentNode) {
+      insertContainerAtTarget(container, target, position);
+    }
+
+    if (payload.html || payload.text) {
+      container.innerHTML = payload.html || payload.text || '';
+    }
+
+    if (payload.css || payload.cssText || payload.ruleText || payload.style || payload.styles) {
+      applyStyleBlueprint(editId, edit, CUSTOM_STYLE_ID_PREFIX, 'customize');
+    }
+
+    if (payload.js) {
+      var scriptId = ADD_SCRIPT_PREFIX + editId;
+      var script = document.getElementById(scriptId);
+      if (!script) {
+        script = document.createElement('script');
+        script.id = scriptId;
+        script.setAttribute('data-webedit-id', editId);
+        script.textContent = String(payload.js);
+        (document.body || document.documentElement).appendChild(script);
+      }
+    }
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════════
   // SECTION 7: The Executor — applyAllBlueprints()
   // The CSS Muscle. Idempotent: Ghost Footprint IDs prevent duplicates.
@@ -116,26 +283,27 @@
 
     try {
       removeStaleStyleTags();
+      removeStaleCustomArtifacts();
 
       var entries = Object.keys(activeBlueprints);
       for (var i = 0; i < entries.length; i++) {
         var editId = entries[i];
         var edit = activeBlueprints[editId];
+        var category = getBlueprintCategory(edit);
 
-        if (edit.action !== 'remove') continue;
+        if (category === 'remove') {
+          applyStyleBlueprint(editId, edit, STYLE_ID_PREFIX, 'remove');
+          continue;
+        }
 
-        var styleId = STYLE_ID_PREFIX + editId;
-        if (document.getElementById(styleId)) continue;
+        if (category === 'customize') {
+          applyStyleBlueprint(editId, edit, CUSTOM_STYLE_ID_PREFIX, 'customize');
+          continue;
+        }
 
-        var injection = getInjectionTarget(editId);
-
-        var style = document.createElement('style');
-        style.id = styleId;
-        style.setAttribute('data-webedit-id', editId);
-        style.textContent = edit.selector + ' { display: none !important; }';
-        injection.target.appendChild(style);
-
-        console.log('[Hands] Injected', styleId, '(Plan ' + injection.plan + ')');
+        if (category === 'add') {
+          applyAddBlueprint(editId, edit);
+        }
       }
     } finally {
       resumeObserver();

@@ -12,6 +12,7 @@
     <div class="webedit-panel-header">
       <button class="webedit-header-hamburger" id="webedit-header-hamburger" type="button" aria-label="Open chat history">☰</button>
       <button class="webedit-nav-btn logo-btn" id="webedit-home-btn" type="button">WebEdit AI</button>
+      <button class="webedit-nav-btn history-btn" id="webedit-edit-history-btn" type="button">EditHistory</button>
       <button class="webedit-nav-btn signin-btn" id="webedit-signin-btn" type="button">Log in</button>
       <!-- Resize and Close buttons are not needed in Side Panel as it's managed by Chrome -->
     </div>
@@ -34,16 +35,17 @@
     </div>
 
     <!-- Main Content Area -->
-    <div class="webedit-main-content">
+    <div class="webedit-main-content" id="webedit-main-content">
       <div id="webedit-blueprint-list" class="webedit-blueprint-list"></div>
       <div class="webedit-chat-messages" id="webedit-chat-messages">
         <div class="webedit-chat-placeholder">
           <p>Describe what you want to change to get started</p>
         </div>
       </div>
+      <div class="webedit-edit-history-view hidden" id="webedit-edit-history-view"></div>
     </div>
 
-    <div class="webedit-bottom-controls">
+    <div class="webedit-bottom-controls" id="webedit-bottom-controls">
       <div class="webedit-feature-controls" aria-label="Feature buttons">
         <button class="webedit-feature-btn active" id="webedit-remove-btn" data-tool="remove" type="button">Remove</button>
         <button class="webedit-feature-btn" id="webedit-customize-btn" data-tool="customize" type="button">Customize</button>

@@ -153,6 +153,289 @@ function generateEditId() {
   return 'edit_' + crypto.randomUUID();
 }
 
+function isPlainObject(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizePageKey(url) {
+  if (!url) return '';
+  try {
+    const parsed = new URL(url);
+    parsed.hash = '';
+    if (parsed.pathname !== '/' && parsed.pathname.endsWith('/')) {
+      parsed.pathname = parsed.pathname.replace(/\/+$/, '');
+    }
+    return parsed.toString();
+  } catch (_) {
+    return String(url).trim();
+  }
+}
+
+function getCategoryFromAction(action, metadata) {
+  const meta = isPlainObject(metadata) ? metadata : {};
+  const explicit = String(meta.historyCategory || meta.category || meta.feature || '').toLowerCase();
+
+  if (explicit === 'remove' || explicit === 'add' || explicit === 'customize') {
+    return explicit;
+  }
+
+  switch (String(action || '').toLowerCase()) {
+    case 'hide':
+    case 'remove':
+      return 'remove';
+    case 'text':
+    case 'add':
+      return 'add';
+    case 'style':
+    case 'custom':
+    case 'customize':
+    default:
+      return 'customize';
+  }
+}
+
+function getDbActionFromEdit(action, payload) {
+  const normalized = String(action || '').toLowerCase();
+  const blueprint = isPlainObject(payload) ? payload : {};
+
+  switch (normalized) {
+    case 'remove':
+    case 'hide':
+      return 'remove';
+    case 'customize':
+    case 'style':
+      return 'style';
+    case 'add':
+      return blueprint.html || blueprint.js ? 'custom' : 'text';
+    case 'text':
+    case 'custom':
+      return normalized;
+    default:
+      return 'custom';
+  }
+}
+
+function getDefaultPreview(category, phase) {
+  if (category === 'remove') {
+    return phase === 'before'
+      ? { label: 'Visible', color: '#34d399', accent: '#ecfeff' }
+      : { label: 'Hidden', color: '#0f172a', accent: '#cbd5e1' };
+  }
+
+  if (category === 'add') {
+    return phase === 'before'
+      ? { label: 'Before', color: '#cbd5e1', accent: '#f8fafc' }
+      : { label: 'Added', color: '#8b5cf6', accent: '#ede9fe' };
+  }
+
+  return phase === 'before'
+    ? { label: 'Before', color: '#60a5fa', accent: '#dbeafe' }
+    : { label: 'After', color: '#f97316', accent: '#ffedd5' };
+}
+
+function normalizePreviewToken(token, fallback) {
+  if (typeof token === 'string' && token.trim()) {
+    return {
+      label: token.trim(),
+      color: fallback.color,
+      accent: fallback.accent
+    };
+  }
+
+  if (isPlainObject(token)) {
+    return {
+      label: token.label || fallback.label,
+      color: token.color || fallback.color,
+      accent: token.accent || fallback.accent
+    };
+  }
+
+  return fallback;
+}
+
+function getDefaultSummary(category, selector) {
+  const shortSelector = String(selector || '').trim();
+  if (category === 'remove') return shortSelector ? 'Hidden element' : 'Removed item';
+  if (category === 'add') return shortSelector ? 'Added feature' : 'New feature';
+  return shortSelector ? 'Styled element' : 'Customized item';
+}
+
+function getDefaultDescription(category, selector) {
+  const target = String(selector || '').trim() || 'the selected element';
+  if (category === 'remove') {
+    return 'This edit hides ' + target + ' from the page layout.';
+  }
+  if (category === 'add') {
+    return 'This edit adds new content or functionality near ' + target + '.';
+  }
+  return 'This edit changes the visual appearance of ' + target + '.';
+}
+
+function buildHistoryMetadata(editData) {
+  const payload = isPlainObject(editData?.payload) ? editData.payload : {};
+  const category = getCategoryFromAction(editData?.action, payload);
+  const summary = String(payload.summary || payload.title || payload.label || '').trim()
+    || getDefaultSummary(category, editData?.selector);
+  const description = String(payload.description || payload.details || payload.prompt || '').trim()
+    || getDefaultDescription(category, editData?.selector);
+
+  return {
+    historyCategory: category,
+    summary,
+    description,
+    beforePreview: normalizePreviewToken(
+      payload.beforePreview || payload.before || payload.previewBefore,
+      getDefaultPreview(category, 'before')
+    ),
+    afterPreview: normalizePreviewToken(
+      payload.afterPreview || payload.after || payload.previewAfter,
+      getDefaultPreview(category, 'after')
+    ),
+    blueprint: payload
+  };
+}
+
+function extractBlueprintPayload(metadata) {
+  const meta = isPlainObject(metadata) ? metadata : {};
+  if (isPlainObject(meta.blueprint)) {
+    return meta.blueprint;
+  }
+  if (isPlainObject(meta.payload)) {
+    return meta.payload;
+  }
+
+  const fallback = { ...meta };
+  delete fallback.historyCategory;
+  delete fallback.summary;
+  delete fallback.description;
+  delete fallback.beforePreview;
+  delete fallback.afterPreview;
+  return fallback;
+}
+
+function rowToLedgerEdit(row) {
+  const pageKey = normalizePageKey(row?.page_key || '');
+  const metadata = isPlainObject(row?.metadata) ? row.metadata : {};
+  const payload = extractBlueprintPayload(metadata);
+  const category = getCategoryFromAction(row?.action, metadata);
+
+  return {
+    pageKey,
+    action: category,
+    selector: row?.selector || '',
+    status: row?.active ? 'active' : 'inactive',
+    payload,
+    createdAt: row?.created_at ? Date.parse(row.created_at) : Date.now(),
+    updatedAt: row?.updated_at ? Date.parse(row.updated_at) : null,
+  };
+}
+
+function getActiveBlueprintsForPage(ledger, url) {
+  const pageKey = normalizePageKey(url);
+  const editsForUrl = ledger[pageKey] || {};
+  const activeBlueprints = {};
+
+  for (const [id, edit] of Object.entries(editsForUrl)) {
+    if (edit.status === 'active') {
+      activeBlueprints[id] = edit;
+    }
+  }
+
+  return { pageKey, blueprints: activeBlueprints };
+}
+
+function parsePageDetails(pageKey) {
+  try {
+    const parsed = new URL(pageKey);
+    return {
+      hostname: parsed.hostname,
+      pageLabel: parsed.pathname && parsed.pathname !== '/' ? parsed.pathname : '/',
+      fullLabel: parsed.hostname + (parsed.pathname || '/')
+    };
+  } catch (_) {
+    return {
+      hostname: pageKey,
+      pageLabel: pageKey,
+      fullLabel: pageKey
+    };
+  }
+}
+
+function rowToHistoryEntry(row) {
+  const metadata = isPlainObject(row?.metadata) ? row.metadata : {};
+  const category = getCategoryFromAction(row?.action, metadata);
+  const payload = extractBlueprintPayload(metadata);
+  const pageKey = normalizePageKey(row?.page_key || '');
+  const pageDetails = parsePageDetails(pageKey);
+  const previewBefore = normalizePreviewToken(metadata.beforePreview, getDefaultPreview(category, 'before'));
+  const previewAfter = normalizePreviewToken(metadata.afterPreview, getDefaultPreview(category, 'after'));
+
+  return {
+    id: row.id,
+    pageKey,
+    hostname: pageDetails.hostname,
+    pageLabel: pageDetails.pageLabel,
+    fullLabel: pageDetails.fullLabel,
+    selector: row.selector || '',
+    category,
+    summary: String(metadata.summary || payload.summary || '').trim() || getDefaultSummary(category, row.selector),
+    description: String(metadata.description || payload.description || '').trim() || getDefaultDescription(category, row.selector),
+    isActive: !!row.active,
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
+    previews: {
+      before: previewBefore,
+      after: previewAfter
+    }
+  };
+}
+
+function buildHistorySites(rows) {
+  const byPage = new Map();
+
+  rows.forEach(function (row) {
+    const entry = rowToHistoryEntry(row);
+    if (!byPage.has(entry.pageKey)) {
+      byPage.set(entry.pageKey, {
+        pageKey: entry.pageKey,
+        hostname: entry.hostname,
+        pageLabel: entry.pageLabel,
+        fullLabel: entry.fullLabel,
+        latestTimestamp: 0,
+        categories: {
+          remove: [],
+          add: [],
+          customize: []
+        }
+      });
+    }
+
+    const site = byPage.get(entry.pageKey);
+    site.categories[entry.category].push(entry);
+    const stamp = Date.parse(entry.updatedAt || entry.createdAt || '') || 0;
+    if (stamp > site.latestTimestamp) {
+      site.latestTimestamp = stamp;
+    }
+  });
+
+  return Array.from(byPage.values())
+    .map(function (site) {
+      site.categories.remove.sort(function (a, b) {
+        return (Date.parse(b.updatedAt || b.createdAt || '') || 0) - (Date.parse(a.updatedAt || a.createdAt || '') || 0);
+      });
+      site.categories.add.sort(function (a, b) {
+        return (Date.parse(b.updatedAt || b.createdAt || '') || 0) - (Date.parse(a.updatedAt || a.createdAt || '') || 0);
+      });
+      site.categories.customize.sort(function (a, b) {
+        return (Date.parse(b.updatedAt || b.createdAt || '') || 0) - (Date.parse(a.updatedAt || a.createdAt || '') || 0);
+      });
+      return site;
+    })
+    .sort(function (a, b) {
+      return b.latestTimestamp - a.latestTimestamp;
+    });
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 4: Auth Helper & Dual-Write Sync (Permanent Hard Drive)
 // Local storage first, then fire-and-forget Supabase push.
@@ -177,6 +460,7 @@ async function syncInsertToSupabase(editId, url, editData) {
       return;
     }
 
+    const normalizedUrl = normalizePageKey(url);
     const response = await fetch(`${SUPABASE_URL}/rest/v1/edit_rules`, {
       method: 'POST',
       headers: {
@@ -188,10 +472,10 @@ async function syncInsertToSupabase(editId, url, editData) {
       body: JSON.stringify({
         id: editId,
         user_id: auth.userId,
-        page_key: url,
+        page_key: normalizedUrl,
         selector: editData.selector,
-        action: editData.action.toLowerCase(),
-        metadata: editData.payload || {},
+        action: getDbActionFromEdit(editData.action, editData.payload),
+        metadata: buildHistoryMetadata(editData),
         active: true,
       }),
     });
@@ -234,6 +518,218 @@ async function syncStatusToSupabase(editId, newStatus) {
   } catch (e) {
     console.warn('[Brain] Supabase status update network error:', e.message);
   }
+}
+
+async function fetchHistoryRows(options = {}) {
+  const auth = await getSessionInfo();
+  if (!auth) {
+    return { success: false, error: 'Not authenticated', rows: [] };
+  }
+
+  const params = new URLSearchParams();
+  params.set('select', 'id,page_key,selector,action,metadata,active,created_at,updated_at');
+  params.set('order', 'created_at.desc');
+
+  if (options.editId) {
+    params.set('id', 'eq.' + options.editId);
+  }
+
+  if (options.pageKey) {
+    params.set('page_key', 'eq.' + normalizePageKey(options.pageKey));
+  }
+
+  if (options.activeOnly) {
+    params.set('active', 'eq.true');
+  }
+
+  try {
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/edit_rules?${params.toString()}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${auth.accessToken}`,
+      }
+    });
+
+    const rows = await response.json().catch(() => []);
+    if (!response.ok) {
+      return {
+        success: false,
+        error: Array.isArray(rows) ? 'Supabase history fetch failed' : (rows?.message || rows?.error || 'Supabase history fetch failed'),
+        rows: []
+      };
+    }
+
+    return { success: true, rows: Array.isArray(rows) ? rows : [] };
+  } catch (e) {
+    return { success: false, error: e.message, rows: [] };
+  }
+}
+
+async function getHistoryPayload() {
+  const historyResult = await fetchHistoryRows();
+  if (!historyResult.success) {
+    return { success: false, error: historyResult.error, sites: [] };
+  }
+
+  return {
+    success: true,
+    sites: buildHistorySites(historyResult.rows)
+  };
+}
+
+async function syncLedgerPageFromSupabase(pageKey) {
+  const normalizedPageKey = normalizePageKey(pageKey);
+  if (!normalizedPageKey) {
+    return { success: false, error: 'Missing page key', blueprints: {} };
+  }
+
+  const pageRowsResult = await fetchHistoryRows({ pageKey: normalizedPageKey });
+  if (!pageRowsResult.success) {
+    return { success: false, error: pageRowsResult.error, blueprints: {} };
+  }
+
+  const ledger = await getLedger();
+  ledger[normalizedPageKey] = {};
+  pageRowsResult.rows.forEach(function (row) {
+    ledger[normalizedPageKey][row.id] = rowToLedgerEdit(row);
+  });
+  await saveLedger(ledger);
+
+  const active = getActiveBlueprintsForPage(ledger, normalizedPageKey);
+  return { success: true, pageKey: normalizedPageKey, blueprints: active.blueprints };
+}
+
+async function getMatchingTabsForPageKey(pageKey, preferredTabId) {
+  const normalizedPageKey = normalizePageKey(pageKey);
+  const matches = [];
+
+  if (preferredTabId) {
+    try {
+      const preferredTab = await chrome.tabs.get(preferredTabId);
+      if (preferredTab?.id && normalizePageKey(preferredTab.url || '') === normalizedPageKey) {
+        matches.push(preferredTab);
+      }
+    } catch (_) {}
+  }
+
+  try {
+    const tabs = await chrome.tabs.query({});
+    tabs.forEach(function (tab) {
+      if (!tab?.id || matches.some(function (candidate) { return candidate.id === tab.id; })) return;
+      if (normalizePageKey(tab.url || '') === normalizedPageKey) {
+        matches.push(tab);
+      }
+    });
+  } catch (_) {}
+
+  return matches;
+}
+
+async function broadcastBlueprintUpdate(pageKey, blueprints) {
+  try {
+    await chrome.runtime.sendMessage({
+      type: 'BLUEPRINTS_UPDATED',
+      pageKey: normalizePageKey(pageKey),
+      blueprints: blueprints || {}
+    });
+  } catch (_) {}
+}
+
+async function broadcastHistoryUpdate() {
+  const payload = await getHistoryPayload();
+  try {
+    await chrome.runtime.sendMessage({
+      type: 'EDIT_HISTORY_UPDATED',
+      sites: payload.sites || [],
+      error: payload.success ? null : payload.error || null
+    });
+  } catch (_) {}
+  return payload;
+}
+
+async function dispatchBlueprintsForPage(pageKey, preferredTabId) {
+  const normalizedPageKey = normalizePageKey(pageKey);
+  const ledger = await getLedger();
+  const active = getActiveBlueprintsForPage(ledger, normalizedPageKey);
+  const matchingTabs = await getMatchingTabsForPageKey(normalizedPageKey, preferredTabId);
+
+  await Promise.all(
+    matchingTabs.map(function (tab) {
+      return dispatchToTab(tab.id, {
+        type: 'APPLY_BLUEPRINTS',
+        pageKey: normalizedPageKey,
+        blueprints: active.blueprints
+      });
+    })
+  );
+
+  await broadcastBlueprintUpdate(normalizedPageKey, active.blueprints);
+  return active;
+}
+
+async function handleFetchFullHistory() {
+  return getHistoryPayload();
+}
+
+async function handleToggleHistoryEdit(message) {
+  const editId = String(message.editId || '').trim();
+  if (!editId) {
+    return { success: false, error: 'Missing editId' };
+  }
+
+  const rowResult = await fetchHistoryRows({ editId });
+  if (!rowResult.success) {
+    return { success: false, error: rowResult.error };
+  }
+
+  const row = rowResult.rows[0];
+  if (!row) {
+    return { success: false, error: 'NOT_FOUND' };
+  }
+
+  const nextActive = !row.active;
+  const auth = await getSessionInfo();
+  if (!auth) {
+    return { success: false, error: 'Not authenticated' };
+  }
+
+  try {
+    const response = await fetch(
+      `${SUPABASE_URL}/rest/v1/edit_rules?id=eq.${encodeURIComponent(editId)}`,
+      {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${auth.accessToken}`,
+          'Prefer': 'return=minimal',
+        },
+        body: JSON.stringify({ active: nextActive })
+      }
+    );
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      return { success: false, error: text || 'Could not update edit history item' };
+    }
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+
+  const syncedPage = await syncLedgerPageFromSupabase(row.page_key);
+  if (syncedPage.success) {
+    await dispatchBlueprintsForPage(syncedPage.pageKey, null);
+  }
+
+  const historyPayload = await broadcastHistoryUpdate();
+  return {
+    success: true,
+    pageKey: normalizePageKey(row.page_key),
+    isActive: nextActive,
+    sites: historyPayload.sites || []
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -298,6 +794,8 @@ const MESSAGE_SCHEMAS = {
   SAVE_BLUEPRINT:        ['url', 'edit.action', 'edit.selector'],
   TOGGLE_STATUS:         ['url', 'editId'],
   GET_ACTIVE_BLUEPRINTS: ['url'],
+  FETCH_FULL_HISTORY:    [],
+  TOGGLE_HISTORY_EDIT:   ['editId'],
   GENERATE_FEATURE:      ['prompt'],
   START_PICK_MODE:       ['feature'],
   ELEMENT_PICKED:        ['selector', 'url'],
@@ -440,7 +938,8 @@ async function handleRenameChatSession(message) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function handleSaveBlueprint(message) {
-  const { url, edit } = message;
+  const { edit } = message;
+  const url = normalizePageKey(message.url);
 
   const ledger = await getLedger();
   if (!ledger[url]) {
@@ -449,6 +948,7 @@ async function handleSaveBlueprint(message) {
 
   const editId = generateEditId();
   ledger[url][editId] = {
+    pageKey: url,
     action: edit.action,
     selector: edit.selector,
     status: 'active',
@@ -462,7 +962,8 @@ async function handleSaveBlueprint(message) {
 }
 
 async function handleToggleStatus(message) {
-  const { url, editId } = message;
+  const editId = message.editId;
+  const url = normalizePageKey(message.url);
 
   const ledger = await getLedger();
   if (!ledger[url] || !ledger[url][editId]) {
@@ -479,19 +980,9 @@ async function handleToggleStatus(message) {
 }
 
 async function handleGetActiveBlueprints(message) {
-  const { url } = message;
-
   const ledger = await getLedger();
-  const editsForUrl = ledger[url] || {};
-  const activeBlueprints = {};
-
-  for (const [id, edit] of Object.entries(editsForUrl)) {
-    if (edit.status === 'active') {
-      activeBlueprints[id] = edit;
-    }
-  }
-
-  return { success: true, blueprints: activeBlueprints };
+  const active = getActiveBlueprintsForPage(ledger, message.url);
+  return { success: true, pageKey: active.pageKey, blueprints: active.blueprints };
 }
 
 async function handleGenerateFeature(message) {
@@ -598,12 +1089,8 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
         case 'SAVE_BLUEPRINT': {
           response = await handleSaveBlueprint(message);
           if (response.success) {
-            const updated = await handleGetActiveBlueprints({ url: message.url });
-            chrome.runtime.sendMessage({ type: 'BLUEPRINTS_UPDATED', blueprints: updated.blueprints }).catch(() => {});
-            const saveTabId = await resolveTargetTabId(callerTabId);
-            if (saveTabId) {
-              dispatchToTab(saveTabId, { type: 'APPLY_BLUEPRINTS', blueprints: updated.blueprints });
-            }
+            await dispatchBlueprintsForPage(message.url, callerTabId);
+            await broadcastHistoryUpdate();
           }
           break;
         }
@@ -611,18 +1098,22 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
         case 'TOGGLE_STATUS': {
           response = await handleToggleStatus(message);
           if (response.success) {
-            const updated = await handleGetActiveBlueprints({ url: message.url });
-            chrome.runtime.sendMessage({ type: 'BLUEPRINTS_UPDATED', blueprints: updated.blueprints }).catch(() => {});
-            const toggleTabId = await resolveTargetTabId(callerTabId);
-            if (toggleTabId) {
-              dispatchToTab(toggleTabId, { type: 'APPLY_BLUEPRINTS', blueprints: updated.blueprints });
-            }
+            await dispatchBlueprintsForPage(message.url, callerTabId);
+            await broadcastHistoryUpdate();
           }
           break;
         }
 
         case 'GET_ACTIVE_BLUEPRINTS':
           response = await handleGetActiveBlueprints(message);
+          break;
+
+        case 'FETCH_FULL_HISTORY':
+          response = await handleFetchFullHistory();
+          break;
+
+        case 'TOGGLE_HISTORY_EDIT':
+          response = await handleToggleHistoryEdit(message);
           break;
 
         case 'SAVE_CHAT_SESSION':
@@ -720,17 +1211,11 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 
   try {
     const ledger = await getLedger();
-    const editsForUrl = ledger[tab.url] || {};
-    const activeBlueprints = {};
-
-    for (const [id, edit] of Object.entries(editsForUrl)) {
-      if (edit.status === 'active') {
-        activeBlueprints[id] = edit;
-      }
-    }
+    const active = getActiveBlueprintsForPage(ledger, tab.url);
+    const activeBlueprints = active.blueprints;
 
     if (Object.keys(activeBlueprints).length > 0) {
-      dispatchToTab(tabId, { type: 'APPLY_BLUEPRINTS', blueprints: activeBlueprints });
+      dispatchToTab(tabId, { type: 'APPLY_BLUEPRINTS', pageKey: active.pageKey, blueprints: activeBlueprints });
     }
   } catch (e) {
     console.warn('[Brain] Tab lifecycle dispatch error:', e.message);
