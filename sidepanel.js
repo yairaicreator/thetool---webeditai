@@ -1,619 +1,668 @@
-// WebEdit AI Side Panel UI
-// The Remove, Customize, and Add buttons are visual-only.
+'use strict';
+
+// WebEdit AI — The "Dumb" Control Panel
+// This file ONLY does two things:
+//   1. Listens to what the user does (Event Listeners)
+//   2. Sends Standardized Envelopes to the Brain (Chrome Post Office)
+// It contains ZERO logic, ZERO Supabase, ZERO chrome.storage, ZERO DOM manipulation
+// of the host website.
 
 (() => {
-  const els = {
-    headerHamburger: document.getElementById("webedit-header-hamburger"),
-    homeBtn: document.getElementById("webedit-home-btn"),
-    signinBtn: document.getElementById("webedit-signin-btn"),
-    authGuard: document.getElementById("webedit-auth-guard"),
-    authGuardTitle: document.getElementById("webedit-auth-guard-title"),
-    authGuardMessage: document.getElementById("webedit-auth-guard-message"),
-    authGuardSignin: document.getElementById("webedit-auth-guard-signin"),
-    historySidebar: document.getElementById("webedit-history-sidebar"),
-    historyList: document.getElementById("webedit-history-list"),
-    newChatBtn: document.getElementById("webedit-new-chat-btn"),
-    featureButtons: Array.from(document.querySelectorAll(".webedit-feature-btn")),
-    chatMessages: document.getElementById("webedit-chat-messages"),
-    chatInput: document.getElementById("webedit-chat-input"),
-    sendBtn: document.getElementById("webedit-send-btn")
-  };
 
-  const CHAT_HISTORY_KEY = "webedit-sidepanel-chat-history-v1";
-  const CURRENT_SESSION_KEY = "webedit-sidepanel-current-session-id";
-  const MAX_SESSIONS = 50;
-  const MAX_MESSAGES = 200;
+// ═══════════════════════════════════════════════════════════════════════════════
+// SECTION 1: DOM References
+// ═══════════════════════════════════════════════════════════════════════════════
 
-  const AUTH_STATES = {
-    UNAUTHENTICATED: "unauthenticated",
-    AUTHENTICATED: "authenticated"
-  };
+const els = {
+  headerHamburger: document.getElementById('webedit-header-hamburger'),
+  homeBtn:         document.getElementById('webedit-home-btn'),
+  signinBtn:       document.getElementById('webedit-signin-btn'),
+  authGuard:       document.getElementById('webedit-auth-guard'),
+  authGuardTitle:  document.getElementById('webedit-auth-guard-title'),
+  authGuardMessage:document.getElementById('webedit-auth-guard-message'),
+  authGuardSignin: document.getElementById('webedit-auth-guard-signin'),
+  historySidebar:  document.getElementById('webedit-history-sidebar'),
+  historyList:     document.getElementById('webedit-history-list'),
+  newChatBtn:      document.getElementById('webedit-new-chat-btn'),
+  featureButtons:  Array.from(document.querySelectorAll('.webedit-feature-btn')),
+  blueprintList:   document.getElementById('webedit-blueprint-list'),
+  chatMessages:    document.getElementById('webedit-chat-messages'),
+  chatInput:       document.getElementById('webedit-chat-input'),
+  sendBtn:         document.getElementById('webedit-send-btn'),
+};
 
-  let authState = AUTH_STATES.UNAUTHENTICATED;
-  let signedInUser = null;
-  let currentUser = null;
-  let lastUserId = null;
-  let currentSessionId = null;
-  let chatMessages = [];
-  let activeHistoryRenameForm = null;
-  let selectedFeature = "remove";
+// ═══════════════════════════════════════════════════════════════════════════════
+// SECTION 2: The Chrome Post Office
+// Every Event Listener uses these two helpers to talk to the Brain.
+// ═══════════════════════════════════════════════════════════════════════════════
 
-  function escapeHtml(str = "") {
-    return String(str)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#39;");
+async function getCurrentTabUrl() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tab?.url || '';
+}
+
+async function sendToBrain(type, payload = {}) {
+  try {
+    const response = await chrome.runtime.sendMessage({ type, ...payload });
+    return response || { success: false, error: 'No response from Brain' };
+  } catch (err) {
+    console.error('[Panel] sendToBrain failed:', type, err.message);
+    return { success: false, error: err.message };
   }
+}
 
-  function getScopedKey(baseKey) {
-    const id = currentUser?.id || null;
-    if (!id) return null;
-    return `${baseKey}::${id}`;
+// ═══════════════════════════════════════════════════════════════════════════════
+// SECTION 3: Error Prevention
+// 3a. Client-side Schema Validation (mirrors Brain's MESSAGE_SCHEMAS)
+// 3b. Debounce (prevents rapid-fire duplicate clicks)
+// 3c. Dead Receiver Ping (ensures Brain is alive)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// 3a — Schema Validation
+const PANEL_SCHEMAS = {
+  SAVE_BLUEPRINT:        ['url', 'edit.action', 'edit.selector'],
+  TOGGLE_STATUS:         ['url', 'editId'],
+  GET_ACTIVE_BLUEPRINTS: ['url'],
+  START_PICK_MODE:       ['feature'],
+  CANCEL_FLOW:           [],
+  GENERATE_FEATURE:      ['prompt'],
+  PING:                  [],
+  WEBEDIT_GET_SESSION:   [],
+  WEBEDIT_SIGN_OUT:      [],
+  GET_CHAT_SESSIONS:     [],
+  GET_CHAT_SESSION:      ['sessionId'],
+  SAVE_CHAT_SESSION:     ['sessionId'],
+  DELETE_CHAT_SESSION:    ['sessionId'],
+  RENAME_CHAT_SESSION:   ['sessionId', 'title'],
+};
+
+function validateBeforeSend(type, payload) {
+  const schema = PANEL_SCHEMAS[type];
+  if (schema === undefined) {
+    showNotification('Unknown message type: ' + type);
+    return false;
   }
-
-  function getHistoryStorageKey() {
-    return getScopedKey(CHAT_HISTORY_KEY);
-  }
-
-  function getSessionStorageKey() {
-    return getScopedKey(CURRENT_SESSION_KEY);
-  }
-
-  function addChatMessage(type, content) {
-    const msg = { type, content, timestamp: Date.now() };
-    chatMessages.push(msg);
-    if (chatMessages.length > MAX_MESSAGES) {
-      chatMessages = chatMessages.slice(-MAX_MESSAGES);
+  for (const path of schema) {
+    const parts = path.split('.');
+    let value = payload;
+    for (const part of parts) {
+      value = value?.[part];
     }
-    renderChatMessages();
-    saveChatHistory();
-    return msg;
-  }
-
-  function showNotificationInChat(text) {
-    addChatMessage("system", text);
-  }
-
-  function renderChatMessages() {
-    if (!els.chatMessages) return;
-    els.chatMessages.innerHTML = "";
-
-    if (chatMessages.length === 0) {
-      const placeholder = document.createElement("div");
-      placeholder.className = "webedit-chat-placeholder";
-      placeholder.innerHTML = "<p>Describe what you want to change to get started</p>";
-      els.chatMessages.appendChild(placeholder);
-      return;
-    }
-
-    chatMessages.forEach((msg) => {
-      const msgEl = document.createElement("div");
-      msgEl.className = `webedit-chat-message webedit-chat-message-${msg.type}`;
-
-      const contentEl = document.createElement("div");
-      contentEl.className = "webedit-chat-message-content";
-      contentEl.textContent = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content || "");
-      msgEl.appendChild(contentEl);
-
-      els.chatMessages.appendChild(msgEl);
-    });
-
-    els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
-  }
-
-  function getDefaultSessionTitle(messages = []) {
-    const firstUser = messages.find((m) => m.type === "user" && m.content && String(m.content).trim());
-    if (firstUser) {
-      const title = String(firstUser.content).trim();
-      return title.length > 40 ? `${title.substring(0, 37)}...` : title;
-    }
-    return "New chat";
-  }
-
-  function getSessionDisplayName(session) {
-    const title = session?.title && String(session.title).trim();
-    if (title) return title;
-    const preview = session?.preview && String(session.preview).trim();
-    if (preview) return preview.length > 60 ? `${preview.substring(0, 57)}...` : preview;
-    return "Untitled chat";
-  }
-
-  function closeActiveHistoryRenameForm() {
-    if (activeHistoryRenameForm && activeHistoryRenameForm.parentNode) {
-      try {
-        if (activeHistoryRenameForm.parentNode.contains(activeHistoryRenameForm)) {
-          activeHistoryRenameForm.parentNode.removeChild(activeHistoryRenameForm);
-        }
-      } catch (_) {}
-    }
-    activeHistoryRenameForm = null;
-  }
-
-  function renameChatSession(sessionId, newName) {
-    const key = getHistoryStorageKey();
-    if (!key) return false;
-    try {
-      chrome.storage.local.get([key], (result) => {
-        const history = Array.isArray(result[key]) ? result[key] : [];
-        const session = history.find((entry) => entry.id === sessionId);
-        if (!session) return;
-        const trimmed = (newName || "").trim();
-        session.title = trimmed || getDefaultSessionTitle(session.messages || []);
-        chrome.storage.local.set({ [key]: history }, () => renderHistoryList(history));
-      });
-      return true;
-    } catch (error) {
-      console.error("[SidePanel] rename failed:", error);
+    if (value === undefined || value === null || value === '') {
+      showNotification('Missing required field: ' + path);
       return false;
     }
   }
+  return true;
+}
 
-  function openHistoryRenameInput(session, hostEl) {
+// 3b — Debounce
+function debounce(fn, delay = 300) {
+  let timer = null;
+  return function (...args) {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn.apply(this, args), delay);
+  };
+}
+
+// 3c — Dead Receiver Ping
+let brainAlive = true;
+
+async function pingBrain() {
+  try {
+    const resp = await sendToBrain('PING');
+    if (!resp?.success) throw new Error();
+    if (!brainAlive) {
+      brainAlive = true;
+      showNotification('Connection restored.');
+    }
+  } catch {
+    brainAlive = false;
+    showNotification('Connection lost. Please reload the extension.');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SECTION 4: UI State (In-Memory Only)
+// All state lives in JS variables. Populated entirely from Brain responses.
+// The Panel NEVER reads from chrome.storage — it always asks the Brain.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const MAX_MESSAGES = 200;
+
+let authState = 'unauthenticated';
+let currentUser = null;
+let chatMessages = [];
+let currentSessionId = null;
+let chatSessions = [];
+let activeBlueprints = {};
+let selectedFeature = 'remove';
+let activeHistoryRenameForm = null;
+
+function isAuthenticated() {
+  return authState === 'authenticated';
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SECTION 5: UI Rendering
+// Pure rendering functions. They read in-memory state and update the DOM.
+// They NEVER call chrome.storage or Supabase.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function escapeHtml(str = '') {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function addChatMessage(type, content) {
+  chatMessages.push({ type, content, timestamp: Date.now() });
+  if (chatMessages.length > MAX_MESSAGES) {
+    chatMessages = chatMessages.slice(-MAX_MESSAGES);
+  }
+  renderChatMessages();
+  persistCurrentSession();
+}
+
+function showNotification(text) {
+  chatMessages.push({ type: 'system', content: text, timestamp: Date.now() });
+  if (chatMessages.length > MAX_MESSAGES) {
+    chatMessages = chatMessages.slice(-MAX_MESSAGES);
+  }
+  renderChatMessages();
+}
+
+function renderChatMessages() {
+  if (!els.chatMessages) return;
+  els.chatMessages.innerHTML = '';
+
+  if (chatMessages.length === 0) {
+    const placeholder = document.createElement('div');
+    placeholder.className = 'webedit-chat-placeholder';
+    placeholder.innerHTML = '<p>Describe what you want to change to get started</p>';
+    els.chatMessages.appendChild(placeholder);
+    return;
+  }
+
+  chatMessages.forEach(function (msg) {
+    const msgEl = document.createElement('div');
+    msgEl.className = 'webedit-chat-message webedit-chat-message-' + msg.type;
+    const contentEl = document.createElement('div');
+    contentEl.className = 'webedit-chat-message-content';
+    contentEl.textContent = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content || '');
+    msgEl.appendChild(contentEl);
+    els.chatMessages.appendChild(msgEl);
+  });
+
+  els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+}
+
+function renderBlueprintList() {
+  if (!els.blueprintList) return;
+  els.blueprintList.innerHTML = '';
+
+  const entries = Object.entries(activeBlueprints);
+  if (entries.length === 0) {
+    els.blueprintList.innerHTML = '<div class="webedit-blueprint-empty">No active edits</div>';
+    return;
+  }
+
+  entries.forEach(function ([editId, bp]) {
+    const item = document.createElement('div');
+    item.className = 'webedit-blueprint-item';
+
+    const label = document.createElement('span');
+    label.className = 'webedit-blueprint-label';
+    const selectorText = bp.selector.length > 30 ? bp.selector.slice(0, 27) + '...' : bp.selector;
+    label.textContent = '[' + bp.action + '] ' + selectorText;
+    item.appendChild(label);
+
+    const toggleBtn = document.createElement('button');
+    toggleBtn.className = 'webedit-blueprint-toggle';
+    toggleBtn.textContent = bp.status === 'active' ? 'Disable' : 'Enable';
+    toggleBtn.addEventListener('click', debounce(async function () {
+      const url = await getCurrentTabUrl();
+      if (!validateBeforeSend('TOGGLE_STATUS', { url, editId })) return;
+      await sendToBrain('TOGGLE_STATUS', { url, editId });
+    }));
+    item.appendChild(toggleBtn);
+
+    els.blueprintList.appendChild(item);
+  });
+}
+
+function getSessionDisplayName(session) {
+  if (session?.title && String(session.title).trim()) return String(session.title).trim();
+  if (session?.preview && String(session.preview).trim()) {
+    const p = String(session.preview).trim();
+    return p.length > 60 ? p.substring(0, 57) + '...' : p;
+  }
+  return 'Untitled chat';
+}
+
+function closeActiveHistoryRenameForm() {
+  if (activeHistoryRenameForm && activeHistoryRenameForm.parentNode) {
+    try { activeHistoryRenameForm.parentNode.removeChild(activeHistoryRenameForm); } catch (_) {}
+  }
+  activeHistoryRenameForm = null;
+}
+
+function openHistoryRenameInput(session, hostEl) {
+  closeActiveHistoryRenameForm();
+  if (!hostEl) return;
+
+  const form = document.createElement('form');
+  form.className = 'webedit-history-rename-form';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'webedit-history-rename-input';
+  input.maxLength = 80;
+  input.value = getSessionDisplayName(session);
+  form.appendChild(input);
+
+  const actions = document.createElement('div');
+  actions.className = 'webedit-history-rename-actions';
+
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'submit';
+  saveBtn.className = 'webedit-history-rename-save';
+  saveBtn.textContent = 'Save';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.className = 'webedit-history-rename-cancel';
+  cancelBtn.textContent = 'Cancel';
+
+  actions.appendChild(saveBtn);
+  actions.appendChild(cancelBtn);
+  form.appendChild(actions);
+
+  const commit = function (shouldSave) {
+    if (shouldSave) {
+      sendToBrain('RENAME_CHAT_SESSION', { sessionId: session.id, title: input.value.trim() });
+    }
     closeActiveHistoryRenameForm();
-    if (!hostEl) return;
+    loadChatSessions();
+  };
 
-    const form = document.createElement("form");
-    form.className = "webedit-history-rename-form";
+  form.addEventListener('click', function (e) { e.stopPropagation(); });
+  form.addEventListener('submit', function (e) { e.preventDefault(); commit(true); });
+  cancelBtn.addEventListener('click', function (e) { e.preventDefault(); commit(false); });
+  input.addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.preventDefault(); commit(false); } });
+  input.addEventListener('blur', function (e) {
+    if (e.relatedTarget === saveBtn || e.relatedTarget === cancelBtn) return;
+    commit(true);
+  });
 
-    const input = document.createElement("input");
-    input.type = "text";
-    input.className = "webedit-history-rename-input";
-    input.maxLength = 80;
-    input.value = getSessionDisplayName(session);
-    form.appendChild(input);
+  hostEl.appendChild(form);
+  activeHistoryRenameForm = form;
+  input.focus();
+  input.select();
+}
 
-    const actions = document.createElement("div");
-    actions.className = "webedit-history-rename-actions";
+function renderHistoryList() {
+  if (!els.historyList) return;
 
-    const saveBtn = document.createElement("button");
-    saveBtn.type = "submit";
-    saveBtn.className = "webedit-history-rename-save";
-    saveBtn.textContent = "Save";
-
-    const cancelBtn = document.createElement("button");
-    cancelBtn.type = "button";
-    cancelBtn.className = "webedit-history-rename-cancel";
-    cancelBtn.textContent = "Cancel";
-
-    actions.appendChild(saveBtn);
-    actions.appendChild(cancelBtn);
-    form.appendChild(actions);
-
-    const commit = (shouldSave) => {
-      if (shouldSave) {
-        renameChatSession(session.id, input.value);
-      }
-      closeActiveHistoryRenameForm();
-      renderHistoryList();
-    };
-
-    form.addEventListener("click", (event) => event.stopPropagation());
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      commit(true);
-    });
-    cancelBtn.addEventListener("click", (event) => {
-      event.preventDefault();
-      commit(false);
-    });
-    input.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        commit(false);
-      }
-    });
-    input.addEventListener("blur", (event) => {
-      if (event.relatedTarget === saveBtn || event.relatedTarget === cancelBtn) return;
-      commit(true);
-    });
-
-    hostEl.appendChild(form);
-    activeHistoryRenameForm = form;
-    input.focus();
-    input.select();
+  if (!isAuthenticated()) {
+    els.historyList.innerHTML = '<div style="padding:10px; color:#9ca3af; font-size:12px; text-align:center">Log in to view history</div>';
+    return;
   }
 
-  function renderHistoryList(historyData = null) {
-    if (!els.historyList) return;
-    if (!currentUser?.id) {
-      els.historyList.innerHTML = '<div style="padding:10px; color:#9ca3af; font-size:12px; text-align:center">Log in to view history</div>';
-      return;
-    }
-
-    if (!historyData) {
-      const key = getHistoryStorageKey();
-      if (!key) return;
-      chrome.storage.local.get([key], (result) => {
-        renderHistoryList(Array.isArray(result[key]) ? result[key] : []);
-      });
-      return;
-    }
-
-    if (!Array.isArray(historyData) || historyData.length === 0) {
-      closeActiveHistoryRenameForm();
-      els.historyList.innerHTML = '<div style="padding:10px; color:#9ca3af; font-size:12px; text-align:center">No history yet</div>';
-      return;
-    }
-
+  if (!Array.isArray(chatSessions) || chatSessions.length === 0) {
     closeActiveHistoryRenameForm();
-    els.historyList.innerHTML = "";
+    els.historyList.innerHTML = '<div style="padding:10px; color:#9ca3af; font-size:12px; text-align:center">No history yet</div>';
+    return;
+  }
 
-    historyData
-      .slice()
-      .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
-      .forEach((session) => {
-        const item = document.createElement("div");
-        item.className = `webedit-history-item ${session.id === currentSessionId ? "active" : ""}`;
+  closeActiveHistoryRenameForm();
+  els.historyList.innerHTML = '';
 
-        const main = document.createElement("div");
-        main.className = "webedit-history-item-main";
+  chatSessions
+    .slice()
+    .sort(function (a, b) { return (b.timestamp || 0) - (a.timestamp || 0); })
+    .forEach(function (session) {
+      const item = document.createElement('div');
+      item.className = 'webedit-history-item' + (session.id === currentSessionId ? ' active' : '');
 
-        const titleEl = document.createElement("div");
-        titleEl.className = "webedit-history-title";
-        titleEl.textContent = getSessionDisplayName(session);
-        main.appendChild(titleEl);
+      const main = document.createElement('div');
+      main.className = 'webedit-history-item-main';
 
-        const renameBtn = document.createElement("button");
-        renameBtn.className = "webedit-history-rename-btn";
-        renameBtn.type = "button";
-        renameBtn.setAttribute("aria-label", "Rename chat");
-        renameBtn.innerHTML = "✏︎";
-        renameBtn.addEventListener("click", (event) => {
-          event.stopPropagation();
-          openHistoryRenameInput(session, item);
-        });
-        main.appendChild(renameBtn);
+      const titleEl = document.createElement('div');
+      titleEl.className = 'webedit-history-title';
+      titleEl.textContent = getSessionDisplayName(session);
+      main.appendChild(titleEl);
 
-        const deleteBtn = document.createElement("button");
-        deleteBtn.className = "webedit-history-delete-btn";
-        deleteBtn.type = "button";
-        deleteBtn.setAttribute("aria-label", "Delete chat");
-        deleteBtn.innerHTML = "🗑";
-        deleteBtn.addEventListener("click", (event) => {
-          event.stopPropagation();
-          deleteChatSession(session.id);
-        });
-        main.appendChild(deleteBtn);
-
-        const dateEl = document.createElement("div");
-        dateEl.className = "webedit-history-date";
-        const timestamp = session.timestamp || Date.now();
-        dateEl.textContent = new Date(timestamp).toLocaleDateString(undefined, {
-          month: "short",
-          day: "numeric",
-          hour: "2-digit",
-          minute: "2-digit"
-        });
-
-        const previewEl = document.createElement("div");
-        previewEl.className = "webedit-history-preview";
-        previewEl.textContent = session.preview || "New chat";
-
-        item.appendChild(main);
-        item.appendChild(dateEl);
-        item.appendChild(previewEl);
-        item.addEventListener("click", () => loadSession(session.id));
-        els.historyList.appendChild(item);
+      const renameBtn = document.createElement('button');
+      renameBtn.className = 'webedit-history-rename-btn';
+      renameBtn.type = 'button';
+      renameBtn.setAttribute('aria-label', 'Rename chat');
+      renameBtn.innerHTML = '&#9998;';
+      renameBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        openHistoryRenameInput(session, item);
       });
-  }
+      main.appendChild(renameBtn);
 
-  function saveChatHistory() {
-    if (!currentUser?.id) return;
-    const sessionKey = getSessionStorageKey();
-    const historyKey = getHistoryStorageKey();
-    if (!sessionKey || !historyKey) return;
-
-    if (!currentSessionId) {
-      currentSessionId = Date.now().toString();
-    }
-
-    chrome.storage.local.get([historyKey], (result) => {
-      const history = Array.isArray(result[historyKey]) ? result[historyKey] : [];
-      const existing = history.find((entry) => entry.id === currentSessionId);
-      const preservedTitle = existing?.title || null;
-
-      const session = {
-        id: currentSessionId,
-        timestamp: Date.now(),
-        messages: chatMessages,
-        preview: chatMessages.find((message) => message.type === "user")?.content || "New chat",
-        title: preservedTitle || getDefaultSessionTitle(chatMessages)
-      };
-
-      const index = history.findIndex((entry) => entry.id === currentSessionId);
-      if (index >= 0) {
-        history[index] = session;
-      } else {
-        history.unshift(session);
-      }
-
-      const trimmed = history.slice(0, MAX_SESSIONS);
-      chrome.storage.local.set({ [historyKey]: trimmed, [sessionKey]: currentSessionId }, () => {
-        renderHistoryList(trimmed);
-      });
-    });
-  }
-
-  function loadSession(sessionId) {
-    if (!currentUser?.id) return;
-    closeActiveHistoryRenameForm();
-    const historyKey = getHistoryStorageKey();
-    const sessionKey = getSessionStorageKey();
-    if (!historyKey || !sessionKey) return;
-
-    chrome.storage.local.get([historyKey], (result) => {
-      const history = Array.isArray(result[historyKey]) ? result[historyKey] : [];
-      const session = history.find((entry) => entry.id === sessionId);
-      if (!session) return;
-      currentSessionId = sessionId;
-      chatMessages = Array.isArray(session.messages) ? session.messages : [];
-      chrome.storage.local.set({ [sessionKey]: currentSessionId }, () => {
-        renderChatMessages();
-        renderHistoryList(history);
-      });
-    });
-  }
-
-  function startNewChat() {
-    if (!currentUser?.id) return;
-    currentSessionId = Date.now().toString();
-    chatMessages = [];
-    renderChatMessages();
-    saveChatHistory();
-  }
-
-  function isAuthenticated() {
-    return authState === AUTH_STATES.AUTHENTICATED;
-  }
-
-  function requireAuth(actionName) {
-    if (isAuthenticated()) return true;
-    showNotificationInChat(`Please log in to ${actionName}`);
-    return false;
-  }
-
-  function updateAuthGuardUI() {
-    if (!els.authGuard) return;
-    const showGuard = authState === AUTH_STATES.UNAUTHENTICATED;
-    els.authGuard.classList.toggle("hidden", !showGuard);
-
-    if (authState === AUTH_STATES.UNAUTHENTICATED) {
-      if (els.authGuardTitle) els.authGuardTitle.textContent = "Log in to use WebEdit AI";
-      if (els.authGuardMessage) els.authGuardMessage.textContent = "Sign in or create an account to continue.";
-      if (els.authGuardSignin) {
-        els.authGuardSignin.textContent = "Log in";
-        els.authGuardSignin.hidden = false;
-      }
-    }
-  }
-
-  function setControlsEnabled(enabled) {
-    [els.newChatBtn, els.sendBtn, els.chatInput].filter(Boolean).forEach((el) => {
-      if ("disabled" in el) {
-        el.disabled = !enabled;
-      }
-      el.setAttribute("aria-disabled", enabled ? "false" : "true");
-    });
-  }
-
-  function applyAuthStateUI() {
-    updateAuthGuardUI();
-    setControlsEnabled(isAuthenticated());
-    if (isAuthenticated()) {
-      renderHistoryList();
-      return;
-    }
-    chatMessages = [];
-    renderChatMessages();
-    renderHistoryList([]);
-  }
-
-  function renderSignInButton() {
-    if (!els.signinBtn) return;
-    els.signinBtn.className = "webedit-nav-btn signin-btn";
-    els.signinBtn.textContent = "Log in";
-    els.signinBtn.onclick = () => {
-      window.open("https://webeditai.com/#/signup?from=extension", "_blank");
-    };
-  }
-
-  function renderSignedInButton(user) {
-    if (!els.signinBtn) return;
-    els.signinBtn.className = "webedit-nav-btn signin-btn webedit-avatar-container";
-    els.signinBtn.title = user?.email || "Account";
-    els.signinBtn.innerHTML = "";
-
-    const avatar = document.createElement("div");
-    avatar.className = "webedit-avatar";
-    avatar.textContent = (user?.email || "U")[0].toUpperCase();
-    els.signinBtn.appendChild(avatar);
-
-    const menu = document.createElement("div");
-    menu.className = "webedit-avatar-menu";
-    menu.innerHTML = `
-      <div class="webedit-avatar-menu-header">
-        <div class="webedit-avatar-menu-email">${escapeHtml(user?.email || "User")}</div>
-      </div>
-      <div class="webedit-avatar-menu-item" data-action="signout">
-        <span class="webedit-avatar-menu-icon">👋</span>
-        <span>Sign out</span>
-      </div>
-    `;
-    els.signinBtn.appendChild(menu);
-
-    avatar.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      menu.classList.toggle("visible");
-    });
-
-    document.addEventListener("click", () => menu.classList.remove("visible"));
-    menu.addEventListener("click", (event) => {
-      event.stopPropagation();
-      const action = event.target?.closest(".webedit-avatar-menu-item")?.dataset?.action;
-      if (!action) return;
-      menu.classList.remove("visible");
-      if (action === "signout") {
-        Promise.resolve(window.supabase?.auth?.signOut?.())
-          .catch(() => {})
-          .finally(() => chrome.runtime.sendMessage({ type: "WEBEDIT_SIGN_OUT" }));
-      }
-    });
-  }
-
-  function toggleHistorySidebar(forceState = null) {
-    if (!els.historySidebar) return;
-    const willShow = forceState === null
-      ? !els.historySidebar.classList.contains("visible")
-      : !!forceState;
-    els.historySidebar.classList.toggle("visible", willShow);
-  }
-
-  function attachHeaderEventListeners() {
-    if (els.headerHamburger && els.historySidebar) {
-      els.headerHamburger.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        toggleHistorySidebar();
-      });
-
-      document.addEventListener("click", (event) => {
-        if (!els.historySidebar.classList.contains("visible")) return;
-        if (els.historySidebar.contains(event.target)) return;
-        if (els.headerHamburger.contains(event.target)) return;
-        toggleHistorySidebar(false);
-      });
-    }
-
-    if (els.homeBtn) {
-      els.homeBtn.addEventListener("click", () => {
-        window.open("https://webeditai.com/", "_blank");
-      });
-    }
-  }
-
-  function deleteChatSession(sessionId) {
-    const historyKey = getHistoryStorageKey();
-    if (!historyKey) return;
-
-    chrome.storage.local.get([historyKey], (result) => {
-      const history = Array.isArray(result[historyKey]) ? result[historyKey] : [];
-      const next = history.filter((entry) => entry.id !== sessionId);
-      chrome.storage.local.set({ [historyKey]: next }, () => {
-        if (currentSessionId === sessionId) {
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'webedit-history-delete-btn';
+      deleteBtn.type = 'button';
+      deleteBtn.setAttribute('aria-label', 'Delete chat');
+      deleteBtn.innerHTML = '&#128465;';
+      deleteBtn.addEventListener('click', debounce(async function (e) {
+        e.stopPropagation();
+        await sendToBrain('DELETE_CHAT_SESSION', { sessionId: session.id });
+        if (currentSessionId === session.id) {
           currentSessionId = null;
           chatMessages = [];
           renderChatMessages();
         }
-        renderHistoryList(next);
+        loadChatSessions();
+      }));
+      main.appendChild(deleteBtn);
+
+      const dateEl = document.createElement('div');
+      dateEl.className = 'webedit-history-date';
+      dateEl.textContent = new Date(session.timestamp || Date.now()).toLocaleDateString(undefined, {
+        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
       });
+
+      const previewEl = document.createElement('div');
+      previewEl.className = 'webedit-history-preview';
+      previewEl.textContent = session.preview || 'New chat';
+
+      item.appendChild(main);
+      item.appendChild(dateEl);
+      item.appendChild(previewEl);
+      item.addEventListener('click', debounce(async function () {
+        const resp = await sendToBrain('GET_CHAT_SESSION', { sessionId: session.id });
+        if (resp.success && resp.session) {
+          currentSessionId = resp.session.id;
+          chatMessages = Array.isArray(resp.session.messages) ? resp.session.messages : [];
+          renderChatMessages();
+          renderHistoryList();
+        }
+      }));
+      els.historyList.appendChild(item);
     });
+}
+
+function updateAuthUI() {
+  if (els.authGuard) {
+    els.authGuard.classList.toggle('hidden', isAuthenticated());
+  }
+  if (!isAuthenticated()) {
+    if (els.authGuardTitle) els.authGuardTitle.textContent = 'Log in to use WebEdit AI';
+    if (els.authGuardMessage) els.authGuardMessage.textContent = 'Sign in or create an account to continue.';
+    if (els.authGuardSignin) { els.authGuardSignin.textContent = 'Log in'; els.authGuardSignin.hidden = false; }
   }
 
-  async function refreshAuthorization(options = {}) {
-    const client = window.SupabaseClient;
-    let session = null;
-    let user = null;
-    const forceRefresh = !!options?.forceRefresh;
-
-    try {
-      if (client?.getSession) {
-        const sessionResp = await client.getSession({ allowRefresh: forceRefresh });
-        session = sessionResp?.data?.session || null;
-      }
-    } catch (_) {
-      session = null;
-    }
-
-    try {
-      if (client?.fetchAuthUser) {
-        const authResp = await client.fetchAuthUser(forceRefresh);
-        user = authResp?.ok ? authResp.user : null;
-      } else {
-        user = session?.user || null;
-      }
-      if (!user && session?.user) {
-        user = session.user;
-      }
-    } catch (_) {
-      user = null;
-    }
-
-    signedInUser = user || null;
-    currentUser = user || null;
-    authState = user ? AUTH_STATES.AUTHENTICATED : AUTH_STATES.UNAUTHENTICATED;
-
-    const nextUserId = signedInUser?.id || null;
-    if (nextUserId !== lastUserId) {
-      lastUserId = nextUserId;
-      currentSessionId = null;
-      chatMessages = [];
-    }
-
-    if (signedInUser) {
-      renderSignedInButton(signedInUser);
-    } else {
-      renderSignInButton();
-    }
-    applyAuthStateUI();
-  }
-
-  function setSelectedFeature(tool) {
-    selectedFeature = tool;
-    els.featureButtons.forEach((button) => {
-      button.classList.toggle("active", button.dataset.tool === tool);
-    });
-  }
-
-  function handleSend() {
-    const text = (els.chatInput?.value || "").trim();
-    if (!text) return;
-    if (!requireAuth("use WebEdit")) return;
-
-    els.chatInput.value = "";
-    addChatMessage("user", text);
-    addChatMessage(
-      "assistant",
-      `The ${selectedFeature} feature is currently unavailable. Remove, Customize, and Add are visual-only buttons right now.`
-    );
-  }
-
-  function initializeHandlers() {
-    els.newChatBtn?.addEventListener("click", () => {
-      if (!requireAuth("create a chat")) return;
-      startNewChat();
-    });
-
-    els.featureButtons.forEach((button) => {
-      button.addEventListener("click", () => setSelectedFeature(button.dataset.tool || "remove"));
-    });
-
-    els.sendBtn?.addEventListener("click", handleSend);
-    els.chatInput?.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && !event.shiftKey) {
-        event.preventDefault();
-        handleSend();
-      }
-    });
-  }
-
-  chrome.runtime.onMessage.addListener((message) => {
-    if (message?.type === "WEBEDIT_SESSION_UPDATED") {
-      refreshAuthorization();
-    }
+  [els.newChatBtn, els.sendBtn, els.chatInput].filter(Boolean).forEach(function (el) {
+    if ('disabled' in el) el.disabled = !isAuthenticated();
+    el.setAttribute('aria-disabled', isAuthenticated() ? 'false' : 'true');
   });
 
-  attachHeaderEventListeners();
-  els.authGuardSignin?.addEventListener("click", () => {
-    window.open("https://webeditai.com/#/signup?from=extension", "_blank");
-  });
+  if (currentUser) {
+    renderSignedInButton(currentUser);
+  } else {
+    renderSignInButton();
+  }
 
-  (async () => {
-    setSelectedFeature(selectedFeature);
-    await refreshAuthorization();
-    initializeHandlers();
+  renderHistoryList();
+  if (!isAuthenticated()) {
+    chatMessages = [];
     renderChatMessages();
-  })();
+  }
+}
+
+function renderSignInButton() {
+  if (!els.signinBtn) return;
+  els.signinBtn.className = 'webedit-nav-btn signin-btn';
+  els.signinBtn.textContent = 'Log in';
+  els.signinBtn.onclick = function () {
+    window.open('https://webeditai.com/#/signup?from=extension', '_blank');
+  };
+}
+
+function renderSignedInButton(user) {
+  if (!els.signinBtn) return;
+  els.signinBtn.className = 'webedit-nav-btn signin-btn webedit-avatar-container';
+  els.signinBtn.title = user?.email || 'Account';
+  els.signinBtn.innerHTML = '';
+
+  const avatar = document.createElement('div');
+  avatar.className = 'webedit-avatar';
+  avatar.textContent = (user?.email || 'U')[0].toUpperCase();
+  els.signinBtn.appendChild(avatar);
+
+  const menu = document.createElement('div');
+  menu.className = 'webedit-avatar-menu';
+  menu.innerHTML =
+    '<div class="webedit-avatar-menu-header">' +
+      '<div class="webedit-avatar-menu-email">' + escapeHtml(user?.email || 'User') + '</div>' +
+    '</div>' +
+    '<div class="webedit-avatar-menu-item" data-action="signout">' +
+      '<span class="webedit-avatar-menu-icon">&#128075;</span>' +
+      '<span>Sign out</span>' +
+    '</div>';
+  els.signinBtn.appendChild(menu);
+
+  avatar.addEventListener('click', function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    menu.classList.toggle('visible');
+  });
+  document.addEventListener('click', function () { menu.classList.remove('visible'); });
+  menu.addEventListener('click', function (e) {
+    e.stopPropagation();
+    const action = e.target?.closest('.webedit-avatar-menu-item')?.dataset?.action;
+    if (!action) return;
+    menu.classList.remove('visible');
+    if (action === 'signout') {
+      sendToBrain('WEBEDIT_SIGN_OUT');
+    }
+  });
+}
+
+function setSelectedFeature(tool) {
+  selectedFeature = tool;
+  els.featureButtons.forEach(function (btn) {
+    btn.classList.toggle('active', btn.dataset.tool === tool);
+  });
+}
+
+function toggleHistorySidebar(forceState) {
+  if (!els.historySidebar) return;
+  const willShow = forceState === undefined
+    ? !els.historySidebar.classList.contains('visible')
+    : !!forceState;
+  els.historySidebar.classList.toggle('visible', willShow);
+}
+
+// Helper: persist current chat session to Brain (fire-and-forget)
+function persistCurrentSession() {
+  if (!isAuthenticated() || !currentSessionId) return;
+  const firstUserMsg = chatMessages.find(function (m) { return m.type === 'user' && m.content; });
+  const preview = firstUserMsg ? String(firstUserMsg.content).trim() : 'New chat';
+  const title = preview.length > 40 ? preview.substring(0, 37) + '...' : preview;
+  sendToBrain('SAVE_CHAT_SESSION', {
+    sessionId: currentSessionId,
+    messages: chatMessages,
+    title: title,
+    preview: preview,
+  });
+}
+
+// Helper: load chat sessions from Brain and re-render sidebar
+async function loadChatSessions() {
+  const resp = await sendToBrain('GET_CHAT_SESSIONS');
+  if (resp.success && Array.isArray(resp.sessions)) {
+    chatSessions = resp.sessions;
+  }
+  renderHistoryList();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SECTION 6: The Brain Inbox
+// Listens for ALL broadcasts pushed by the Brain.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+chrome.runtime.onMessage.addListener(function (message) {
+  if (!message?.type) return;
+
+  switch (message.type) {
+    case 'WEBEDIT_SESSION_UPDATED': {
+      const session = message.session || null;
+      const user = session?.user || null;
+      currentUser = user;
+      authState = user ? 'authenticated' : 'unauthenticated';
+      updateAuthUI();
+      if (isAuthenticated()) {
+        loadChatSessions();
+      }
+      break;
+    }
+
+    case 'BLUEPRINTS_UPDATED':
+      activeBlueprints = message.blueprints || {};
+      renderBlueprintList();
+      break;
+
+    case 'FLOW_STATE_CHANGED':
+      break;
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SECTION 7: Event Listener Registration
+// One listener per button. Pattern: debounce -> validate -> sendToBrain.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function registerEventListeners() {
+  // Header
+  if (els.headerHamburger && els.historySidebar) {
+    els.headerHamburger.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleHistorySidebar();
+    });
+    document.addEventListener('click', function (e) {
+      if (!els.historySidebar.classList.contains('visible')) return;
+      if (els.historySidebar.contains(e.target)) return;
+      if (els.headerHamburger.contains(e.target)) return;
+      toggleHistorySidebar(false);
+    });
+  }
+
+  if (els.homeBtn) {
+    els.homeBtn.addEventListener('click', function () {
+      window.open('https://webeditai.com/', '_blank');
+    });
+  }
+
+  // Auth guard sign-in
+  els.authGuardSignin?.addEventListener('click', function () {
+    window.open('https://webeditai.com/#/signup?from=extension', '_blank');
+  });
+
+  // New Chat
+  els.newChatBtn?.addEventListener('click', debounce(function () {
+    if (!isAuthenticated()) { showNotification('Please log in to create a chat'); return; }
+    persistCurrentSession();
+    currentSessionId = Date.now().toString();
+    chatMessages = [];
+    renderChatMessages();
+    persistCurrentSession();
+    loadChatSessions();
+  }));
+
+  // Feature buttons: Remove, Customize, Add
+  els.featureButtons.forEach(function (btn) {
+    btn.addEventListener('click', debounce(async function () {
+      const tool = btn.dataset.tool || 'remove';
+      setSelectedFeature(tool);
+      if (!isAuthenticated()) { showNotification('Please log in to use ' + tool); return; }
+      if (!validateBeforeSend('START_PICK_MODE', { feature: tool })) return;
+      const resp = await sendToBrain('START_PICK_MODE', { feature: tool });
+      if (!resp.success) {
+        showNotification(resp.error === 'FLOW_CONFLICT'
+          ? 'Another feature flow is already active. Cancel it first.'
+          : 'Could not start ' + tool + ': ' + (resp.error || 'unknown'));
+      }
+    }));
+  });
+
+  // Chat Send
+  const handleSend = debounce(async function () {
+    const text = (els.chatInput?.value || '').trim();
+    if (!text) return;
+    if (!isAuthenticated()) { showNotification('Please log in to use WebEdit'); return; }
+    els.chatInput.value = '';
+    addChatMessage('user', text);
+    addChatMessage('system', 'Processing...');
+
+    if (!validateBeforeSend('GENERATE_FEATURE', { prompt: text })) return;
+    const resp = await sendToBrain('GENERATE_FEATURE', { prompt: text, feature: selectedFeature });
+    chatMessages.pop();
+    if (resp.success) {
+      addChatMessage('assistant', 'Feature spec generated. Preview coming soon.');
+    } else {
+      addChatMessage('assistant', 'Error: ' + (resp.error || 'unknown'));
+    }
+  });
+
+  els.sendBtn?.addEventListener('click', handleSend);
+  els.chatInput?.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SECTION 8: Init Sequence
+// On Panel load, ask the Brain for everything we need, then start listening.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+(async function init() {
+  // 1. Check Brain is alive
+  await pingBrain();
+
+  // 2. Get auth state from Brain
+  const authResp = await sendToBrain('WEBEDIT_GET_SESSION');
+  if (authResp.success || authResp.ok) {
+    const session = authResp.session || null;
+    currentUser = session?.user || null;
+    authState = currentUser ? 'authenticated' : 'unauthenticated';
+  }
+  updateAuthUI();
+
+  // 3. Get active blueprints for current tab
+  const url = await getCurrentTabUrl();
+  if (url) {
+    const bpResp = await sendToBrain('GET_ACTIVE_BLUEPRINTS', { url });
+    if (bpResp.success) {
+      activeBlueprints = bpResp.blueprints || {};
+    }
+  }
+  renderBlueprintList();
+
+  // 4. Get chat sessions for history sidebar
+  if (isAuthenticated()) {
+    await loadChatSessions();
+  }
+
+  // 5. Start periodic Dead Receiver ping (every 30s)
+  setInterval(pingBrain, 30000);
+
+  // 6. Register all event listeners
+  setSelectedFeature(selectedFeature);
+  renderChatMessages();
+  registerEventListeners();
+})();
+
 })();

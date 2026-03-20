@@ -263,6 +263,11 @@ function transitionState(newState, flow) {
     brainState.lockedTabId = flow.tabId;
   }
   console.log('[Brain] State ->', brainState.current, brainState.activeFlow);
+  chrome.runtime.sendMessage({
+    type: 'FLOW_STATE_CHANGED',
+    state: newState,
+    feature: flow?.feature || brainState.activeFlow?.feature || null
+  }).catch(() => {});
 }
 
 function isFlowConflict(incomingFeature) {
@@ -276,6 +281,11 @@ function resetState() {
   brainState.activeFlow = null;
   brainState.lockedTabId = null;
   console.log('[Brain] State reset to IDLE');
+  chrome.runtime.sendMessage({
+    type: 'FLOW_STATE_CHANGED',
+    state: BRAIN_STATES.IDLE,
+    feature: null
+  }).catch(() => {});
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -284,6 +294,7 @@ function resetState() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const MESSAGE_SCHEMAS = {
+  PING:                  [],
   SAVE_BLUEPRINT:        ['url', 'edit.action', 'edit.selector'],
   TOGGLE_STATUS:         ['url', 'editId'],
   GET_ACTIVE_BLUEPRINTS: ['url'],
@@ -291,6 +302,11 @@ const MESSAGE_SCHEMAS = {
   START_PICK_MODE:       ['feature'],
   ELEMENT_PICKED:        ['selector', 'url'],
   CANCEL_FLOW:           [],
+  SAVE_CHAT_SESSION:     ['sessionId'],
+  GET_CHAT_SESSIONS:     [],
+  GET_CHAT_SESSION:      ['sessionId'],
+  DELETE_CHAT_SESSION:    ['sessionId'],
+  RENAME_CHAT_SESSION:   ['sessionId', 'title'],
 };
 
 function validateMessage(message) {
@@ -324,6 +340,98 @@ function registerFeature(name, handlers) {
 
 function getFeatureHandler(featureName, handlerName) {
   return featureModules[featureName]?.[handlerName] || null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SECTION 7b: Chat Session CRUD (chrome.storage.local, scoped per user)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const CHAT_SESSIONS_KEY = 'webedit_chat_sessions';
+const MAX_CHAT_SESSIONS = 50;
+
+async function getChatUserId() {
+  const record = await getStoredSupabaseSessionRecord();
+  return record?.session?.user?.id || null;
+}
+
+function chatStorageKey(userId) {
+  return CHAT_SESSIONS_KEY + '::' + userId;
+}
+
+async function handleSaveChatSession(message) {
+  const userId = await getChatUserId();
+  if (!userId) return { success: false, error: 'Not authenticated' };
+
+  const key = chatStorageKey(userId);
+  const result = await chrome.storage.local.get([key]);
+  const sessions = Array.isArray(result[key]) ? result[key] : [];
+
+  const idx = sessions.findIndex(function (s) { return s.id === message.sessionId; });
+  const session = {
+    id: message.sessionId,
+    timestamp: Date.now(),
+    messages: message.messages || [],
+    title: message.title || 'New chat',
+    preview: message.preview || 'New chat',
+  };
+
+  if (idx >= 0) {
+    sessions[idx] = session;
+  } else {
+    sessions.unshift(session);
+  }
+
+  const trimmed = sessions.slice(0, MAX_CHAT_SESSIONS);
+  await chrome.storage.local.set({ [key]: trimmed });
+  return { success: true, session };
+}
+
+async function handleGetChatSessions() {
+  const userId = await getChatUserId();
+  if (!userId) return { success: false, error: 'Not authenticated', sessions: [] };
+
+  const key = chatStorageKey(userId);
+  const result = await chrome.storage.local.get([key]);
+  return { success: true, sessions: Array.isArray(result[key]) ? result[key] : [] };
+}
+
+async function handleGetChatSession(message) {
+  const userId = await getChatUserId();
+  if (!userId) return { success: false, error: 'Not authenticated' };
+
+  const key = chatStorageKey(userId);
+  const result = await chrome.storage.local.get([key]);
+  const sessions = Array.isArray(result[key]) ? result[key] : [];
+  const session = sessions.find(function (s) { return s.id === message.sessionId; });
+  if (!session) return { success: false, error: 'Session not found' };
+  return { success: true, session };
+}
+
+async function handleDeleteChatSession(message) {
+  const userId = await getChatUserId();
+  if (!userId) return { success: false, error: 'Not authenticated' };
+
+  const key = chatStorageKey(userId);
+  const result = await chrome.storage.local.get([key]);
+  const sessions = Array.isArray(result[key]) ? result[key] : [];
+  const filtered = sessions.filter(function (s) { return s.id !== message.sessionId; });
+  await chrome.storage.local.set({ [key]: filtered });
+  return { success: true };
+}
+
+async function handleRenameChatSession(message) {
+  const userId = await getChatUserId();
+  if (!userId) return { success: false, error: 'Not authenticated' };
+
+  const key = chatStorageKey(userId);
+  const result = await chrome.storage.local.get([key]);
+  const sessions = Array.isArray(result[key]) ? result[key] : [];
+  const session = sessions.find(function (s) { return s.id === message.sessionId; });
+  if (!session) return { success: false, error: 'Session not found' };
+
+  session.title = (message.title || '').trim() || session.title;
+  await chrome.storage.local.set({ [key]: sessions });
+  return { success: true, session };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -473,16 +581,54 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
       // ── Step 2: Feature commands (through state machine pipeline) ──
       switch (routingKey) {
 
+        case 'PING':
+          response = { success: true, timestamp: Date.now() };
+          break;
+
         case 'SAVE_BLUEPRINT':
           response = await handleSaveBlueprint(message);
+          if (response.success) {
+            const updated = await handleGetActiveBlueprints({ url: message.url });
+            chrome.runtime.sendMessage({ type: 'BLUEPRINTS_UPDATED', blueprints: updated.blueprints }).catch(() => {});
+            if (callerTabId) {
+              dispatchToTab(callerTabId, { type: 'APPLY_BLUEPRINTS', blueprints: updated.blueprints });
+            }
+          }
           break;
 
         case 'TOGGLE_STATUS':
           response = await handleToggleStatus(message);
+          if (response.success) {
+            const updated = await handleGetActiveBlueprints({ url: message.url });
+            chrome.runtime.sendMessage({ type: 'BLUEPRINTS_UPDATED', blueprints: updated.blueprints }).catch(() => {});
+            if (callerTabId) {
+              dispatchToTab(callerTabId, { type: 'APPLY_BLUEPRINTS', blueprints: updated.blueprints });
+            }
+          }
           break;
 
         case 'GET_ACTIVE_BLUEPRINTS':
           response = await handleGetActiveBlueprints(message);
+          break;
+
+        case 'SAVE_CHAT_SESSION':
+          response = await handleSaveChatSession(message);
+          break;
+
+        case 'GET_CHAT_SESSIONS':
+          response = await handleGetChatSessions();
+          break;
+
+        case 'GET_CHAT_SESSION':
+          response = await handleGetChatSession(message);
+          break;
+
+        case 'DELETE_CHAT_SESSION':
+          response = await handleDeleteChatSession(message);
+          break;
+
+        case 'RENAME_CHAT_SESSION':
+          response = await handleRenameChatSession(message);
           break;
 
         case 'GENERATE_FEATURE':
