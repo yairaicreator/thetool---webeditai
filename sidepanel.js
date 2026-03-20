@@ -17,6 +17,7 @@ const els = {
   headerHamburger: document.getElementById('webedit-header-hamburger'),
   homeBtn:         document.getElementById('webedit-home-btn'),
   editHistoryBtn:  document.getElementById('webedit-edit-history-btn'),
+  backToEditBtn:   document.getElementById('webedit-back-to-edit-btn'),
   signinBtn:       document.getElementById('webedit-signin-btn'),
   authGuard:       document.getElementById('webedit-auth-guard'),
   authGuardTitle:  document.getElementById('webedit-auth-guard-title'),
@@ -694,6 +695,8 @@ function setPanelMode(mode) {
   els.inputContainer?.classList.toggle('hidden', showHistory);
   els.mainContent?.classList.toggle('history-mode', showHistory);
   els.editHistoryBtn?.classList.toggle('active-view', showHistory);
+  els.editHistoryBtn?.classList.toggle('hidden', showHistory);
+  els.backToEditBtn?.classList.toggle('hidden', !showHistory);
 
   if (showHistory) {
     loadEditHistory(false);
@@ -806,6 +809,10 @@ function registerEventListeners() {
 
   els.editHistoryBtn?.addEventListener('click', function () {
     setPanelMode(currentPanelMode === 'history' ? 'chat' : 'history');
+  });
+
+  els.backToEditBtn?.addEventListener('click', function () {
+    setPanelMode('chat');
   });
 
   // Auth guard sign-in
