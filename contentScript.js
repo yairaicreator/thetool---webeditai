@@ -341,25 +341,201 @@
   }
 
   // ═══════════════════════════════════════════════════════════════════════════════
-  // SECTION 9: Feature Hook Functions (Scaffolding for 3 Future Features)
-  // These stubs are the attachment points for Pick Mode, Executor/Injector,
-  // and Watchdog feature modules. They do minimal work now so the Listener
-  // wiring is already in place when the modules are created.
+  // SECTION 9: Pick Mode (Shared across Remove / Customize / Add)
+  // Activates purple-border hover highlighting + crosshair cursor.
+  // On click, generates a CSS selector for the picked element and reports
+  // it to the Brain via ELEMENT_PICKED. Auto-deactivates after one pick.
   // ═══════════════════════════════════════════════════════════════════════════════
 
+  var pickListeners = {
+    mouseover: null,
+    mouseout: null,
+    click: null
+  };
+
+  function isWebeditElement(el) {
+    if (!el || !(el instanceof Element)) return true;
+    if (el.closest('[data-webedit-id]')) return true;
+    if (el.id && el.id.indexOf('webedit') !== -1) return true;
+    return false;
+  }
+
+  // ── CSS Selector Generator (Sensor work — extracting DOM data) ──
+
+  function escapeForSelector(str) {
+    return str.replace(/([^\w-])/g, '\\$1');
+  }
+
+  function buildElementSegment(el) {
+    var tag = el.tagName.toLowerCase();
+    if (el.id && el.id.indexOf('webedit') === -1) {
+      return '#' + escapeForSelector(el.id);
+    }
+
+    var segment = tag;
+    var validClasses = [];
+    for (var i = 0; i < el.classList.length; i++) {
+      var cls = el.classList[i];
+      if (cls.indexOf('webedit') === -1) {
+        validClasses.push('.' + escapeForSelector(cls));
+      }
+    }
+    if (validClasses.length > 0) {
+      segment += validClasses.slice(0, 3).join('');
+    }
+
+    return segment;
+  }
+
+  function getNthOfType(el) {
+    var parent = el.parentElement;
+    if (!parent) return 1;
+    var tag = el.tagName;
+    var index = 0;
+    for (var i = 0; i < parent.children.length; i++) {
+      if (parent.children[i].tagName === tag) {
+        index++;
+        if (parent.children[i] === el) return index;
+      }
+    }
+    return 1;
+  }
+
+  function generateCssSelector(el) {
+    if (!el || !(el instanceof Element)) return '';
+
+    if (el.id && el.id.indexOf('webedit') === -1) {
+      var idSel = '#' + escapeForSelector(el.id);
+      try {
+        if (document.querySelectorAll(idSel).length === 1) return idSel;
+      } catch (_) {}
+    }
+
+    var parts = [];
+    var current = el;
+    var maxDepth = 6;
+
+    while (current && current !== document.documentElement && parts.length < maxDepth) {
+      var segment = buildElementSegment(current);
+
+      if (segment.charAt(0) === '#') {
+        parts.unshift(segment);
+        break;
+      }
+
+      var nth = getNthOfType(current);
+      var siblingsOfType = 0;
+      if (current.parentElement) {
+        for (var i = 0; i < current.parentElement.children.length; i++) {
+          if (current.parentElement.children[i].tagName === current.tagName) {
+            siblingsOfType++;
+          }
+        }
+      }
+      if (siblingsOfType > 1) {
+        segment += ':nth-of-type(' + nth + ')';
+      }
+
+      parts.unshift(segment);
+
+      var candidate = parts.join(' > ');
+      try {
+        if (document.querySelectorAll(candidate).length === 1) break;
+      } catch (_) {}
+
+      current = current.parentElement;
+    }
+
+    return parts.join(' > ');
+  }
+
+  // ── Pick Mode Activation / Deactivation ──
+
   function handleStartPickMode(feature) {
+    if (pickModeActive) {
+      handleStopPickMode();
+    }
+
     pickModeActive = true;
     pickModeFeature = feature;
-    // Future: feature module adds hover listeners, applies .webedit-hover-highlight
-    // from contentStyles.css, and reports clicks via ELEMENT_PICKED to the Brain.
+
+    document.body.classList.add('webedit-pick-active');
+
+    pickListeners.mouseover = function (e) {
+      var target = e.target;
+      if (!target || !(target instanceof Element)) return;
+      if (isWebeditElement(target)) return;
+      target.classList.add('webedit-hover-highlight');
+    };
+
+    pickListeners.mouseout = function (e) {
+      var target = e.target;
+      if (!target || !(target instanceof Element)) return;
+      target.classList.remove('webedit-hover-highlight');
+    };
+
+    pickListeners.click = function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+
+      var target = e.target;
+      if (!target || !(target instanceof Element)) return;
+      if (isWebeditElement(target)) return;
+
+      target.classList.remove('webedit-hover-highlight');
+
+      var selector = generateCssSelector(target);
+      if (!selector) {
+        console.warn('[Hands] Could not generate selector for picked element');
+        return;
+      }
+
+      handleStopPickMode();
+
+      chrome.runtime.sendMessage({
+        type: 'ELEMENT_PICKED',
+        selector: selector,
+        url: window.location.href
+      }, function (response) {
+        if (chrome.runtime.lastError) {
+          console.warn('[Hands] ELEMENT_PICKED send failed:', chrome.runtime.lastError.message);
+        }
+      });
+    };
+
+    document.addEventListener('mouseover', pickListeners.mouseover, true);
+    document.addEventListener('mouseout', pickListeners.mouseout, true);
+    document.addEventListener('click', pickListeners.click, true);
+
     console.log('[Hands] Pick mode started for:', feature);
   }
 
   function handleStopPickMode() {
+    if (pickListeners.mouseover) {
+      document.removeEventListener('mouseover', pickListeners.mouseover, true);
+    }
+    if (pickListeners.mouseout) {
+      document.removeEventListener('mouseout', pickListeners.mouseout, true);
+    }
+    if (pickListeners.click) {
+      document.removeEventListener('click', pickListeners.click, true);
+    }
+
+    pickListeners.mouseover = null;
+    pickListeners.mouseout = null;
+    pickListeners.click = null;
+
+    var highlighted = document.querySelectorAll('.webedit-hover-highlight');
+    for (var i = 0; i < highlighted.length; i++) {
+      highlighted[i].classList.remove('webedit-hover-highlight');
+    }
+
+    document.body.classList.remove('webedit-pick-active');
+
     pickModeActive = false;
     pickModeFeature = null;
-    // Future: feature module removes hover listeners and .webedit-hover-highlight,
-    // clears any .webedit-selected markers.
+
     console.log('[Hands] Pick mode stopped');
   }
 

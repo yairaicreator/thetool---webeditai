@@ -811,7 +811,18 @@ chrome.runtime.onMessage.addListener(function (message) {
       break;
 
     case 'FLOW_STATE_CHANGED':
+      if (message.state === 'PICKING' && message.feature) {
+        showNotification('Pick an element on the page for: ' + message.feature);
+      }
       break;
+
+    case 'PICK_COMPLETED': {
+      const shortSel = (message.selector || '').length > 50
+        ? message.selector.substring(0, 47) + '...'
+        : (message.selector || '');
+      showNotification('Element selected: ' + shortSel);
+      break;
+    }
   }
 });
 

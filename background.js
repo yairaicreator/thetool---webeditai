@@ -1287,11 +1287,56 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
             response = { success: false, error: 'No active pick flow' };
             break;
           }
+
+          const pickedSelector = String(message.selector || '').trim();
+          const pickedUrl = normalizePageKey(message.url || '');
+
+          brainState.activeFlow.selector = pickedSelector;
+          brainState.activeFlow.url = pickedUrl;
+
+          const pickedLedger = await getLedger();
+          if (!pickedLedger[pickedUrl]) {
+            pickedLedger[pickedUrl] = {};
+          }
+          const pickedEditId = generateEditId();
+          pickedLedger[pickedUrl][pickedEditId] = {
+            pageKey: pickedUrl,
+            action: activeFeature,
+            selector: pickedSelector,
+            status: 'active',
+            payload: { selector: pickedSelector },
+            createdAt: Date.now(),
+          };
+          await saveLedger(pickedLedger);
+
+          syncInsertToSupabase(pickedEditId, pickedUrl, pickedLedger[pickedUrl][pickedEditId]);
+
+          if (brainState.lockedTabId) {
+            dispatchToTab(brainState.lockedTabId, { type: 'STOP_PICK_MODE' });
+          }
+
+          chrome.runtime.sendMessage({
+            type: 'PICK_COMPLETED',
+            feature: activeFeature,
+            selector: pickedSelector,
+            url: pickedUrl,
+            editId: pickedEditId
+          }).catch(() => {});
+
+          transitionState(BRAIN_STATES.PROCESSING);
+
           const pickHandler = getFeatureHandler(activeFeature, 'onElementPicked');
           if (pickHandler) {
             response = await pickHandler(callerTabId, message);
           } else {
-            response = { success: true, received: true };
+            resetState();
+            response = {
+              success: true,
+              feature: activeFeature,
+              selector: pickedSelector,
+              url: pickedUrl,
+              editId: pickedEditId
+            };
           }
           break;
         }

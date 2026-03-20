@@ -1,6 +1,13 @@
-/* Outline around hovered element */
+/* Pick Mode: force crosshair cursor on the entire page */
+body.webedit-pick-active,
+body.webedit-pick-active * {
+  cursor: crosshair !important;
+}
+
+/* Outline around hovered element during Pick Mode */
 .webedit-hover-highlight {
-  outline: 2px solid #6366f1 !important;
+  outline: 3px solid #8B5CF6 !important;
+  outline-offset: 2px !important;
   cursor: crosshair !important;
 }
 
