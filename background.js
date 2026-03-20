@@ -525,6 +525,16 @@ async function dispatchToTab(tabId, payload) {
   }
 }
 
+async function resolveTargetTabId(callerTabId) {
+  if (callerTabId) return callerTabId;
+  try {
+    var tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    return (tabs[0] && tabs[0].id) ? tabs[0].id : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 10: Keep-Alive Mechanism
 // Prevents the service worker from dying during long AI generation calls.
@@ -585,27 +595,31 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
           response = { success: true, timestamp: Date.now() };
           break;
 
-        case 'SAVE_BLUEPRINT':
+        case 'SAVE_BLUEPRINT': {
           response = await handleSaveBlueprint(message);
           if (response.success) {
             const updated = await handleGetActiveBlueprints({ url: message.url });
             chrome.runtime.sendMessage({ type: 'BLUEPRINTS_UPDATED', blueprints: updated.blueprints }).catch(() => {});
-            if (callerTabId) {
-              dispatchToTab(callerTabId, { type: 'APPLY_BLUEPRINTS', blueprints: updated.blueprints });
+            const saveTabId = await resolveTargetTabId(callerTabId);
+            if (saveTabId) {
+              dispatchToTab(saveTabId, { type: 'APPLY_BLUEPRINTS', blueprints: updated.blueprints });
             }
           }
           break;
+        }
 
-        case 'TOGGLE_STATUS':
+        case 'TOGGLE_STATUS': {
           response = await handleToggleStatus(message);
           if (response.success) {
             const updated = await handleGetActiveBlueprints({ url: message.url });
             chrome.runtime.sendMessage({ type: 'BLUEPRINTS_UPDATED', blueprints: updated.blueprints }).catch(() => {});
-            if (callerTabId) {
-              dispatchToTab(callerTabId, { type: 'APPLY_BLUEPRINTS', blueprints: updated.blueprints });
+            const toggleTabId = await resolveTargetTabId(callerTabId);
+            if (toggleTabId) {
+              dispatchToTab(toggleTabId, { type: 'APPLY_BLUEPRINTS', blueprints: updated.blueprints });
             }
           }
           break;
+        }
 
         case 'GET_ACTIVE_BLUEPRINTS':
           response = await handleGetActiveBlueprints(message);
@@ -646,12 +660,16 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
             response = { success: false, error: 'FLOW_CONFLICT', activeFlow: brainState.activeFlow };
             break;
           }
-          transitionState(BRAIN_STATES.PICKING, { feature, tabId: callerTabId });
+          const pickTabId = await resolveTargetTabId(callerTabId);
+          transitionState(BRAIN_STATES.PICKING, { feature, tabId: pickTabId });
           const startHandler = getFeatureHandler(feature, 'onStartPick');
           if (startHandler) {
-            response = await startHandler(callerTabId, message);
+            response = await startHandler(pickTabId, message);
           } else {
             response = { success: true, state: 'PICKING', feature };
+          }
+          if (pickTabId) {
+            dispatchToTab(pickTabId, { type: 'START_PICK_MODE', feature: feature });
           }
           break;
         }
@@ -672,6 +690,9 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
         }
 
         case 'CANCEL_FLOW':
+          if (brainState.lockedTabId) {
+            dispatchToTab(brainState.lockedTabId, { type: 'STOP_PICK_MODE' });
+          }
           resetState();
           response = { success: true, state: 'IDLE' };
           break;
