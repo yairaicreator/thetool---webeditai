@@ -336,7 +336,7 @@ function renderEditHistoryView() {
     els.editHistoryView.innerHTML =
       '<div class="webedit-edit-history-state">' +
         '<h3>No edits yet</h3>' +
-        '<p>Once you make edits on websites, they will appear here.</p>' +
+        '<p>Make edits to view them here.</p>' +
       '</div>';
     return;
   }
