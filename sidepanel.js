@@ -166,6 +166,7 @@ let historySites = [];
 let historyLoading = false;
 let historyError = '';
 let selectedHistoryPageKey = '';
+let selectedHistoryCategory = 'remove';
 
 function isAuthenticated() {
   return authState === 'authenticated';
@@ -303,6 +304,16 @@ function renderHistoryCategory(title, key, edits) {
   return html;
 }
 
+function getFaviconUrl(origin) {
+  if (!origin) return '';
+  try {
+    const url = new URL(origin);
+    return 'https://www.google.com/s2/favicons?sz=32&domain=' + encodeURIComponent(url.hostname);
+  } catch (_) {
+    return '';
+  }
+}
+
 function renderEditHistoryView() {
   if (!els.editHistoryView) return;
 
@@ -345,27 +356,51 @@ function renderEditHistoryView() {
   const currentSite = historySites.find(function (site) { return site.pageKey === selectedHistoryPageKey; }) || historySites[0];
   selectedHistoryPageKey = currentSite.pageKey;
 
+  const cats = ['remove', 'add', 'customize'];
+  if (cats.indexOf(selectedHistoryCategory) === -1) selectedHistoryCategory = 'remove';
+
   let html = '<div class="webedit-edit-history-shell">';
+
+  html += '<div class="webedit-edit-history-header-title">';
+  html += '<h2>EditHistory</h2>';
+  html += '<p>All your edits across every website, in one place.</p>';
+  html += '</div>';
+
+  html += '<div class="webedit-edit-history-sites-section">';
+  html += '<div class="webedit-edit-history-sites-label">Websites</div>';
   html += '<div class="webedit-edit-history-sites" role="tablist" aria-label="Edited websites">';
   historySites.forEach(function (site) {
     const activeClass = site.pageKey === currentSite.pageKey ? ' active' : '';
+    const favicon = getFaviconUrl(site.siteOrigin || site.pageKey);
+    const displayTitle = site.siteTitle || site.hostname || 'Untitled';
     html += '<button class="webedit-edit-history-site-tab' + activeClass + '" type="button" data-page-key="' + escapeHtml(site.pageKey) + '">';
-    html += '<span class="webedit-edit-history-site-host">' + escapeHtml(site.hostname) + '</span>';
-    html += '<span class="webedit-edit-history-site-path">' + escapeHtml(site.pageLabel) + '</span>';
+    if (favicon) {
+      html += '<img class="webedit-edit-history-site-favicon" src="' + escapeHtml(favicon) + '" alt="" width="16" height="16">';
+    }
+    html += '<span class="webedit-edit-history-site-title">' + escapeHtml(displayTitle) + '</span>';
+    html += '</button>';
+  });
+  html += '</div>';
+  html += '</div>';
+
+  html += '<div class="webedit-edit-history-site-panel">';
+
+  html += '<div class="webedit-edit-history-cat-tabs" role="tablist" aria-label="Edit categories">';
+  cats.forEach(function (cat) {
+    const count = (currentSite.categories && currentSite.categories[cat]) ? currentSite.categories[cat].length : 0;
+    const activeClass = cat === selectedHistoryCategory ? ' active' : '';
+    html += '<button class="webedit-edit-history-cat-tab' + activeClass + '" type="button" data-cat="' + cat + '">';
+    html += escapeHtml(cat.charAt(0).toUpperCase() + cat.slice(1));
+    html += '<span class="webedit-edit-history-cat-count">' + count + '</span>';
     html += '</button>';
   });
   html += '</div>';
 
-  html += '<div class="webedit-edit-history-site-panel">';
-  html += '<div class="webedit-edit-history-site-header">';
-  html += '<div>';
-  html += '<h2>' + escapeHtml(currentSite.hostname) + '</h2>';
-  html += '<p>' + escapeHtml(currentSite.pageLabel) + '</p>';
+  html += '<div class="webedit-edit-history-cat-panel">';
+  var catLabel = selectedHistoryCategory.charAt(0).toUpperCase() + selectedHistoryCategory.slice(1);
+  html += renderHistoryCategory(catLabel, selectedHistoryCategory, currentSite.categories ? currentSite.categories[selectedHistoryCategory] : []);
   html += '</div>';
-  html += '</div>';
-  html += renderHistoryCategory('Remove', 'remove', currentSite.categories?.remove);
-  html += renderHistoryCategory('Add', 'add', currentSite.categories?.add);
-  html += renderHistoryCategory('Customize', 'customize', currentSite.categories?.customize);
+
   html += '</div>';
   html += '</div>';
 
@@ -878,6 +913,14 @@ function registerEventListeners() {
     const siteTab = e.target.closest('.webedit-edit-history-site-tab');
     if (siteTab?.dataset?.pageKey) {
       selectedHistoryPageKey = siteTab.dataset.pageKey;
+      selectedHistoryCategory = 'remove';
+      renderEditHistoryView();
+      return;
+    }
+
+    const catTab = e.target.closest('.webedit-edit-history-cat-tab');
+    if (catTab?.dataset?.cat) {
+      selectedHistoryCategory = catTab.dataset.cat;
       renderEditHistoryView();
       return;
     }

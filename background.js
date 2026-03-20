@@ -384,6 +384,8 @@ function rowToHistoryEntry(row) {
     hostname: pageDetails.hostname,
     pageLabel: pageDetails.pageLabel,
     fullLabel: pageDetails.fullLabel,
+    siteTitle: website.title || '',
+    siteOrigin: website.origin || '',
     selector,
     category,
     summary: String(row.name || payload.summary || '').trim() || getDefaultSummary(category, selector),
@@ -411,6 +413,8 @@ function buildHistorySites(rows) {
         hostname: entry.hostname,
         pageLabel: entry.pageLabel,
         fullLabel: entry.fullLabel,
+        siteTitle: entry.siteTitle,
+        siteOrigin: entry.siteOrigin,
         latestTimestamp: 0,
         categories: {
           remove: [],

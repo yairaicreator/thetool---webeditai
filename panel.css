@@ -460,79 +460,147 @@
   line-height: 1.6;
 }
 
+.webedit-edit-history-header-title {
+  margin-bottom: 4px;
+}
+
+.webedit-edit-history-header-title h2 {
+  margin: 0 0 4px;
+  font-size: 20px;
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: -0.3px;
+}
+
+.webedit-edit-history-header-title p {
+  margin: 0;
+  font-size: 13px;
+  color: #64748b;
+  line-height: 1.5;
+}
+
+.webedit-edit-history-sites-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.webedit-edit-history-sites-label {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: #94a3b8;
+}
+
 .webedit-edit-history-sites {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   overflow-x: auto;
   padding-bottom: 4px;
+  scrollbar-width: thin;
 }
 
 .webedit-edit-history-site-tab {
-  min-width: 140px;
-  border: 1px solid #cbd5e1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  border: 1px solid #e2e8f0;
   background: #ffffff;
-  border-radius: 16px;
-  padding: 12px 14px;
-  text-align: left;
+  border-radius: 10px;
+  padding: 8px 14px;
   cursor: pointer;
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
-  transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+  transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
 }
 
 .webedit-edit-history-site-tab:hover {
-  transform: translateY(-1px);
   border-color: #93c5fd;
+  background: #f8fafc;
 }
 
 .webedit-edit-history-site-tab.active {
   border-color: #2563eb;
   background: #eff6ff;
-  box-shadow: 0 12px 24px rgba(37, 99, 235, 0.16);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.14);
 }
 
-.webedit-edit-history-site-host,
-.webedit-edit-history-site-path {
-  display: block;
+.webedit-edit-history-site-favicon {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  flex-shrink: 0;
 }
 
-.webedit-edit-history-site-host {
+.webedit-edit-history-site-title {
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
   color: #0f172a;
-}
-
-.webedit-edit-history-site-path {
-  margin-top: 4px;
-  font-size: 12px;
-  color: #64748b;
-  word-break: break-word;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
 }
 
 .webedit-edit-history-site-panel {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 0;
 }
 
-.webedit-edit-history-site-header {
-  background: linear-gradient(135deg, rgba(255,255,255,0.95), rgba(239,246,255,0.95));
-  border-radius: 20px;
-  padding: 18px;
-  border: 1px solid rgba(191, 219, 254, 0.8);
-  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+.webedit-edit-history-cat-tabs {
+  display: flex;
+  border-bottom: 2px solid #e2e8f0;
+  margin-bottom: 16px;
 }
 
-.webedit-edit-history-site-header h2 {
-  margin: 0 0 4px;
-  font-size: 18px;
-  color: #0f172a;
-}
-
-.webedit-edit-history-site-header p {
-  margin: 0;
+.webedit-edit-history-cat-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 8px;
   font-size: 13px;
-  color: #475569;
-  word-break: break-word;
+  font-weight: 600;
+  color: #64748b;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s;
+}
+
+.webedit-edit-history-cat-tab:hover {
+  color: #334155;
+}
+
+.webedit-edit-history-cat-tab.active {
+  color: #2563eb;
+  border-bottom-color: #2563eb;
+}
+
+.webedit-edit-history-cat-count {
+  min-width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #e2e8f0;
+  color: #334155;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.webedit-edit-history-cat-tab.active .webedit-edit-history-cat-count {
+  background: #dbeafe;
+  color: #2563eb;
+}
+
+.webedit-edit-history-cat-panel {
+  min-height: 80px;
 }
 
 .webedit-edit-history-category {
