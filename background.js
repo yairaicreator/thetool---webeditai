@@ -3,6 +3,24 @@
 importScripts('supabaseClient.js');
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// SECTION 0: Feature Module Registry (must load before feature importScripts)
+// Each feature file calls registerFeature() to plug into the Brain.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const featureModules = {};
+
+function registerFeature(name, handlers) {
+  featureModules[name] = handlers;
+  console.log('[Brain] Feature registered:', name);
+}
+
+function getFeatureHandler(featureName, handlerName) {
+  return featureModules[featureName]?.[handlerName] || null;
+}
+
+importScripts('features/remove-brain.js');
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 1: Side Panel Activation
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -941,23 +959,7 @@ function validateMessage(message) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SECTION 7: Feature Module Registry (Modularisation Hook)
-// Each feature file calls registerFeature() to plug into the Brain.
-// ═══════════════════════════════════════════════════════════════════════════════
-
-const featureModules = {};
-
-function registerFeature(name, handlers) {
-  featureModules[name] = handlers;
-  console.log('[Brain] Feature registered:', name);
-}
-
-function getFeatureHandler(featureName, handlerName) {
-  return featureModules[featureName]?.[handlerName] || null;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// SECTION 7b: Chat Session CRUD (chrome.storage.local, scoped per user)
+// SECTION 7: Chat Session CRUD (chrome.storage.local, scoped per user)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const CHAT_SESSIONS_KEY = 'webedit_chat_sessions';
@@ -1294,41 +1296,42 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
           brainState.activeFlow.selector = pickedSelector;
           brainState.activeFlow.url = pickedUrl;
 
-          const pickedLedger = await getLedger();
-          if (!pickedLedger[pickedUrl]) {
-            pickedLedger[pickedUrl] = {};
-          }
-          const pickedEditId = generateEditId();
-          pickedLedger[pickedUrl][pickedEditId] = {
-            pageKey: pickedUrl,
-            action: activeFeature,
-            selector: pickedSelector,
-            status: 'active',
-            payload: { selector: pickedSelector },
-            createdAt: Date.now(),
-          };
-          await saveLedger(pickedLedger);
-
-          syncInsertToSupabase(pickedEditId, pickedUrl, pickedLedger[pickedUrl][pickedEditId]);
-
           if (brainState.lockedTabId) {
             dispatchToTab(brainState.lockedTabId, { type: 'STOP_PICK_MODE' });
           }
-
-          chrome.runtime.sendMessage({
-            type: 'PICK_COMPLETED',
-            feature: activeFeature,
-            selector: pickedSelector,
-            url: pickedUrl,
-            editId: pickedEditId
-          }).catch(() => {});
 
           transitionState(BRAIN_STATES.PROCESSING);
 
           const pickHandler = getFeatureHandler(activeFeature, 'onElementPicked');
           if (pickHandler) {
+            // Feature module owns saving, dispatching, and resetting
             response = await pickHandler(callerTabId, message);
           } else {
+            // Default path for features without a registered module
+            const pickedLedger = await getLedger();
+            if (!pickedLedger[pickedUrl]) {
+              pickedLedger[pickedUrl] = {};
+            }
+            const pickedEditId = generateEditId();
+            pickedLedger[pickedUrl][pickedEditId] = {
+              pageKey: pickedUrl,
+              action: activeFeature,
+              selector: pickedSelector,
+              status: 'active',
+              payload: { selector: pickedSelector },
+              createdAt: Date.now(),
+            };
+            await saveLedger(pickedLedger);
+            syncInsertToSupabase(pickedEditId, pickedUrl, pickedLedger[pickedUrl][pickedEditId]);
+
+            chrome.runtime.sendMessage({
+              type: 'PICK_COMPLETED',
+              feature: activeFeature,
+              selector: pickedSelector,
+              url: pickedUrl,
+              editId: pickedEditId
+            }).catch(() => {});
+
             resetState();
             response = {
               success: true,

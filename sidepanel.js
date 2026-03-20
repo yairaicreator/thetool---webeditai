@@ -1004,4 +1004,10 @@ function registerEventListeners() {
   registerEventListeners();
 })();
 
+// Expose a minimal API so per-feature panel modules can display messages
+window.WebEditPanel = {
+  showNotification: showNotification,
+  addChatMessage: addChatMessage,
+};
+
 })();
