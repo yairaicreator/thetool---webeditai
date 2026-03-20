@@ -558,23 +558,18 @@
       case 'APPLY_BLUEPRINTS':
         handleExecuteBlueprint(message.blueprints);
         sendResponse({ success: true });
-        break;
+        return true;
 
       case 'START_PICK_MODE':
         handleStartPickMode(message.feature);
         sendResponse({ success: true });
-        break;
+        return true;
 
       case 'STOP_PICK_MODE':
         handleStopPickMode();
         sendResponse({ success: true });
-        break;
-
-      default:
-        break;
+        return true;
     }
-
-    return true;
   });
 
   // ═══════════════════════════════════════════════════════════════════════════════

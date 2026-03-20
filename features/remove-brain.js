@@ -19,68 +19,70 @@ registerFeature('remove', {
     var url = flow.url || '';
     var selector = flow.selector || '';
     var lockedTabId = brainState.lockedTabId;
-
-    // ── Step 1: Save to Global Ledger ──────────────────────────────────────
-
-    var ledger = await getLedger();
-    if (!ledger[url]) {
-      ledger[url] = {};
-    }
-
-    var editId = generateEditId();
-    var editData = {
-      pageKey: url,
-      action: 'remove',
-      selector: selector,
-      status: 'active',
-      payload: { selector: selector },
-      createdAt: Date.now(),
-    };
-
-    ledger[url][editId] = editData;
-    await saveLedger(ledger);
-
-    // ── Step 2: Sync to Supabase (fire-and-forget) ─────────────────────────
-
-    syncInsertToSupabase(editId, url, editData);
-
-    // ── Step 3: Targeted Dispatch — element hidden instantly ────────────────
+    var editId;
 
     try {
-      await dispatchBlueprintsForPage(url, lockedTabId);
-    } catch (e) {
-      console.warn('[Remove-Brain] Blueprint dispatch failed:', e.message);
+      // ── Step 1: Save to Global Ledger ────────────────────────────────────
+
+      var ledger = await getLedger();
+      if (!ledger[url]) {
+        ledger[url] = {};
+      }
+
+      editId = generateEditId();
+      var editData = {
+        pageKey: url,
+        action: 'remove',
+        selector: selector,
+        status: 'active',
+        payload: { selector: selector },
+        createdAt: Date.now(),
+      };
+
+      ledger[url][editId] = editData;
+      await saveLedger(ledger);
+
+      // ── Step 2: Sync to Supabase (fire-and-forget) ───────────────────────
+
+      syncInsertToSupabase(editId, url, editData);
+
+      // ── Step 3: Targeted Dispatch — element hidden instantly ──────────────
+
+      try {
+        await dispatchBlueprintsForPage(url, lockedTabId);
+      } catch (e) {
+        console.warn('[Remove-Brain] Blueprint dispatch failed:', e.message);
+      }
+
+      // ── Step 4: Broadcast updates to Panel ───────────────────────────────
+
+      try {
+        await broadcastHistoryUpdate();
+      } catch (e) {
+        console.warn('[Remove-Brain] History broadcast failed:', e.message);
+      }
+
+      chrome.runtime.sendMessage({
+        type: 'PICK_COMPLETED',
+        feature: 'remove',
+        selector: selector,
+        url: url,
+        editId: editId
+      }).catch(function () {});
+
+      var summary = selectorToHumanLabel(selector);
+
+      chrome.runtime.sendMessage({
+        type: 'REMOVE_COMPLETED',
+        selector: selector,
+        url: url,
+        editId: editId,
+        summary: summary
+      }).catch(function () {});
+    } finally {
+      // ── Step 5: Reset state machine (always runs) ────────────────────────
+      resetState();
     }
-
-    // ── Step 4: Broadcast updates to Panel ─────────────────────────────────
-
-    try {
-      await broadcastHistoryUpdate();
-    } catch (e) {
-      console.warn('[Remove-Brain] History broadcast failed:', e.message);
-    }
-
-    chrome.runtime.sendMessage({
-      type: 'PICK_COMPLETED',
-      feature: 'remove',
-      selector: selector,
-      url: url,
-      editId: editId
-    }).catch(function () {});
-
-    var summary = selectorToHumanLabel(selector);
-
-    chrome.runtime.sendMessage({
-      type: 'REMOVE_COMPLETED',
-      selector: selector,
-      url: url,
-      editId: editId,
-      summary: summary
-    }).catch(function () {});
-
-    // ── Step 5: Reset state machine ────────────────────────────────────────
-
-    resetState();
 
     return {
       success: true,
