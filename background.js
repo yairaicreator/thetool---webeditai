@@ -529,6 +529,7 @@ async function fetchHistoryRows(options = {}) {
   const params = new URLSearchParams();
   params.set('select', 'id,page_key,selector,action,metadata,active,created_at,updated_at');
   params.set('order', 'created_at.desc');
+  params.set('user_id', 'eq.' + auth.userId);
 
   if (options.editId) {
     params.set('id', 'eq.' + options.editId);
