@@ -1,55 +1,92 @@
--- WebEdit AI - Supabase Schema for Edit Rules
--- This table stores persistent edit rules for authenticated users
+-- WebEdit AI - Supabase Schema (actual production tables)
+-- Two tables: websites + edits, linked by website_id FK.
 
--- Create the edit_rules table
-CREATE TABLE IF NOT EXISTS public.edit_rules (
-  id TEXT PRIMARY KEY,
+-- ═══════════════════════════════════════════════════════════════════
+-- TABLE: websites
+-- Stores each unique URL a user has made edits on.
+-- ═══════════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS public.websites (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  page_key TEXT NOT NULL,
-  selector TEXT NOT NULL,
-  action TEXT NOT NULL CHECK (action IN ('hide', 'remove', 'style', 'text', 'custom')),
-  metadata JSONB DEFAULT '{}',
-  active BOOLEAN DEFAULT true,
+  full_url TEXT NOT NULL,
+  origin TEXT,
+  path TEXT,
+  title TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Create indexes for performance
-CREATE INDEX IF NOT EXISTS idx_edit_rules_user_id ON public.edit_rules(user_id);
-CREATE INDEX IF NOT EXISTS idx_edit_rules_page_key ON public.edit_rules(page_key);
-CREATE INDEX IF NOT EXISTS idx_edit_rules_user_page ON public.edit_rules(user_id, page_key);
-CREATE INDEX IF NOT EXISTS idx_edit_rules_active ON public.edit_rules(active);
+CREATE INDEX IF NOT EXISTS idx_websites_user_id ON public.websites(user_id);
+CREATE INDEX IF NOT EXISTS idx_websites_full_url ON public.websites(user_id, full_url);
 
--- Enable Row Level Security
-ALTER TABLE public.edit_rules ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.websites ENABLE ROW LEVEL SECURITY;
 
--- Create policies for RLS
--- Users can only read their own rules
-CREATE POLICY "Users can read own rules"
-  ON public.edit_rules
-  FOR SELECT
+CREATE POLICY "Users can read own websites"
+  ON public.websites FOR SELECT
   USING (auth.uid() = user_id);
 
--- Users can insert their own rules
-CREATE POLICY "Users can insert own rules"
-  ON public.edit_rules
-  FOR INSERT
+CREATE POLICY "Users can insert own websites"
+  ON public.websites FOR INSERT
   WITH CHECK (auth.uid() = user_id);
 
--- Users can update their own rules
-CREATE POLICY "Users can update own rules"
-  ON public.edit_rules
-  FOR UPDATE
+CREATE POLICY "Users can update own websites"
+  ON public.websites FOR UPDATE
   USING (auth.uid() = user_id)
   WITH CHECK (auth.uid() = user_id);
 
--- Users can delete their own rules
-CREATE POLICY "Users can delete own rules"
-  ON public.edit_rules
-  FOR DELETE
+CREATE POLICY "Users can delete own websites"
+  ON public.websites FOR DELETE
   USING (auth.uid() = user_id);
 
--- Create a function to automatically update the updated_at timestamp
+-- ═══════════════════════════════════════════════════════════════════
+-- TABLE: edits
+-- Every individual edit a user has made, linked to a website row.
+-- ═══════════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS public.edits (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  website_id UUID NOT NULL REFERENCES public.websites(id) ON DELETE CASCADE,
+  edit_type TEXT NOT NULL CHECK (edit_type IN ('remove', 'add', 'customize')),
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+  name TEXT,
+  description TEXT,
+  payload JSONB DEFAULT '{}',
+  before_image_url TEXT,
+  after_image_url TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_edits_user_id ON public.edits(user_id);
+CREATE INDEX IF NOT EXISTS idx_edits_website_id ON public.edits(website_id);
+CREATE INDEX IF NOT EXISTS idx_edits_user_website ON public.edits(user_id, website_id);
+CREATE INDEX IF NOT EXISTS idx_edits_status ON public.edits(status);
+
+ALTER TABLE public.edits ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can read own edits"
+  ON public.edits FOR SELECT
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert own edits"
+  ON public.edits FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update own edits"
+  ON public.edits FOR UPDATE
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete own edits"
+  ON public.edits FOR DELETE
+  USING (auth.uid() = user_id);
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Auto-update trigger for updated_at
+-- ═══════════════════════════════════════════════════════════════════
+
 CREATE OR REPLACE FUNCTION public.handle_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -58,26 +95,19 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Create a trigger to call the function
-DROP TRIGGER IF EXISTS set_updated_at ON public.edit_rules;
-CREATE TRIGGER set_updated_at
-  BEFORE UPDATE ON public.edit_rules
-  FOR EACH ROW
-  EXECUTE FUNCTION public.handle_updated_at();
+DROP TRIGGER IF EXISTS set_updated_at_websites ON public.websites;
+CREATE TRIGGER set_updated_at_websites
+  BEFORE UPDATE ON public.websites
+  FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
 
--- Optional: Create a view for active rules only
-CREATE OR REPLACE VIEW public.active_edit_rules AS
-  SELECT * FROM public.edit_rules
-  WHERE active = true
-  ORDER BY created_at DESC;
+DROP TRIGGER IF EXISTS set_updated_at_edits ON public.edits;
+CREATE TRIGGER set_updated_at_edits
+  BEFORE UPDATE ON public.edits
+  FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
 
--- Grant permissions (adjust as needed for your setup)
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.edit_rules TO authenticated;
-GRANT SELECT ON public.active_edit_rules TO authenticated;
+-- ═══════════════════════════════════════════════════════════════════
+-- Grants
+-- ═══════════════════════════════════════════════════════════════════
 
--- Example query to get rules for a specific page
--- SELECT * FROM edit_rules WHERE user_id = 'user-uuid' AND page_key = 'example.com/path' AND active = true;
-
--- Example query to get all rules for a user
--- SELECT * FROM edit_rules WHERE user_id = 'user-uuid' ORDER BY created_at DESC;
-
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.websites TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.edits TO authenticated;

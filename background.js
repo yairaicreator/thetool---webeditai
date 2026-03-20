@@ -194,26 +194,6 @@ function getCategoryFromAction(action, metadata) {
   }
 }
 
-function getDbActionFromEdit(action, payload) {
-  const normalized = String(action || '').toLowerCase();
-  const blueprint = isPlainObject(payload) ? payload : {};
-
-  switch (normalized) {
-    case 'remove':
-    case 'hide':
-      return 'remove';
-    case 'customize':
-    case 'style':
-      return 'style';
-    case 'add':
-      return blueprint.html || blueprint.js ? 'custom' : 'text';
-    case 'text':
-    case 'custom':
-      return normalized;
-    default:
-      return 'custom';
-  }
-}
 
 function getDefaultPreview(category, phase) {
   if (category === 'remove') {
@@ -279,51 +259,20 @@ function buildHistoryMetadata(editData) {
   const description = String(payload.description || payload.details || payload.prompt || '').trim()
     || getDefaultDescription(category, editData?.selector);
 
-  return {
-    historyCategory: category,
-    summary,
-    description,
-    beforePreview: normalizePreviewToken(
-      payload.beforePreview || payload.before || payload.previewBefore,
-      getDefaultPreview(category, 'before')
-    ),
-    afterPreview: normalizePreviewToken(
-      payload.afterPreview || payload.after || payload.previewAfter,
-      getDefaultPreview(category, 'after')
-    ),
-    blueprint: payload
-  };
-}
-
-function extractBlueprintPayload(metadata) {
-  const meta = isPlainObject(metadata) ? metadata : {};
-  if (isPlainObject(meta.blueprint)) {
-    return meta.blueprint;
-  }
-  if (isPlainObject(meta.payload)) {
-    return meta.payload;
-  }
-
-  const fallback = { ...meta };
-  delete fallback.historyCategory;
-  delete fallback.summary;
-  delete fallback.description;
-  delete fallback.beforePreview;
-  delete fallback.afterPreview;
-  return fallback;
+  return { summary, description };
 }
 
 function rowToLedgerEdit(row) {
-  const pageKey = normalizePageKey(row?.page_key || '');
-  const metadata = isPlainObject(row?.metadata) ? row.metadata : {};
-  const payload = extractBlueprintPayload(metadata);
-  const category = getCategoryFromAction(row?.action, metadata);
+  const website = isPlainObject(row?.websites) ? row.websites : {};
+  const pageKey = normalizePageKey(website.full_url || '');
+  const payload = isPlainObject(row?.payload) ? row.payload : {};
+  const category = getCategoryFromAction(row?.edit_type, payload);
 
   return {
     pageKey,
     action: category,
-    selector: row?.selector || '',
-    status: row?.active ? 'active' : 'inactive',
+    selector: payload.selector || '',
+    status: row?.status === 'active' ? 'active' : 'inactive',
     payload,
     createdAt: row?.created_at ? Date.parse(row.created_at) : Date.now(),
     updatedAt: row?.updated_at ? Date.parse(row.updated_at) : null,
@@ -362,13 +311,22 @@ function parsePageDetails(pageKey) {
 }
 
 function rowToHistoryEntry(row) {
-  const metadata = isPlainObject(row?.metadata) ? row.metadata : {};
-  const category = getCategoryFromAction(row?.action, metadata);
-  const payload = extractBlueprintPayload(metadata);
-  const pageKey = normalizePageKey(row?.page_key || '');
+  const website = isPlainObject(row?.websites) ? row.websites : {};
+  const payload = isPlainObject(row?.payload) ? row.payload : {};
+  const category = getCategoryFromAction(row?.edit_type, payload);
+  const pageKey = normalizePageKey(website.full_url || '');
   const pageDetails = parsePageDetails(pageKey);
-  const previewBefore = normalizePreviewToken(metadata.beforePreview, getDefaultPreview(category, 'before'));
-  const previewAfter = normalizePreviewToken(metadata.afterPreview, getDefaultPreview(category, 'after'));
+
+  const previewBefore = normalizePreviewToken(
+    payload.beforePreview || payload.before,
+    getDefaultPreview(category, 'before')
+  );
+  const previewAfter = normalizePreviewToken(
+    payload.afterPreview || payload.after,
+    getDefaultPreview(category, 'after')
+  );
+
+  const selector = payload.selector || '';
 
   return {
     id: row.id,
@@ -376,11 +334,11 @@ function rowToHistoryEntry(row) {
     hostname: pageDetails.hostname,
     pageLabel: pageDetails.pageLabel,
     fullLabel: pageDetails.fullLabel,
-    selector: row.selector || '',
+    selector,
     category,
-    summary: String(metadata.summary || payload.summary || '').trim() || getDefaultSummary(category, row.selector),
-    description: String(metadata.description || payload.description || '').trim() || getDefaultDescription(category, row.selector),
-    isActive: !!row.active,
+    summary: String(row.name || payload.summary || '').trim() || getDefaultSummary(category, selector),
+    description: String(row.description || payload.description || '').trim() || getDefaultDescription(category, selector),
+    isActive: row.status === 'active',
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
     previews: {
@@ -452,6 +410,60 @@ async function getSessionInfo() {
   }
 }
 
+async function ensureWebsiteRow(auth, url) {
+  const normalizedUrl = normalizePageKey(url);
+  if (!normalizedUrl) return null;
+
+  let parsed;
+  try { parsed = new URL(normalizedUrl); } catch (_) { return null; }
+
+  const origin = parsed.origin || '';
+  const path = parsed.pathname || '/';
+
+  const checkResp = await fetch(
+    `${SUPABASE_URL}/rest/v1/websites?user_id=eq.${auth.userId}&full_url=eq.${encodeURIComponent(normalizedUrl)}&select=id`,
+    {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${auth.accessToken}`,
+      }
+    }
+  );
+
+  const existing = await checkResp.json().catch(() => []);
+  if (Array.isArray(existing) && existing.length > 0 && existing[0].id) {
+    return existing[0].id;
+  }
+
+  const insertResp = await fetch(`${SUPABASE_URL}/rest/v1/websites`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': `Bearer ${auth.accessToken}`,
+      'Prefer': 'return=representation',
+    },
+    body: JSON.stringify({
+      user_id: auth.userId,
+      full_url: normalizedUrl,
+      origin: origin,
+      path: path,
+      title: parsed.hostname || normalizedUrl,
+    }),
+  });
+
+  const inserted = await insertResp.json().catch(() => []);
+  if (Array.isArray(inserted) && inserted.length > 0 && inserted[0].id) {
+    return inserted[0].id;
+  }
+  if (inserted && inserted.id) {
+    return inserted.id;
+  }
+  return null;
+}
+
 async function syncInsertToSupabase(editId, url, editData) {
   try {
     const auth = await getSessionInfo();
@@ -460,8 +472,14 @@ async function syncInsertToSupabase(editId, url, editData) {
       return;
     }
 
-    const normalizedUrl = normalizePageKey(url);
-    const response = await fetch(`${SUPABASE_URL}/rest/v1/edit_rules`, {
+    const websiteId = await ensureWebsiteRow(auth, url);
+    if (!websiteId) {
+      console.warn('[Brain] Could not resolve website row — skipping Supabase insert.');
+      return;
+    }
+
+    const historyMeta = buildHistoryMetadata(editData);
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/edits`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -470,13 +488,15 @@ async function syncInsertToSupabase(editId, url, editData) {
         'Prefer': 'return=minimal',
       },
       body: JSON.stringify({
-        id: editId,
         user_id: auth.userId,
-        page_key: normalizedUrl,
-        selector: editData.selector,
-        action: getDbActionFromEdit(editData.action, editData.payload),
-        metadata: buildHistoryMetadata(editData),
-        active: true,
+        website_id: websiteId,
+        edit_type: getCategoryFromAction(editData.action, editData.payload),
+        status: 'active',
+        name: historyMeta.summary || '',
+        description: historyMeta.description || '',
+        payload: isPlainObject(editData.payload) ? editData.payload : {},
+        before_image_url: null,
+        after_image_url: null,
       }),
     });
 
@@ -498,7 +518,7 @@ async function syncStatusToSupabase(editId, newStatus) {
     }
 
     const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/edit_rules?id=eq.${encodeURIComponent(editId)}`,
+      `${SUPABASE_URL}/rest/v1/edits?id=eq.${encodeURIComponent(editId)}`,
       {
         method: 'PATCH',
         headers: {
@@ -507,7 +527,7 @@ async function syncStatusToSupabase(editId, newStatus) {
           'Authorization': `Bearer ${auth.accessToken}`,
           'Prefer': 'return=minimal',
         },
-        body: JSON.stringify({ active: newStatus === 'active' }),
+        body: JSON.stringify({ status: newStatus === 'active' ? 'active' : 'inactive' }),
       }
     );
 
@@ -527,7 +547,7 @@ async function fetchHistoryRows(options = {}) {
   }
 
   const params = new URLSearchParams();
-  params.set('select', 'id,page_key,selector,action,metadata,active,created_at,updated_at');
+  params.set('select', 'id,user_id,website_id,edit_type,status,name,description,before_image_url,after_image_url,created_at,updated_at,payload,websites(id,full_url,origin,path,title)');
   params.set('order', 'created_at.desc');
   params.set('user_id', 'eq.' + auth.userId);
 
@@ -535,16 +555,16 @@ async function fetchHistoryRows(options = {}) {
     params.set('id', 'eq.' + options.editId);
   }
 
-  if (options.pageKey) {
-    params.set('page_key', 'eq.' + normalizePageKey(options.pageKey));
+  if (options.websiteId) {
+    params.set('website_id', 'eq.' + options.websiteId);
   }
 
   if (options.activeOnly) {
-    params.set('active', 'eq.true');
+    params.set('status', 'eq.active');
   }
 
   try {
-    const response = await fetch(`${SUPABASE_URL}/rest/v1/edit_rules?${params.toString()}`, {
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/edits?${params.toString()}`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
@@ -568,6 +588,41 @@ async function fetchHistoryRows(options = {}) {
   }
 }
 
+async function fetchHistoryRowsByPageKey(pageKey) {
+  const auth = await getSessionInfo();
+  if (!auth) {
+    return { success: false, error: 'Not authenticated', rows: [] };
+  }
+
+  const normalizedUrl = normalizePageKey(pageKey);
+  if (!normalizedUrl) {
+    return { success: false, error: 'Invalid page key', rows: [] };
+  }
+
+  try {
+    const siteResp = await fetch(
+      `${SUPABASE_URL}/rest/v1/websites?user_id=eq.${auth.userId}&full_url=eq.${encodeURIComponent(normalizedUrl)}&select=id`,
+      {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${auth.accessToken}`,
+        }
+      }
+    );
+
+    const sites = await siteResp.json().catch(() => []);
+    if (!Array.isArray(sites) || sites.length === 0) {
+      return { success: true, rows: [] };
+    }
+
+    return fetchHistoryRows({ websiteId: sites[0].id });
+  } catch (e) {
+    return { success: false, error: e.message, rows: [] };
+  }
+}
+
 async function getHistoryPayload() {
   const historyResult = await fetchHistoryRows();
   if (!historyResult.success) {
@@ -586,7 +641,7 @@ async function syncLedgerPageFromSupabase(pageKey) {
     return { success: false, error: 'Missing page key', blueprints: {} };
   }
 
-  const pageRowsResult = await fetchHistoryRows({ pageKey: normalizedPageKey });
+  const pageRowsResult = await fetchHistoryRowsByPageKey(normalizedPageKey);
   if (!pageRowsResult.success) {
     return { success: false, error: pageRowsResult.error, blueprints: {} };
   }
@@ -690,7 +745,8 @@ async function handleToggleHistoryEdit(message) {
     return { success: false, error: 'NOT_FOUND' };
   }
 
-  const nextActive = !row.active;
+  const isCurrentlyActive = row.status === 'active';
+  const nextStatus = isCurrentlyActive ? 'inactive' : 'active';
   const auth = await getSessionInfo();
   if (!auth) {
     return { success: false, error: 'Not authenticated' };
@@ -698,7 +754,7 @@ async function handleToggleHistoryEdit(message) {
 
   try {
     const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/edit_rules?id=eq.${encodeURIComponent(editId)}`,
+      `${SUPABASE_URL}/rest/v1/edits?id=eq.${encodeURIComponent(editId)}`,
       {
         method: 'PATCH',
         headers: {
@@ -707,7 +763,7 @@ async function handleToggleHistoryEdit(message) {
           'Authorization': `Bearer ${auth.accessToken}`,
           'Prefer': 'return=minimal',
         },
-        body: JSON.stringify({ active: nextActive })
+        body: JSON.stringify({ status: nextStatus })
       }
     );
 
@@ -719,7 +775,9 @@ async function handleToggleHistoryEdit(message) {
     return { success: false, error: e.message };
   }
 
-  const syncedPage = await syncLedgerPageFromSupabase(row.page_key);
+  const website = isPlainObject(row.websites) ? row.websites : {};
+  const pageKey = website.full_url || '';
+  const syncedPage = await syncLedgerPageFromSupabase(pageKey);
   if (syncedPage.success) {
     await dispatchBlueprintsForPage(syncedPage.pageKey, null);
   }
@@ -727,8 +785,8 @@ async function handleToggleHistoryEdit(message) {
   const historyPayload = await broadcastHistoryUpdate();
   return {
     success: true,
-    pageKey: normalizePageKey(row.page_key),
-    isActive: nextActive,
+    pageKey: normalizePageKey(pageKey),
+    isActive: nextStatus === 'active',
     sites: historyPayload.sites || []
   };
 }
