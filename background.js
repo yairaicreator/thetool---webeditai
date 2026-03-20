@@ -171,15 +171,15 @@ function normalizePageKey(url) {
   }
 }
 
-function getCategoryFromAction(action, metadata) {
-  const meta = isPlainObject(metadata) ? metadata : {};
+function getCategoryFromAction(editType, payloadOrMeta) {
+  const meta = isPlainObject(payloadOrMeta) ? payloadOrMeta : {};
   const explicit = String(meta.historyCategory || meta.category || meta.feature || '').toLowerCase();
 
   if (explicit === 'remove' || explicit === 'add' || explicit === 'customize') {
     return explicit;
   }
 
-  switch (String(action || '').toLowerCase()) {
+  switch (String(editType || '').toLowerCase()) {
     case 'hide':
     case 'remove':
       return 'remove';
@@ -194,6 +194,26 @@ function getCategoryFromAction(action, metadata) {
   }
 }
 
+function getDbActionFromEdit(action, payload) {
+  const normalized = String(action || '').toLowerCase();
+  const blueprint = isPlainObject(payload) ? payload : {};
+
+  switch (normalized) {
+    case 'remove':
+    case 'hide':
+      return 'remove';
+    case 'customize':
+    case 'style':
+      return 'style';
+    case 'add':
+      return blueprint.html || blueprint.js ? 'custom' : 'text';
+    case 'text':
+    case 'custom':
+      return normalized;
+    default:
+      return 'custom';
+  }
+}
 
 function getDefaultPreview(category, phase) {
   if (category === 'remove') {
@@ -259,7 +279,38 @@ function buildHistoryMetadata(editData) {
   const description = String(payload.description || payload.details || payload.prompt || '').trim()
     || getDefaultDescription(category, editData?.selector);
 
-  return { summary, description };
+  return {
+    historyCategory: category,
+    summary,
+    description,
+    beforePreview: normalizePreviewToken(
+      payload.beforePreview || payload.before || payload.previewBefore,
+      getDefaultPreview(category, 'before')
+    ),
+    afterPreview: normalizePreviewToken(
+      payload.afterPreview || payload.after || payload.previewAfter,
+      getDefaultPreview(category, 'after')
+    ),
+    blueprint: payload
+  };
+}
+
+function extractBlueprintPayload(metadata) {
+  const meta = isPlainObject(metadata) ? metadata : {};
+  if (isPlainObject(meta.blueprint)) {
+    return meta.blueprint;
+  }
+  if (isPlainObject(meta.payload)) {
+    return meta.payload;
+  }
+
+  const fallback = { ...meta };
+  delete fallback.historyCategory;
+  delete fallback.summary;
+  delete fallback.description;
+  delete fallback.beforePreview;
+  delete fallback.afterPreview;
+  return fallback;
 }
 
 function rowToLedgerEdit(row) {
@@ -316,6 +367,7 @@ function rowToHistoryEntry(row) {
   const category = getCategoryFromAction(row?.edit_type, payload);
   const pageKey = normalizePageKey(website.full_url || '');
   const pageDetails = parsePageDetails(pageKey);
+  const selector = payload.selector || '';
 
   const previewBefore = normalizePreviewToken(
     payload.beforePreview || payload.before,
@@ -325,8 +377,6 @@ function rowToHistoryEntry(row) {
     payload.afterPreview || payload.after,
     getDefaultPreview(category, 'after')
   );
-
-  const selector = payload.selector || '';
 
   return {
     id: row.id,
@@ -341,6 +391,8 @@ function rowToHistoryEntry(row) {
     isActive: row.status === 'active',
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
+    beforeImageUrl: row.before_image_url || null,
+    afterImageUrl: row.after_image_url || null,
     previews: {
       before: previewBefore,
       after: previewAfter
@@ -611,7 +663,6 @@ async function fetchHistoryRowsByPageKey(pageKey) {
         }
       }
     );
-
     const sites = await siteResp.json().catch(() => []);
     if (!Array.isArray(sites) || sites.length === 0) {
       return { success: true, rows: [] };
@@ -777,9 +828,11 @@ async function handleToggleHistoryEdit(message) {
 
   const website = isPlainObject(row.websites) ? row.websites : {};
   const pageKey = website.full_url || '';
-  const syncedPage = await syncLedgerPageFromSupabase(pageKey);
-  if (syncedPage.success) {
-    await dispatchBlueprintsForPage(syncedPage.pageKey, null);
+  if (pageKey) {
+    const syncedPage = await syncLedgerPageFromSupabase(pageKey);
+    if (syncedPage.success) {
+      await dispatchBlueprintsForPage(syncedPage.pageKey, null);
+    }
   }
 
   const historyPayload = await broadcastHistoryUpdate();
