@@ -53,11 +53,10 @@ registerFeature('remove', {
 
       // ── Step 3: Await Supabase insert (must finish before history read) ──
 
-      try {
-        await syncInsertToSupabase(editId, url, editData);
-      } catch (e) {
+      var insertOk = await syncInsertToSupabase(editId, url, editData);
+      if (!insertOk) {
         syncFailed = true;
-        console.warn('[Remove-Brain] Supabase sync failed:', e.message);
+        console.warn('[Remove-Brain] Supabase sync returned failure');
       }
 
       // ── Step 4: Broadcast history (row now exists in Supabase) ───────────

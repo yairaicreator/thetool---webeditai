@@ -543,13 +543,13 @@ async function syncInsertToSupabase(editId, url, editData) {
     const auth = await getSessionInfo();
     if (!auth) {
       console.warn('[Brain] No active session — skipping Supabase insert.');
-      return;
+      return false;
     }
 
     const websiteId = await ensureWebsiteRow(auth, url);
     if (!websiteId) {
       console.warn('[Brain] Could not resolve website row — skipping Supabase insert.');
-      return;
+      return false;
     }
 
     const historyMeta = buildHistoryMetadata(editData);
@@ -577,9 +577,13 @@ async function syncInsertToSupabase(editId, url, editData) {
     if (!response.ok) {
       const text = await response.text().catch(() => '');
       console.warn(`[Brain] Supabase insert failed (${response.status}):`, text);
+      return false;
     }
+
+    return true;
   } catch (e) {
     console.warn('[Brain] Supabase insert network error:', e.message);
+    return false;
   }
 }
 
