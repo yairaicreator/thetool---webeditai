@@ -1137,8 +1137,14 @@ async function dispatchToTab(tabId, payload) {
 async function resolveTargetTabId(callerTabId) {
   if (callerTabId) return callerTabId;
   try {
-    var tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    return (tabs[0] && tabs[0].id) ? tabs[0].id : null;
+    var tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    for (var i = 0; i < tabs.length; i++) {
+      var url = tabs[i].url || '';
+      if (tabs[i].id && url.startsWith('http')) {
+        return tabs[i].id;
+      }
+    }
+    return null;
   } catch (_) {
     return null;
   }
@@ -1265,20 +1271,33 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
 
         case 'START_PICK_MODE': {
           const feature = message.feature;
-          if (isFlowConflict(feature)) {
-            response = { success: false, error: 'FLOW_CONFLICT', activeFlow: brainState.activeFlow };
+
+          if (brainState.current !== BRAIN_STATES.IDLE) {
+            if (brainState.lockedTabId) {
+              dispatchToTab(brainState.lockedTabId, { type: 'STOP_PICK_MODE' });
+            }
+            resetState();
+          }
+
+          const pickTabId = await resolveTargetTabId(callerTabId);
+          if (!pickTabId) {
+            response = { success: false, error: 'No active website tab found. Please open or focus a website tab.' };
             break;
           }
-          const pickTabId = await resolveTargetTabId(callerTabId);
+
           transitionState(BRAIN_STATES.PICKING, { feature, tabId: pickTabId });
+
           const startHandler = getFeatureHandler(feature, 'onStartPick');
           if (startHandler) {
             response = await startHandler(pickTabId, message);
           } else {
             response = { success: true, state: 'PICKING', feature };
           }
-          if (pickTabId) {
-            dispatchToTab(pickTabId, { type: 'START_PICK_MODE', feature: feature });
+
+          const dispatchResult = await dispatchToTab(pickTabId, { type: 'START_PICK_MODE', feature: feature });
+          if (!dispatchResult || !dispatchResult.success) {
+            resetState();
+            response = { success: false, error: 'Could not reach the website. Please reload the page and try again.' };
           }
           break;
         }
@@ -1383,5 +1402,16 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     }
   } catch (e) {
     console.warn('[Brain] Tab lifecycle dispatch error:', e.message);
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SECTION 13: Tab Close Guard
+// If the tab that Pick Mode is running on gets closed, cancel the flow.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+chrome.tabs.onRemoved.addListener(function (tabId) {
+  if (brainState.lockedTabId === tabId && brainState.current !== BRAIN_STATES.IDLE) {
+    resetState();
   }
 });
