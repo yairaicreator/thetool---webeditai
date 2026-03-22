@@ -782,6 +782,47 @@
   margin: 0;
 }
 
+.webedit-chat-action-buttons {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.webedit-chat-action-btn {
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 5px 16px;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.webedit-chat-action-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.webedit-chat-undo-btn {
+  background: #fee2e2;
+  color: #991b1b;
+  border-color: #fca5a5;
+}
+
+.webedit-chat-undo-btn:not(:disabled):hover {
+  background: #fecaca;
+}
+
+.webedit-chat-redo-btn {
+  background: #dcfce7;
+  color: #166534;
+  border-color: #86efac;
+}
+
+.webedit-chat-redo-btn:not(:disabled):hover {
+  background: #bbf7d0;
+}
+
 .webedit-btn-small {
   font-size: 12px;
   border-radius: 999px;

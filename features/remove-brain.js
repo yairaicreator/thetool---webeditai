@@ -71,15 +71,16 @@ registerFeature('remove', {
 
       // ── Step 5: Notify Panel ─────────────────────────────────────────────
 
+      var summary = selectorToHumanLabel(selector);
+
       chrome.runtime.sendMessage({
         type: 'PICK_COMPLETED',
         feature: 'remove',
         selector: selector,
+        summary: summary,
         url: url,
         editId: editId
       }).catch(function () {});
-
-      var summary = selectorToHumanLabel(selector);
 
       chrome.runtime.sendMessage({
         type: 'REMOVE_COMPLETED',

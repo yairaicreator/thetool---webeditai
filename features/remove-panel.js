@@ -74,10 +74,9 @@
 
       case 'REMOVE_COMPLETED': {
         hideCancelBar();
-        var summary = message.summary || 'an element';
-        var text = 'Element removed: ' + summary;
+        var text = 'Edit saved! You can review it in EditHistory.';
         if (message.syncFailed) {
-          text += ' (saved locally — could not sync to cloud)';
+          text = 'Edit saved locally — could not sync to cloud.';
         }
         notify(text);
         break;

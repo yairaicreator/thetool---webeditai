@@ -211,7 +211,14 @@ function setHistorySites(nextSites) {
   }
 }
 
+function ensureSessionId() {
+  if (!currentSessionId && isAuthenticated()) {
+    currentSessionId = Date.now().toString();
+  }
+}
+
 function addChatMessage(type, content) {
+  ensureSessionId();
   chatMessages.push({ type, content, timestamp: Date.now() });
   if (chatMessages.length > MAX_MESSAGES) {
     chatMessages = chatMessages.slice(-MAX_MESSAGES);
@@ -221,11 +228,13 @@ function addChatMessage(type, content) {
 }
 
 function showNotification(text) {
+  ensureSessionId();
   chatMessages.push({ type: 'system', content: text, timestamp: Date.now() });
   if (chatMessages.length > MAX_MESSAGES) {
     chatMessages = chatMessages.slice(-MAX_MESSAGES);
   }
   renderChatMessages();
+  persistCurrentSession();
 }
 
 function renderChatMessages() {
@@ -240,13 +249,47 @@ function renderChatMessages() {
     return;
   }
 
-  chatMessages.forEach(function (msg) {
+  chatMessages.forEach(function (msg, idx) {
     const msgEl = document.createElement('div');
     msgEl.className = 'webedit-chat-message webedit-chat-message-' + msg.type;
     const contentEl = document.createElement('div');
     contentEl.className = 'webedit-chat-message-content';
     contentEl.textContent = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content || '');
     msgEl.appendChild(contentEl);
+
+    if (msg.editId) {
+      const btnRow = document.createElement('div');
+      btnRow.className = 'webedit-chat-action-buttons';
+
+      const undoBtn = document.createElement('button');
+      undoBtn.className = 'webedit-chat-action-btn webedit-chat-undo-btn';
+      undoBtn.textContent = 'Undo';
+      undoBtn.disabled = msg.editStatus !== 'active';
+      undoBtn.addEventListener('click', debounce(async function () {
+        if (!validateBeforeSend('TOGGLE_STATUS', { url: msg.url, editId: msg.editId })) return;
+        await sendToBrain('TOGGLE_STATUS', { url: msg.url, editId: msg.editId });
+        msg.editStatus = 'inactive';
+        chatMessages[idx] = msg;
+        renderChatMessages();
+      }));
+      btnRow.appendChild(undoBtn);
+
+      const redoBtn = document.createElement('button');
+      redoBtn.className = 'webedit-chat-action-btn webedit-chat-redo-btn';
+      redoBtn.textContent = 'Redo';
+      redoBtn.disabled = msg.editStatus !== 'inactive';
+      redoBtn.addEventListener('click', debounce(async function () {
+        if (!validateBeforeSend('TOGGLE_STATUS', { url: msg.url, editId: msg.editId })) return;
+        await sendToBrain('TOGGLE_STATUS', { url: msg.url, editId: msg.editId });
+        msg.editStatus = 'active';
+        chatMessages[idx] = msg;
+        renderChatMessages();
+      }));
+      btnRow.appendChild(redoBtn);
+
+      msgEl.appendChild(btnRow);
+    }
+
     els.chatMessages.appendChild(msgEl);
   });
 
@@ -410,36 +453,6 @@ function renderEditHistoryView() {
 function renderBlueprintList() {
   if (!els.blueprintList) return;
   els.blueprintList.innerHTML = '';
-
-  const entries = Object.entries(activeBlueprints);
-  if (entries.length === 0) {
-    els.blueprintList.innerHTML = '<div class="webedit-blueprint-empty">No active edits</div>';
-    return;
-  }
-
-  entries.forEach(function ([editId, bp]) {
-    const item = document.createElement('div');
-    item.className = 'webedit-blueprint-item';
-
-    const label = document.createElement('span');
-    label.className = 'webedit-blueprint-label';
-    const selectorText = bp.selector.length > 30 ? bp.selector.slice(0, 27) + '...' : bp.selector;
-    label.textContent = '[' + bp.action + '] ' + selectorText;
-    item.appendChild(label);
-
-    const toggleBtn = document.createElement('button');
-    toggleBtn.className = 'webedit-blueprint-toggle';
-    toggleBtn.textContent = bp.status === 'active' ? 'Disable' : 'Enable';
-    toggleBtn.addEventListener('click', debounce(async function () {
-      const url = await getCurrentTabUrl();
-      currentBlueprintPageKey = normalizePageKey(url);
-      if (!validateBeforeSend('TOGGLE_STATUS', { url, editId })) return;
-      await sendToBrain('TOGGLE_STATUS', { url, editId });
-    }));
-    item.appendChild(toggleBtn);
-
-    els.blueprintList.appendChild(item);
-  });
 }
 
 async function loadEditHistory(forceRefresh) {
@@ -817,10 +830,19 @@ chrome.runtime.onMessage.addListener(function (message) {
       break;
 
     case 'PICK_COMPLETED': {
-      const shortSel = (message.selector || '').length > 50
-        ? message.selector.substring(0, 47) + '...'
-        : (message.selector || '');
-      showNotification('Element selected: ' + shortSel);
+      const label = message.summary || 'an element';
+      chatMessages.push({
+        type: 'system',
+        content: 'Element selected: ' + label,
+        editId: message.editId || null,
+        url: message.url || '',
+        editStatus: 'active',
+        timestamp: Date.now()
+      });
+      if (chatMessages.length > MAX_MESSAGES) {
+        chatMessages = chatMessages.slice(-MAX_MESSAGES);
+      }
+      renderChatMessages();
       break;
     }
   }
@@ -988,9 +1010,17 @@ function registerEventListeners() {
   }
   renderBlueprintList();
 
-  // 4. Get chat sessions for history sidebar
+  // 4. Get chat sessions for history sidebar and restore last session
   if (isAuthenticated()) {
     await loadChatSessions();
+    if (chatSessions.length > 0) {
+      const lastSession = chatSessions[0];
+      const chatResp = await sendToBrain('GET_CHAT_SESSION', { sessionId: lastSession.id });
+      if (chatResp.success && chatResp.session) {
+        currentSessionId = chatResp.session.id;
+        chatMessages = Array.isArray(chatResp.session.messages) ? chatResp.session.messages : [];
+      }
+    }
   }
 
   // 5. Start periodic Dead Receiver ping (every 30s)
