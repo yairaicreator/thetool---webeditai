@@ -495,7 +495,7 @@ async function ensureWebsiteRow(auth, url) {
   const path = parsed.pathname || '/';
 
   const checkResp = await fetch(
-    `${SUPABASE_URL}/rest/v1/websites?user_id=eq.${auth.userId}&full_url=eq.${encodeURIComponent(normalizedUrl)}&select=id`,
+    `${SUPABASE_URL}/rest/v1/websites?user_id=eq.${auth.userId}&origin=eq.${encodeURIComponent(origin)}&path=eq.${encodeURIComponent(path)}&select=id`,
     {
       method: 'GET',
       headers: {
@@ -528,6 +528,25 @@ async function ensureWebsiteRow(auth, url) {
       title: parsed.hostname || normalizedUrl,
     }),
   });
+
+  if (insertResp.status === 409) {
+    const fallbackResp = await fetch(
+      `${SUPABASE_URL}/rest/v1/websites?user_id=eq.${auth.userId}&origin=eq.${encodeURIComponent(origin)}&path=eq.${encodeURIComponent(path)}&select=id`,
+      {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${auth.accessToken}`,
+        }
+      }
+    );
+    const fallbackRows = await fallbackResp.json().catch(() => []);
+    if (Array.isArray(fallbackRows) && fallbackRows.length > 0 && fallbackRows[0].id) {
+      return fallbackRows[0].id;
+    }
+    return null;
+  }
 
   const inserted = await insertResp.json().catch(() => []);
   if (Array.isArray(inserted) && inserted.length > 0 && inserted[0].id) {
