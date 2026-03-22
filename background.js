@@ -520,6 +520,7 @@ async function ensureWebsiteRow(auth, url) {
       'Prefer': 'return=representation',
     },
     body: JSON.stringify({
+      id: crypto.randomUUID(),
       user_id: auth.userId,
       full_url: normalizedUrl,
       origin: origin,
