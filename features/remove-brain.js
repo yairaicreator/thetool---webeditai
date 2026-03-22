@@ -57,6 +57,8 @@ registerFeature('remove', {
       if (!insertOk) {
         syncFailed = true;
         console.warn('[Remove-Brain] Supabase sync returned failure');
+      } else {
+        console.log('[Remove-Brain] Supabase row created:', insertOk);
       }
 
       // ── Step 4: Broadcast history (row now exists in Supabase) ───────────

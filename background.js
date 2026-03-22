@@ -559,7 +559,7 @@ async function syncInsertToSupabase(editId, url, editData) {
         'Content-Type': 'application/json',
         'apikey': SUPABASE_ANON_KEY,
         'Authorization': `Bearer ${auth.accessToken}`,
-        'Prefer': 'return=minimal',
+        'Prefer': 'return=representation',
       },
       body: JSON.stringify({
         user_id: auth.userId,
@@ -580,7 +580,14 @@ async function syncInsertToSupabase(editId, url, editData) {
       return false;
     }
 
-    return true;
+    const rows = await response.json().catch(() => []);
+    const inserted = Array.isArray(rows) ? rows[0] : rows;
+    if (!inserted || !inserted.id) {
+      console.warn('[Brain] Supabase insert returned 2xx but no row — possible RLS or trigger rejection');
+      return false;
+    }
+
+    return inserted.id;
   } catch (e) {
     console.warn('[Brain] Supabase insert network error:', e.message);
     return false;
