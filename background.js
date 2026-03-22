@@ -562,6 +562,7 @@ async function syncInsertToSupabase(editId, url, editData) {
         'Prefer': 'return=representation',
       },
       body: JSON.stringify({
+        id: crypto.randomUUID(),
         user_id: auth.userId,
         website_id: websiteId,
         edit_type: getCategoryFromAction(editData.action, editData.payload),
