@@ -168,7 +168,7 @@ async function saveLedger(ledger) {
 }
 
 function generateEditId() {
-  return 'edit_' + crypto.randomUUID();
+  return crypto.randomUUID();
 }
 
 function isPlainObject(value) {
@@ -562,7 +562,7 @@ async function syncInsertToSupabase(editId, url, editData) {
         'Prefer': 'return=representation',
       },
       body: JSON.stringify({
-        id: crypto.randomUUID(),
+        id: editId,
         user_id: auth.userId,
         website_id: websiteId,
         edit_type: getCategoryFromAction(editData.action, editData.payload),
