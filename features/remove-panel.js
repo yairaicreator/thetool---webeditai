@@ -75,7 +75,11 @@
       case 'REMOVE_COMPLETED': {
         hideCancelBar();
         var summary = message.summary || 'an element';
-        notify('Element removed: ' + summary);
+        var text = 'Element removed: ' + summary;
+        if (message.syncFailed) {
+          text += ' (saved locally — could not sync to cloud)';
+        }
+        notify(text);
         break;
       }
     }

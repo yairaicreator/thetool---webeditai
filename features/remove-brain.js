@@ -20,6 +20,7 @@ registerFeature('remove', {
     var selector = flow.selector || '';
     var lockedTabId = brainState.lockedTabId;
     var editId;
+    var syncFailed = false;
 
     try {
       // ── Step 1: Save to Global Ledger ────────────────────────────────────
@@ -42,11 +43,7 @@ registerFeature('remove', {
       ledger[url][editId] = editData;
       await saveLedger(ledger);
 
-      // ── Step 2: Sync to Supabase (fire-and-forget) ───────────────────────
-
-      syncInsertToSupabase(editId, url, editData);
-
-      // ── Step 3: Targeted Dispatch — element hidden instantly ──────────────
+      // ── Step 2: Targeted Dispatch — element hidden instantly ──────────────
 
       try {
         await dispatchBlueprintsForPage(url, lockedTabId);
@@ -54,13 +51,24 @@ registerFeature('remove', {
         console.warn('[Remove-Brain] Blueprint dispatch failed:', e.message);
       }
 
-      // ── Step 4: Broadcast updates to Panel ───────────────────────────────
+      // ── Step 3: Await Supabase insert (must finish before history read) ──
+
+      try {
+        await syncInsertToSupabase(editId, url, editData);
+      } catch (e) {
+        syncFailed = true;
+        console.warn('[Remove-Brain] Supabase sync failed:', e.message);
+      }
+
+      // ── Step 4: Broadcast history (row now exists in Supabase) ───────────
 
       try {
         await broadcastHistoryUpdate();
       } catch (e) {
         console.warn('[Remove-Brain] History broadcast failed:', e.message);
       }
+
+      // ── Step 5: Notify Panel ─────────────────────────────────────────────
 
       chrome.runtime.sendMessage({
         type: 'PICK_COMPLETED',
@@ -77,10 +85,11 @@ registerFeature('remove', {
         selector: selector,
         url: url,
         editId: editId,
-        summary: summary
+        summary: summary,
+        syncFailed: syncFailed
       }).catch(function () {});
     } finally {
-      // ── Step 5: Reset state machine (always runs) ────────────────────────
+      // ── Step 6: Reset state machine (always runs) ────────────────────────
       resetState();
     }
 
