@@ -163,6 +163,7 @@
 
       case 'ADD_SPEC_READY': {
         chat('assistant', 'Feature generated! Review the preview on the page. Click Apply to keep it, Refine to improve it, or Cancel to discard.');
+        chat('system', 'The preview shows the visual layout. Interactive behavior will be fully active once you apply the feature.');
         showActionBar();
         break;
       }

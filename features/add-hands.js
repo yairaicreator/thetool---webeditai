@@ -4,7 +4,8 @@
 // Add Feature — Hands Module
 // Runs in the content-script world alongside contentScript.js.
 // Manages the Preview Lab: an in-place Shadow DOM sandbox at the picked
-// element where AI-generated HTML/CSS/JS is rendered for user review.
+// element where AI-generated HTML/CSS is rendered for user review.
+// JS is deferred until Apply to respect website Content Security Policies.
 // Style cloning ensures visual consistency with the host page.
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -63,33 +64,9 @@
     shadowRoot.insertBefore(styleClone, shadowRoot.firstChild);
   }
 
-  // ── Scoped JS executor: redirects document queries into Shadow Root ────────
-
-  function runScopedScript(js, shadowRoot) {
-    if (!js) return;
-    try {
-      var scopedDoc = new Proxy(document, {
-        get: function (target, prop) {
-          if (prop === 'querySelector') return shadowRoot.querySelector.bind(shadowRoot);
-          if (prop === 'querySelectorAll') return shadowRoot.querySelectorAll.bind(shadowRoot);
-          if (prop === 'getElementById') return function (id) {
-            return shadowRoot.querySelector('#' + id);
-          };
-          if (prop === 'getElementsByClassName') return function (cls) {
-            return shadowRoot.querySelectorAll('.' + cls);
-          };
-          var val = target[prop];
-          return typeof val === 'function' ? val.bind(target) : val;
-        }
-      });
-      var fn = new Function('document', 'shadowRoot', '"use strict";\n' + js);
-      fn(scopedDoc, shadowRoot);
-    } catch (e) {
-      console.warn('[Add-Hands] Preview script error:', e.message);
-    }
-  }
-
-  // ── Spec injection: injects CSS/HTML/JS into the Shadow Root ───────────────
+  // ── Spec injection: injects CSS/HTML into the Shadow Root ───────────────
+  // JS is intentionally skipped during preview to respect website CSP.
+  // Interactive behavior activates after the user clicks Apply.
 
   function injectSpecIntoShadow(shadowRoot, spec) {
     var existing = shadowRoot.querySelector('[data-webedit-preview-content]');
@@ -110,10 +87,6 @@
       container.innerHTML = spec.html;
     }
     shadowRoot.appendChild(container);
-
-    if (spec.js) {
-      runScopedScript(spec.js, shadowRoot);
-    }
   }
 
   // ── Preview handlers ───────────────────────────────────────────────────────
