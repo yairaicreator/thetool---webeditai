@@ -11,8 +11,6 @@
   var activeBlueprints = {};
   var pickModeActive = false;
   var pickModeFeature = null;
-  var previewHost = null;
-  var previewTarget = null;
 
   // ═══════════════════════════════════════════════════════════════════════════════
   // SECTION 2: Constants
@@ -585,134 +583,6 @@
   }
 
   // ═══════════════════════════════════════════════════════════════════════════════
-  // SECTION 9b: Preview Lab (In-Place Shadow DOM Sandbox)
-  // Creates a Shadow DOM container at the picked element for the Add flow.
-  // The AI-generated HTML/CSS/JS is injected inside the shadow root so it
-  // cannot break the host page. Style cloning ensures visual consistency.
-  // ═══════════════════════════════════════════════════════════════════════════════
-
-  function cloneHostStyles(shadowRoot) {
-    var styleClone = document.createElement('div');
-    styleClone.setAttribute('data-webedit-cloned-styles', '1');
-    document.querySelectorAll('style').forEach(function (s) {
-      if (s.getAttribute('data-webedit-id')) return;
-      styleClone.appendChild(s.cloneNode(true));
-    });
-    document.querySelectorAll('link[rel="stylesheet"]').forEach(function (l) {
-      styleClone.appendChild(l.cloneNode(false));
-    });
-    shadowRoot.insertBefore(styleClone, shadowRoot.firstChild);
-  }
-
-  function runScopedScript(js, shadowRoot) {
-    if (!js) return;
-    try {
-      var scopedDoc = new Proxy(document, {
-        get: function (target, prop) {
-          if (prop === 'querySelector') return shadowRoot.querySelector.bind(shadowRoot);
-          if (prop === 'querySelectorAll') return shadowRoot.querySelectorAll.bind(shadowRoot);
-          if (prop === 'getElementById') return function (id) {
-            return shadowRoot.querySelector('#' + id);
-          };
-          if (prop === 'getElementsByClassName') return function (cls) {
-            return shadowRoot.querySelectorAll('.' + cls);
-          };
-          var val = target[prop];
-          return typeof val === 'function' ? val.bind(target) : val;
-        }
-      });
-      var fn = new Function('document', 'shadowRoot', '"use strict";\n' + js);
-      fn(scopedDoc, shadowRoot);
-    } catch (e) {
-      console.warn('[Hands] Preview script error:', e.message);
-    }
-  }
-
-  function injectSpecIntoShadow(shadowRoot, spec) {
-    var existing = shadowRoot.querySelector('[data-webedit-preview-content]');
-    if (existing) existing.remove();
-    var existingStyle = shadowRoot.querySelector('[data-webedit-preview-css]');
-    if (existingStyle) existingStyle.remove();
-
-    if (spec.css) {
-      var style = document.createElement('style');
-      style.setAttribute('data-webedit-preview-css', '1');
-      style.textContent = spec.css;
-      shadowRoot.appendChild(style);
-    }
-
-    var container = document.createElement('div');
-    container.setAttribute('data-webedit-preview-content', '1');
-    if (spec.html) {
-      container.innerHTML = spec.html;
-    }
-    shadowRoot.appendChild(container);
-
-    if (spec.js) {
-      runScopedScript(spec.js, shadowRoot);
-    }
-  }
-
-  function handleInjectPreview(message) {
-    handleClosePreview();
-
-    var selector = message.selector || '';
-    var spec = message.spec || {};
-    var target = null;
-
-    if (selector) {
-      try { target = document.querySelector(selector); } catch (_) {}
-    }
-    if (!target) {
-      target = document.body || document.documentElement;
-    }
-
-    pauseObserver();
-    try {
-      previewTarget = target;
-      previewTarget.classList.add('webedit-ghost-highlight');
-
-      previewHost = document.createElement('div');
-      previewHost.setAttribute('data-webedit-preview', '1');
-      previewHost.setAttribute('data-webedit-id', 'preview-lab');
-      insertContainerAtTarget(previewHost, target, 'beforeend');
-
-      var shadow = previewHost.attachShadow({ mode: 'open' });
-      cloneHostStyles(shadow);
-      injectSpecIntoShadow(shadow, spec);
-    } finally {
-      resumeObserver();
-    }
-  }
-
-  function handleUpdatePreview(message) {
-    if (!previewHost || !previewHost.shadowRoot) return;
-    var spec = message.spec || {};
-    pauseObserver();
-    try {
-      injectSpecIntoShadow(previewHost.shadowRoot, spec);
-    } finally {
-      resumeObserver();
-    }
-  }
-
-  function handleClosePreview() {
-    pauseObserver();
-    try {
-      if (previewTarget) {
-        previewTarget.classList.remove('webedit-ghost-highlight');
-        previewTarget = null;
-      }
-      if (previewHost) {
-        previewHost.remove();
-        previewHost = null;
-      }
-    } finally {
-      resumeObserver();
-    }
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════════════
   // SECTION 10: The Listener (Switch Statement)
   // Zero autonomous logic. The Hands only act when the Brain sends a
   // Target Dispatch through this listener.
@@ -770,20 +640,6 @@
         return true;
       }
 
-      case 'INJECT_PREVIEW':
-        handleInjectPreview(message);
-        sendResponse({ success: true });
-        return true;
-
-      case 'UPDATE_PREVIEW':
-        handleUpdatePreview(message);
-        sendResponse({ success: true });
-        return true;
-
-      case 'CLOSE_PREVIEW':
-        handleClosePreview();
-        sendResponse({ success: true });
-        return true;
     }
   });
 

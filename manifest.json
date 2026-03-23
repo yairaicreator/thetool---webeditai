@@ -53,7 +53,8 @@
         "contextExtractor.js",
         "contentScript.js",
         "features/remove-hands.js",
-        "features/customize-hands.js"
+        "features/customize-hands.js",
+        "features/add-hands.js"
       ],
       "css": [
         "contentStyles.css"
