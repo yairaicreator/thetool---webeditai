@@ -53,12 +53,28 @@ registerFeature('remove', {
 
       // ── Step 3: Await Supabase insert (must finish before history read) ──
 
-      var insertOk = await syncInsertToSupabase(editId, url, editData);
-      if (!insertOk) {
+      var supabaseId = await syncInsertToSupabase(editId, url, editData);
+      if (!supabaseId) {
         syncFailed = true;
         console.warn('[Remove-Brain] Supabase sync returned failure');
       } else {
-        console.log('[Remove-Brain] Supabase row created:', insertOk);
+        if (supabaseId !== editId) {
+          var freshLedger = await getLedger();
+          if (freshLedger[url] && freshLedger[url][editId]) {
+            delete freshLedger[url][editId];
+            freshLedger[url][supabaseId] = editData;
+            await saveLedger(freshLedger);
+          }
+          editId = supabaseId;
+        }
+      }
+
+      // ── Step 3b: Re-dispatch with reconciled IDs ───────────────────────
+
+      try {
+        await dispatchBlueprintsForPage(url, lockedTabId);
+      } catch (e) {
+        console.warn('[Remove-Brain] Post-sync blueprint dispatch failed:', e.message);
       }
 
       // ── Step 4: Broadcast history (row now exists in Supabase) ───────────

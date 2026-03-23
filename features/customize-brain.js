@@ -93,12 +93,27 @@ registerFeature('customize', {
       }
 
       // ── Step 4: Await Supabase insert ────────────────────────────────────
-      var insertOk = await syncInsertToSupabase(editId, url, editData);
-      if (!insertOk) {
+      var supabaseId = await syncInsertToSupabase(editId, url, editData);
+      if (!supabaseId) {
         syncFailed = true;
         console.warn('[Customize-Brain] Supabase sync returned failure');
       } else {
-        console.log('[Customize-Brain] Supabase row created:', insertOk);
+        if (supabaseId !== editId) {
+          var freshLedger = await getLedger();
+          if (freshLedger[url] && freshLedger[url][editId]) {
+            delete freshLedger[url][editId];
+            freshLedger[url][supabaseId] = editData;
+            await saveLedger(freshLedger);
+          }
+          editId = supabaseId;
+        }
+      }
+
+      // ── Step 4b: Re-dispatch with reconciled IDs ──────────────────────────
+      try {
+        await dispatchBlueprintsForPage(url, lockedTabId);
+      } catch (e) {
+        console.warn('[Customize-Brain] Post-sync blueprint dispatch failed:', e.message);
       }
 
       // ── Step 5: Broadcast history ────────────────────────────────────────

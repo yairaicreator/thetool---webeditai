@@ -20,6 +20,7 @@ function getFeatureHandler(featureName, handlerName) {
 
 importScripts('features/remove-brain.js');
 importScripts('features/customize-brain.js');
+importScripts('features/add-brain.js');
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 1: Side Panel Activation
@@ -888,6 +889,19 @@ async function handleToggleHistoryEdit(message) {
     if (syncedPage.success) {
       await dispatchBlueprintsForPage(syncedPage.pageKey, null);
     }
+  } else {
+    const allTabs = await chrome.tabs.query({}).catch(() => []);
+    if (Array.isArray(allTabs)) {
+      for (const tab of allTabs) {
+        if (tab?.id && tab.url?.startsWith('http')) {
+          const tabPageKey = normalizePageKey(tab.url);
+          const synced = await syncLedgerPageFromSupabase(tabPageKey);
+          if (synced.success) {
+            await dispatchBlueprintsForPage(synced.pageKey, tab.id);
+          }
+        }
+      }
+    }
   }
 
   const historyPayload = await broadcastHistoryUpdate();
@@ -970,6 +984,8 @@ const MESSAGE_SCHEMAS = {
   PREVIEW_CSS:           ['selector', 'cssText'],
   CUSTOMIZE_APPLY:       ['selector', 'url'],
   CUSTOMIZE_CANCEL:      [],
+  ADD_APPLY:             [],
+  ADD_CANCEL:            [],
   SAVE_CHAT_SESSION:     ['sessionId'],
   GET_CHAT_SESSIONS:     [],
   GET_CHAT_SESSION:      ['sessionId'],
@@ -1095,13 +1111,8 @@ async function handleSaveBlueprint(message) {
   const { edit } = message;
   const url = normalizePageKey(message.url);
 
-  const ledger = await getLedger();
-  if (!ledger[url]) {
-    ledger[url] = {};
-  }
-
   const editId = generateEditId();
-  ledger[url][editId] = {
+  const editData = {
     pageKey: url,
     action: edit.action,
     selector: edit.selector,
@@ -1110,9 +1121,21 @@ async function handleSaveBlueprint(message) {
     createdAt: Date.now(),
   };
 
+  const ledger = await getLedger();
+  if (!ledger[url]) {
+    ledger[url] = {};
+  }
+  ledger[url][editId] = editData;
   await saveLedger(ledger);
-  syncInsertToSupabase(editId, url, ledger[url][editId]);
-  return { success: true, editId };
+
+  const supabaseId = await syncInsertToSupabase(editId, url, editData);
+  if (supabaseId && supabaseId !== editId) {
+    delete ledger[url][editId];
+    ledger[url][supabaseId] = editData;
+    await saveLedger(ledger);
+  }
+
+  return { success: true, editId: supabaseId || editId };
 }
 
 async function handleToggleStatus(message) {
@@ -1296,7 +1319,15 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
           response = await handleRenameChatSession(message);
           break;
 
-        case 'GENERATE_FEATURE':
+        case 'GENERATE_FEATURE': {
+          if (brainState.current === BRAIN_STATES.PREVIEWING
+              && brainState.activeFlow?.feature === 'add') {
+            const addGenHandler = getFeatureHandler('add', 'onGenerate');
+            if (addGenHandler) {
+              response = await addGenHandler(message);
+              break;
+            }
+          }
           transitionState(BRAIN_STATES.PROCESSING, { feature: 'add', tabId: callerTabId });
           try {
             response = await handleGenerateFeature(message);
@@ -1304,6 +1335,7 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
             resetState();
           }
           break;
+        }
 
         case 'START_PICK_MODE': {
           const feature = message.feature;
@@ -1369,7 +1401,7 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
               pickedLedger[pickedUrl] = {};
             }
             const pickedEditId = generateEditId();
-            pickedLedger[pickedUrl][pickedEditId] = {
+            const pickedEditData = {
               pageKey: pickedUrl,
               action: activeFeature,
               selector: pickedSelector,
@@ -1377,15 +1409,22 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
               payload: { selector: pickedSelector },
               createdAt: Date.now(),
             };
+            pickedLedger[pickedUrl][pickedEditId] = pickedEditData;
             await saveLedger(pickedLedger);
-            syncInsertToSupabase(pickedEditId, pickedUrl, pickedLedger[pickedUrl][pickedEditId]);
+            const pickedSupabaseId = await syncInsertToSupabase(pickedEditId, pickedUrl, pickedEditData);
+            const finalPickedId = pickedSupabaseId || pickedEditId;
+            if (pickedSupabaseId && pickedSupabaseId !== pickedEditId) {
+              delete pickedLedger[pickedUrl][pickedEditId];
+              pickedLedger[pickedUrl][finalPickedId] = pickedEditData;
+              await saveLedger(pickedLedger);
+            }
 
             chrome.runtime.sendMessage({
               type: 'PICK_COMPLETED',
               feature: activeFeature,
               selector: pickedSelector,
               url: pickedUrl,
-              editId: pickedEditId
+              editId: finalPickedId
             }).catch(() => {});
 
             resetState();
@@ -1394,7 +1433,7 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
               feature: activeFeature,
               selector: pickedSelector,
               url: pickedUrl,
-              editId: pickedEditId
+              editId: finalPickedId
             };
           }
           break;
@@ -1438,6 +1477,29 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
           resetState();
           response = { success: true, state: 'IDLE' };
           break;
+
+        case 'ADD_APPLY': {
+          if (brainState.activeFlow?.feature !== 'add') {
+            response = { success: false, error: 'No active Add flow' };
+            break;
+          }
+          const addApplyHandler = getFeatureHandler('add', 'onApply');
+          if (addApplyHandler) {
+            response = await addApplyHandler();
+          } else {
+            response = { success: false, error: 'Add module not loaded' };
+            resetState();
+          }
+          break;
+        }
+
+        case 'ADD_CANCEL': {
+          const addCancelHandler = getFeatureHandler('add', 'onCancel');
+          if (addCancelHandler) { addCancelHandler(); }
+          else { resetState(); }
+          response = { success: true, state: 'IDLE' };
+          break;
+        }
 
         case 'CANCEL_FLOW':
           if (brainState.lockedTabId) {

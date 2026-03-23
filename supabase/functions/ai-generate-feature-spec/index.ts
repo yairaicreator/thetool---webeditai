@@ -11,7 +11,7 @@ serve(async (req) => {
   }
 
   try {
-    const { prompt, htmlContext } = await req.json();
+    const { prompt, htmlContext, history } = await req.json();
 
     if (!prompt) {
       return new Response(JSON.stringify({ error: "Missing prompt" }), {
@@ -45,18 +45,23 @@ Output format:
 
 Return ONLY this JSON object.`;
 
-    const userMessage = `Context HTML (where the feature will be inserted):\n\`\`\`html\n${htmlContext || "No context provided"}\n\`\`\`\n\nUser Request: ${prompt}`;
+    const contents: Array<{ role: string; parts: Array<{ text: string }> }> = [];
+
+    if (Array.isArray(history) && history.length > 0) {
+      for (const turn of history) {
+        contents.push({ role: turn.role, parts: [{ text: turn.text }] });
+      }
+      contents.push({ role: "user", parts: [{ text: "User Refinement: " + prompt }] });
+    } else {
+      const userMessage = `Context HTML (where the feature will be inserted):\n\`\`\`html\n${htmlContext || "No context provided"}\n\`\`\`\n\nUser Request: ${prompt}`;
+      contents.push({ role: "user", parts: [{ text: userMessage }] });
+    }
 
     const geminiPayload = {
       system_instruction: {
         parts: [{ text: systemInstruction }]
       },
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: userMessage }]
-        }
-      ],
+      contents: contents,
       generation_config: {
         response_mime_type: "application/json",
       }

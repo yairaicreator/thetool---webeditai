@@ -692,13 +692,27 @@
   font-weight: 700;
   cursor: pointer;
   color: #ffffff;
-  background: linear-gradient(120deg, #2563eb, #8b5cf6);
-  box-shadow: 0 8px 20px rgba(37, 99, 235, 0.22);
+  transition: opacity 0.15s, transform 0.15s;
+}
+
+.webedit-edit-action-btn[data-action="undo"] {
+  background: linear-gradient(120deg, #7c3aed, #a78bfa);
+  box-shadow: 0 8px 20px rgba(124, 58, 237, 0.25);
+}
+
+.webedit-edit-action-btn[data-action="redo"] {
+  background: linear-gradient(120deg, #059669, #34d399);
+  box-shadow: 0 8px 20px rgba(5, 150, 105, 0.25);
+}
+
+.webedit-edit-action-btn:hover {
+  transform: translateY(-1px);
 }
 
 .webedit-edit-action-btn:disabled {
   opacity: 0.7;
   cursor: wait;
+  transform: none;
 }
 
 .webedit-edit-history-previews {
@@ -938,6 +952,60 @@
 @keyframes webeditCancelBarIn {
   from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Add-feature Apply / Cancel action bar — sits inline in chat */
+.webedit-add-action-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px 14px;
+  animation: webeditCancelBarIn 0.2s ease-out;
+  flex-shrink: 0;
+}
+
+.webedit-add-action-btn {
+  border: none;
+  border-radius: 10px;
+  padding: 8px 22px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.webedit-add-action-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.webedit-add-apply-btn {
+  background: #1d4ed8;
+  color: #ffffff;
+}
+
+.webedit-add-apply-btn:hover:not(:disabled) {
+  background: #1e40af;
+}
+
+.webedit-add-cancel-btn {
+  background: rgba(15, 23, 42, 0.08);
+  color: #334155;
+}
+
+.webedit-add-cancel-btn:hover:not(:disabled) {
+  background: rgba(15, 23, 42, 0.15);
+}
+
+.webedit-add-refine-btn {
+  background: #8b5cf6;
+  color: #ffffff;
+}
+
+.webedit-add-refine-btn:hover:not(:disabled) {
+  background: #7c3aed;
 }
 
 /* Legacy controls retained for compatibility but hidden in new layout */

@@ -331,7 +331,7 @@ function renderHistoryCategory(title, key, edits) {
     html += '<div class="webedit-edit-history-card-title">' + escapeHtml(edit.summary || 'Untitled edit') + '</div>';
     html += '<div class="webedit-edit-history-card-meta">' + escapeHtml(formatHistoryDate(edit.updatedAt || edit.createdAt)) + '</div>';
     html += '</div>';
-    html += '<button class="webedit-edit-action-btn" type="button" data-edit-id="' + escapeHtml(edit.id) + '" data-page-key="' + escapeHtml(edit.pageKey) + '">';
+    html += '<button class="webedit-edit-action-btn" type="button" data-edit-id="' + escapeHtml(edit.id) + '" data-page-key="' + escapeHtml(edit.pageKey) + '" data-action="' + (edit.isActive ? 'undo' : 'redo') + '">';
     html += edit.isActive ? 'Undo' : 'Redo';
     html += '</button>';
     html += '</div>';
@@ -955,10 +955,10 @@ function registerEventListeners() {
     if (!validateBeforeSend('GENERATE_FEATURE', { prompt: text })) return;
     const resp = await sendToBrain('GENERATE_FEATURE', { prompt: text, feature: selectedFeature });
     chatMessages.pop();
-    if (resp.success) {
-      addChatMessage('assistant', 'Feature spec generated. Preview coming soon.');
-    } else {
+    if (!resp.success) {
       addChatMessage('assistant', 'Error: ' + (resp.error || 'unknown'));
+    } else if (selectedFeature !== 'add') {
+      addChatMessage('assistant', 'Feature spec generated. Preview coming soon.');
     }
   });
 

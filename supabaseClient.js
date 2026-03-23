@@ -100,7 +100,7 @@ async function callPageChat(message, pageContext = null, attachments = []) {
   }
 }
 
-async function generateFeatureSpec(prompt, context = null) {
+async function generateFeatureSpec(prompt, context = null, history = null) {
   const sanitizedPrompt = typeof prompt === 'string' ? prompt.trim() : '';
   if (!sanitizedPrompt) {
     return { ok: false, error: 'Prompt is required' };
@@ -116,6 +116,9 @@ async function generateFeatureSpec(prompt, context = null) {
     if (context.anchorElement?.htmlContext) {
       payload.htmlContext = context.anchorElement.htmlContext;
     }
+  }
+  if (Array.isArray(history) && history.length > 0) {
+    payload.history = history;
   }
 
   try {

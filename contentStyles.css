@@ -69,4 +69,8 @@ body.webedit-panel-open {
   }
 }
 
-
+/* Ghost highlight on the target element while Preview Lab is active */
+.webedit-ghost-highlight {
+  outline: 2px dashed #8b5cf6 !important;
+  outline-offset: 3px !important;
+}
