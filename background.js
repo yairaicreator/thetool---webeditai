@@ -19,6 +19,7 @@ function getFeatureHandler(featureName, handlerName) {
 }
 
 importScripts('features/remove-brain.js');
+importScripts('features/customize-brain.js');
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 1: Side Panel Activation
@@ -966,6 +967,9 @@ const MESSAGE_SCHEMAS = {
   START_PICK_MODE:       ['feature'],
   ELEMENT_PICKED:        ['selector', 'url'],
   CANCEL_FLOW:           [],
+  PREVIEW_CSS:           ['selector', 'cssText'],
+  CUSTOMIZE_APPLY:       ['selector', 'url'],
+  CUSTOMIZE_CANCEL:      [],
   SAVE_CHAT_SESSION:     ['sessionId'],
   GET_CHAT_SESSIONS:     [],
   GET_CHAT_SESSION:      ['sessionId'],
@@ -1395,8 +1399,50 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
           break;
         }
 
+        case 'PREVIEW_CSS': {
+          if (brainState.current !== BRAIN_STATES.PREVIEWING) {
+            response = { success: false, error: 'Not in preview mode' };
+            break;
+          }
+          if (brainState.lockedTabId) {
+            dispatchToTab(brainState.lockedTabId, {
+              type: 'INJECT_PREVIEW_CSS',
+              selector: message.selector,
+              cssText: message.cssText
+            });
+          }
+          response = { success: true };
+          break;
+        }
+
+        case 'CUSTOMIZE_APPLY': {
+          if (brainState.current !== BRAIN_STATES.PREVIEWING) {
+            response = { success: false, error: 'Not in preview mode' };
+            break;
+          }
+          const applyHandler = getFeatureHandler('customize', 'onApply');
+          if (applyHandler) {
+            response = await applyHandler(message);
+          } else {
+            response = { success: false, error: 'Customize module not loaded' };
+            resetState();
+          }
+          break;
+        }
+
+        case 'CUSTOMIZE_CANCEL':
+          if (brainState.lockedTabId) {
+            dispatchToTab(brainState.lockedTabId, { type: 'CLEAR_PREVIEW_CSS' });
+          }
+          resetState();
+          response = { success: true, state: 'IDLE' };
+          break;
+
         case 'CANCEL_FLOW':
           if (brainState.lockedTabId) {
+            if (brainState.current === BRAIN_STATES.PREVIEWING) {
+              dispatchToTab(brainState.lockedTabId, { type: 'CLEAR_PREVIEW_CSS' });
+            }
             dispatchToTab(brainState.lockedTabId, { type: 'STOP_PICK_MODE' });
           }
           resetState();

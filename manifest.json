@@ -52,7 +52,8 @@
       "js": [
         "contextExtractor.js",
         "contentScript.js",
-        "features/remove-hands.js"
+        "features/remove-hands.js",
+        "features/customize-hands.js"
       ],
       "css": [
         "contentStyles.css"

@@ -87,6 +87,9 @@ const PANEL_SCHEMAS = {
   TOGGLE_HISTORY_EDIT:   ['editId'],
   START_PICK_MODE:       ['feature'],
   CANCEL_FLOW:           [],
+  PREVIEW_CSS:           ['selector', 'cssText'],
+  CUSTOMIZE_APPLY:       ['selector', 'url'],
+  CUSTOMIZE_CANCEL:      [],
   GENERATE_FEATURE:      ['prompt'],
   PING:                  [],
   WEBEDIT_GET_SESSION:   [],
@@ -843,6 +846,31 @@ chrome.runtime.onMessage.addListener(function (message) {
         chatMessages = chatMessages.slice(-MAX_MESSAGES);
       }
       renderChatMessages();
+      persistCurrentSession();
+      break;
+    }
+
+    case 'CUSTOMIZE_DASHBOARD_OPEN':
+      if (window.WebEditPanel && typeof window.WebEditPanel.openCustomizeDashboard === 'function') {
+        window.WebEditPanel.openCustomizeDashboard(message.selector, message.summary, message.url);
+      }
+      break;
+
+    case 'CUSTOMIZE_COMPLETED': {
+      const custLabel = message.summary || 'an element';
+      chatMessages.push({
+        type: 'system',
+        content: 'Customized: ' + custLabel,
+        editId: message.editId || null,
+        url: message.url || '',
+        editStatus: 'active',
+        timestamp: Date.now()
+      });
+      if (chatMessages.length > MAX_MESSAGES) {
+        chatMessages = chatMessages.slice(-MAX_MESSAGES);
+      }
+      renderChatMessages();
+      persistCurrentSession();
       break;
     }
   }
@@ -1038,6 +1066,8 @@ function registerEventListeners() {
 window.WebEditPanel = {
   showNotification: showNotification,
   addChatMessage: addChatMessage,
+  openCustomizeDashboard: null,
+  closeCustomizeDashboard: null,
 };
 
 })();

@@ -16,6 +16,12 @@ body.webedit-pick-active * {
   outline: 2px solid #ec4899 !important;
 }
 
+/* Customize mode: persistent highlight on the element being customized */
+.webedit-customize-selected {
+  outline: 3px solid #8b5cf6 !important;
+  outline-offset: 2px !important;
+}
+
 /* Basic badge (not strictly necessary but nice to have) */
 .webedit-floating-label {
   position: absolute;

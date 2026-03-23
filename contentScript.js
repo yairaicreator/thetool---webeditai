@@ -569,6 +569,39 @@
         handleStopPickMode();
         sendResponse({ success: true });
         return true;
+
+      case 'INJECT_PREVIEW_CSS': {
+        pauseObserver();
+        try {
+          var previewStyleId = 'webedit-preview-style';
+          var previewStyle = document.getElementById(previewStyleId);
+          if (!previewStyle) {
+            previewStyle = document.createElement('style');
+            previewStyle.id = previewStyleId;
+            previewStyle.setAttribute('data-webedit-id', 'preview');
+            (document.head || document.documentElement).appendChild(previewStyle);
+          }
+          previewStyle.textContent = message.cssText || '';
+        } finally {
+          resumeObserver();
+        }
+        sendResponse({ success: true });
+        return true;
+      }
+
+      case 'CLEAR_PREVIEW_CSS': {
+        pauseObserver();
+        try {
+          var previewEl = document.getElementById('webedit-preview-style');
+          if (previewEl) {
+            previewEl.remove();
+          }
+        } finally {
+          resumeObserver();
+        }
+        sendResponse({ success: true });
+        return true;
+      }
     }
   });
 
