@@ -491,12 +491,42 @@
         return;
       }
 
+      var humanLabel = '';
+      var textContent = (target.textContent || '').trim().replace(/\s+/g, ' ');
+      if (textContent && textContent.length <= 60) {
+        humanLabel = textContent;
+      } else if (textContent && textContent.length > 0) {
+        humanLabel = textContent.substring(0, 57) + '...';
+      }
+      if (!humanLabel) {
+        humanLabel = target.getAttribute('aria-label')
+          || target.getAttribute('alt')
+          || target.getAttribute('title')
+          || target.getAttribute('placeholder')
+          || '';
+      }
+      if (!humanLabel) {
+        var tag = target.tagName.toLowerCase();
+        var friendly = {
+          nav: 'a navigation bar', header: 'the page header', footer: 'the page footer',
+          img: 'an image', button: 'a button', a: 'a link', input: 'an input field',
+          aside: 'a sidebar', section: 'a section', iframe: 'an embedded frame', video: 'a video',
+          audio: 'an audio player', form: 'a form', ul: 'a list', ol: 'a list',
+          table: 'a table', svg: 'an icon', canvas: 'a canvas', select: 'a dropdown',
+          textarea: 'a text area', label: 'a label', h1: 'a heading', h2: 'a heading',
+          h3: 'a heading', h4: 'a heading', h5: 'a heading', h6: 'a heading',
+          p: 'a paragraph', span: 'a text element', div: 'a section on the page'
+        };
+        humanLabel = friendly[tag] || ('a ' + tag + ' element');
+      }
+
       handleStopPickMode();
 
       chrome.runtime.sendMessage({
         type: 'ELEMENT_PICKED',
         selector: selector,
-        url: window.location.href
+        url: window.location.href,
+        humanLabel: humanLabel
       }, function (response) {
         if (chrome.runtime.lastError) {
           console.warn('[Hands] ELEMENT_PICKED send failed:', chrome.runtime.lastError.message);

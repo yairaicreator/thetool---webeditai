@@ -1350,6 +1350,7 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
 
           brainState.activeFlow.selector = pickedSelector;
           brainState.activeFlow.url = pickedUrl;
+          brainState.activeFlow.humanLabel = String(message.humanLabel || '').trim();
 
           if (brainState.lockedTabId) {
             dispatchToTab(brainState.lockedTabId, { type: 'STOP_PICK_MODE' });

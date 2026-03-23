@@ -71,7 +71,7 @@ registerFeature('remove', {
 
       // ── Step 5: Notify Panel ─────────────────────────────────────────────
 
-      var summary = selectorToHumanLabel(selector);
+      var summary = flow.humanLabel || selectorToHumanLabel(selector);
 
       chrome.runtime.sendMessage({
         type: 'PICK_COMPLETED',
