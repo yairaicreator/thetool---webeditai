@@ -102,6 +102,7 @@
     refineBtn.type = 'button';
     refineBtn.textContent = 'Refine';
     refineBtn.addEventListener('click', function () {
+      chat('assistant', 'Describe what you\u2019d like to improve and send it.');
       var chatInput = document.getElementById('webedit-chat-input');
       if (chatInput) {
         chatInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
