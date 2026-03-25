@@ -867,11 +867,74 @@
 
 .webedit-bottom-controls {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   justify-content: center;
+  gap: 8px;
   padding: 8px 28px 6px;
   background: #d7fbff;
   flex-shrink: 0;
+}
+
+.webedit-page-edits-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  width: 100%;
+}
+
+.webedit-page-edits-row.hidden {
+  display: none !important;
+}
+
+.webedit-page-edits-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #64748b;
+  width: 100%;
+  margin-bottom: 2px;
+}
+
+.webedit-page-edits-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
+}
+
+.webedit-page-edit-chip {
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  background: #fff;
+  color: #475569;
+  cursor: pointer;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.webedit-page-edit-chip:hover {
+  border-color: #94a3b8;
+  background: #f8fafc;
+}
+
+.webedit-page-edit-chip.active {
+  border-color: #6366f1;
+  background: #eef2ff;
+  color: #3730a3;
+  box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.25);
+}
+
+.webedit-page-edit-chip-clear {
+  color: #64748b;
+  font-weight: 500;
 }
 
 .webedit-feature-controls {

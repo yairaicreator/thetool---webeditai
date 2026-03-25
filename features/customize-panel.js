@@ -13,6 +13,7 @@
   var currentSelector = '';
   var currentUrl = '';
   var currentSummary = '';
+  var currentResumeEditId = null;
   var collectedStyles = {};
   var previewDebounceTimer = null;
   var PREVIEW_DEBOUNCE_MS = 50;
@@ -133,6 +134,41 @@
   function schedulePreview() {
     clearTimeout(previewDebounceTimer);
     previewDebounceTimer = setTimeout(sendPreview, PREVIEW_DEBOUNCE_MS);
+  }
+
+  function syncInputsFromCollectedStyles(dashboard) {
+    var props = Object.keys(collectedStyles);
+    for (var p = 0; p < props.length; p++) {
+      var prop = props[p];
+      var val = collectedStyles[prop];
+      if (val === '' || val === undefined || val === null) continue;
+      var inputs = dashboard.querySelectorAll('[data-prop]');
+      for (var i = 0; i < inputs.length; i++) {
+        var el = inputs[i];
+        if (el.dataset.prop !== prop) continue;
+        if (el.classList.contains('webedit-customize-color')) {
+          var hex = String(val).trim();
+          if (/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(hex)) {
+            el.value = hex.length === 4 ? '#' + hex[1] + hex[1] + hex[2] + hex[2] + hex[3] + hex[3] : hex;
+            el.dataset.empty = 'false';
+          }
+        } else if (el.classList.contains('webedit-customize-range')) {
+          var unit = el.dataset.unit || '';
+          var num = parseFloat(String(val).replace(/[^\d.-]/g, ''));
+          if (!isNaN(num)) {
+            el.value = String(num);
+            el.dataset.empty = 'false';
+            var disp = el.parentElement && el.parentElement.querySelector('.webedit-customize-range-value');
+            if (disp) disp.textContent = String(val);
+          }
+        } else if (el.tagName === 'SELECT') {
+          el.value = String(val);
+        } else if (el.classList.contains('webedit-customize-text')) {
+          el.value = String(val);
+        }
+        break;
+      }
+    }
   }
 
   // ─── Control factory ──────────────────────────────────────────────────────
@@ -368,14 +404,18 @@
       }
 
       var desc = buildDescription(collectedStyles);
-      chrome.runtime.sendMessage({
+      var applyPayload = {
         type: 'CUSTOMIZE_APPLY',
         selector: currentSelector,
         url: currentUrl,
         styles: collectedStyles,
         summary: currentSummary,
         description: desc
-      }, function (resp) {
+      };
+      if (currentResumeEditId) {
+        applyPayload.resumeEditId = currentResumeEditId;
+      }
+      chrome.runtime.sendMessage(applyPayload, function (resp) {
         if (chrome.runtime.lastError) {
           console.warn('[Customize-Panel] CUSTOMIZE_APPLY failed:', chrome.runtime.lastError.message);
           return;
@@ -423,15 +463,19 @@
 
   // ─── Show / Hide ──────────────────────────────────────────────────────────
 
-  function showDashboard(selector, summary, url) {
+  function showDashboard(selector, summary, url, options) {
     hideDashboard();
 
+    options = options || {};
     currentSelector = selector;
     currentUrl = url;
     currentSummary = summary;
-    collectedStyles = {};
+    currentResumeEditId = options.resumeEditId || null;
+    collectedStyles = Object.assign({}, options.initialStyles || {});
 
     dashboardEl = buildDashboard(selector, summary);
+    syncInputsFromCollectedStyles(dashboardEl);
+    schedulePreview();
 
     var mainContent = document.getElementById('webedit-main-content');
     if (mainContent) {
@@ -456,6 +500,7 @@
     currentSelector = '';
     currentUrl = '';
     currentSummary = '';
+    currentResumeEditId = null;
     collectedStyles = {};
     clearTimeout(previewDebounceTimer);
 
@@ -476,7 +521,10 @@
 
     switch (message.type) {
       case 'CUSTOMIZE_DASHBOARD_OPEN':
-        showDashboard(message.selector, message.summary, message.url);
+        showDashboard(message.selector, message.summary, message.url, {
+          initialStyles: message.initialStyles || {},
+          resumeEditId: message.resumeEditId || null
+        });
         break;
 
       case 'CUSTOMIZE_COMPLETED': {
@@ -503,7 +551,9 @@
   // ─── Expose API to sidepanel.js ────────────────────────────────────────────
 
   if (window.WebEditPanel) {
-    window.WebEditPanel.openCustomizeDashboard = showDashboard;
+    window.WebEditPanel.openCustomizeDashboard = function (sel, sum, u, opts) {
+      showDashboard(sel, sum, u, opts);
+    };
     window.WebEditPanel.closeCustomizeDashboard = hideDashboard;
   }
 

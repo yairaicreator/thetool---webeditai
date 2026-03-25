@@ -52,6 +52,7 @@ registerFeature('customize', {
     var selector = message.selector || flow.selector || '';
     var styles = message.styles || {};
     var lockedTabId = brainState.lockedTabId;
+    var resumeEditId = String(message.resumeEditId || flow.resumeEditId || '').trim();
     var editId;
     var syncFailed = false;
 
@@ -67,53 +68,101 @@ registerFeature('customize', {
         ledger[url] = {};
       }
 
-      editId = generateEditId();
-      var editData = {
-        pageKey: url,
-        action: 'customize',
-        selector: selector,
-        status: 'active',
-        payload: {
-          selector: selector,
-          styles: styles,
-          summary: message.summary || '',
-          description: message.description || ''
-        },
-        createdAt: Date.now()
-      };
-
-      ledger[url][editId] = editData;
-      await saveLedger(ledger);
-
-      // ── Step 3: Targeted Dispatch — element styled instantly ─────────────
-      try {
-        await dispatchBlueprintsForPage(url, lockedTabId);
-      } catch (e) {
-        console.warn('[Customize-Brain] Blueprint dispatch failed:', e.message);
-      }
-
-      // ── Step 4: Await Supabase insert ────────────────────────────────────
-      var supabaseId = await syncInsertToSupabase(editId, url, editData);
-      if (!supabaseId) {
-        syncFailed = true;
-        console.warn('[Customize-Brain] Supabase sync returned failure');
-      } else {
-        if (supabaseId !== editId) {
-          var freshLedger = await getLedger();
-          if (freshLedger[url] && freshLedger[url][editId]) {
-            delete freshLedger[url][editId];
-            freshLedger[url][supabaseId] = editData;
-            await saveLedger(freshLedger);
-          }
-          editId = supabaseId;
+      var editData;
+      if (resumeEditId) {
+        if (!ledger[url][resumeEditId]) {
+          resetState();
+          return { success: false, error: 'Original edit not found for this page' };
         }
-      }
+        editId = resumeEditId;
+        var existing = ledger[url][editId];
+        var prevPayload = existing.payload && typeof existing.payload === 'object' ? existing.payload : {};
+        editData = {
+          pageKey: url,
+          action: 'customize',
+          selector: selector,
+          status: existing.status || 'active',
+          payload: {
+            selector: selector,
+            styles: styles,
+            summary: message.summary || prevPayload.summary || '',
+            description: message.description || prevPayload.description || ''
+          },
+          createdAt: existing.createdAt || Date.now(),
+          updatedAt: Date.now()
+        };
+        ledger[url][editId] = editData;
+        await saveLedger(ledger);
 
-      // ── Step 4b: Re-dispatch with reconciled IDs ──────────────────────────
-      try {
-        await dispatchBlueprintsForPage(url, lockedTabId);
-      } catch (e) {
-        console.warn('[Customize-Brain] Post-sync blueprint dispatch failed:', e.message);
+        try {
+          await dispatchBlueprintsForPage(url, lockedTabId);
+        } catch (e) {
+          console.warn('[Customize-Brain] Blueprint dispatch failed:', e.message);
+        }
+
+        var patchOk = await syncEditPayloadToSupabase(editId, editData);
+        if (!patchOk) {
+          syncFailed = true;
+          console.warn('[Customize-Brain] Supabase payload update failed');
+        }
+
+        try {
+          await syncLedgerPageFromSupabase(url);
+        } catch (e) {
+          console.warn('[Customize-Brain] Ledger refresh after PATCH failed:', e.message);
+        }
+
+        try {
+          await dispatchBlueprintsForPage(url, lockedTabId);
+        } catch (e) {
+          console.warn('[Customize-Brain] Post-patch blueprint dispatch failed:', e.message);
+        }
+      } else {
+        editId = generateEditId();
+        editData = {
+          pageKey: url,
+          action: 'customize',
+          selector: selector,
+          status: 'active',
+          payload: {
+            selector: selector,
+            styles: styles,
+            summary: message.summary || '',
+            description: message.description || ''
+          },
+          createdAt: Date.now()
+        };
+
+        ledger[url][editId] = editData;
+        await saveLedger(ledger);
+
+        try {
+          await dispatchBlueprintsForPage(url, lockedTabId);
+        } catch (e) {
+          console.warn('[Customize-Brain] Blueprint dispatch failed:', e.message);
+        }
+
+        var supabaseId = await syncInsertToSupabase(editId, url, editData);
+        if (!supabaseId) {
+          syncFailed = true;
+          console.warn('[Customize-Brain] Supabase sync returned failure');
+        } else {
+          if (supabaseId !== editId) {
+            var freshLedger = await getLedger();
+            if (freshLedger[url] && freshLedger[url][editId]) {
+              delete freshLedger[url][editId];
+              freshLedger[url][supabaseId] = editData;
+              await saveLedger(freshLedger);
+            }
+            editId = supabaseId;
+          }
+        }
+
+        try {
+          await dispatchBlueprintsForPage(url, lockedTabId);
+        } catch (e) {
+          console.warn('[Customize-Brain] Post-sync blueprint dispatch failed:', e.message);
+        }
       }
 
       // ── Step 5: Broadcast history ────────────────────────────────────────
@@ -124,7 +173,7 @@ registerFeature('customize', {
       }
 
       // ── Step 6: Notify Panel ─────────────────────────────────────────────
-      var summary = selectorToHumanLabel(selector);
+      var summary = String(message.summary || '').trim() || selectorToHumanLabel(selector);
 
       chrome.runtime.sendMessage({
         type: 'PICK_COMPLETED',

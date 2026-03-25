@@ -32,6 +32,7 @@
   chatMessages:    document.getElementById('webedit-chat-messages'),
   editHistoryView: document.getElementById('webedit-edit-history-view'),
   bottomControls:  document.getElementById('webedit-bottom-controls'),
+  pageEditsRow:    document.getElementById('webedit-page-edits-row'),
   inputContainer:  document.getElementById('webedit-input-container'),
   chatInput:       document.getElementById('webedit-chat-input'),
   sendBtn:         document.getElementById('webedit-send-btn'),
@@ -117,6 +118,8 @@ const PANEL_SCHEMAS = {
   SAVE_CHAT_SESSION:     ['sessionId'],
   DELETE_CHAT_SESSION:    ['sessionId'],
   RENAME_CHAT_SESSION:   ['sessionId', 'title'],
+  ARM_REVISE_ADD:        ['editId', 'url'],
+  RESUME_CUSTOMIZE_EDIT: ['editId', 'url'],
 };
 
 function validateBeforeSend(type, payload) {
@@ -188,6 +191,8 @@ let historyLoading = false;
 let historyError = '';
 let selectedHistoryPageKey = '';
 let selectedHistoryCategory = 'remove';
+let panelRevisionEditId = null;
+let panelRevisionKind = null;
 
 function isAuthenticated() {
   return authState === 'authenticated';
@@ -471,9 +476,138 @@ function renderEditHistoryView() {
   els.editHistoryView.innerHTML = html;
 }
 
+function isRevisionPickableAction(action) {
+  const a = String(action || '').toLowerCase();
+  return a === 'add' || a === 'customize' || a === 'text';
+}
+
+function formatPageEditLabel(edit, editId) {
+  const payload = edit && typeof edit.payload === 'object' ? edit.payload : {};
+  const sum = String(payload.summary || '').trim();
+  const action = String(edit.action || '').toLowerCase();
+  const tag = action === 'customize' ? 'Customize' : 'Add';
+  if (sum) return tag + ': ' + sum;
+  const shortId = String(editId || '').slice(0, 8);
+  return tag + ' · ' + (shortId || 'edit');
+}
+
+function clearPanelRevisionSelection() {
+  panelRevisionEditId = null;
+  panelRevisionKind = null;
+}
+
+function renderPageEditsPicker() {
+  if (!els.pageEditsRow) return;
+
+  const entries = Object.entries(activeBlueprints).filter(function (ent) {
+    return isRevisionPickableAction(ent[1] && ent[1].action);
+  });
+
+  if (!entries.length) {
+    els.pageEditsRow.classList.add('hidden');
+    els.pageEditsRow.innerHTML = '';
+    return;
+  }
+
+  els.pageEditsRow.classList.remove('hidden');
+  els.pageEditsRow.innerHTML = '';
+
+  const label = document.createElement('span');
+  label.className = 'webedit-page-edits-label';
+  label.textContent = 'Improve an edit on this page';
+  els.pageEditsRow.appendChild(label);
+
+  const chipsWrap = document.createElement('div');
+  chipsWrap.className = 'webedit-page-edits-chips';
+
+  const clearBtn = document.createElement('button');
+  clearBtn.type = 'button';
+  clearBtn.className = 'webedit-page-edit-chip webedit-page-edit-chip-clear';
+  clearBtn.textContent = 'None';
+  clearBtn.addEventListener('click', debounce(async function () {
+    clearPanelRevisionSelection();
+    await sendToBrain('CANCEL_FLOW');
+    renderPageEditsPicker();
+  }));
+  chipsWrap.appendChild(clearBtn);
+
+  entries.forEach(function (ent) {
+    const editId = ent[0];
+    const edit = ent[1];
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'webedit-page-edit-chip';
+    if (panelRevisionEditId === editId) chip.classList.add('active');
+    chip.textContent = formatPageEditLabel(edit, editId);
+    chip.title = editId;
+    chip.addEventListener('click', debounce(async function () {
+      if (!isAuthenticated()) {
+        showNotification('Please log in to improve an edit');
+        return;
+      }
+      const rawUrl = await getCurrentTabUrl();
+      const nk = normalizePageKey(rawUrl);
+      if (!nk || !rawUrl.startsWith('http')) {
+        showNotification('Open a website tab first');
+        return;
+      }
+      const action = String(edit.action || '').toLowerCase();
+      if (action === 'customize') {
+        if (!validateBeforeSend('RESUME_CUSTOMIZE_EDIT', { editId: editId, url: nk })) return;
+        const resp = await sendToBrain('RESUME_CUSTOMIZE_EDIT', { editId: editId, url: nk });
+        if (!resp.success) {
+          showNotification(resp.error || 'Could not open customization');
+          return;
+        }
+        panelRevisionEditId = editId;
+        panelRevisionKind = 'customize';
+        addChatMessage('system', 'Reference: customization — ' + formatPageEditLabel(edit, editId) + '. Adjust styles in the dashboard, then Apply.');
+        renderPageEditsPicker();
+        return;
+      }
+      if (action === 'add' || action === 'text') {
+        if (!validateBeforeSend('ARM_REVISE_ADD', { editId: editId, url: nk })) return;
+        const resp = await sendToBrain('ARM_REVISE_ADD', { editId: editId, url: nk });
+        if (!resp.success) {
+          showNotification(resp.error || 'Could not arm revise mode');
+          return;
+        }
+        openKeepAlivePort();
+        panelRevisionEditId = editId;
+        panelRevisionKind = 'add';
+        addChatMessage('system', 'Reference: Add feature — ' + formatPageEditLabel(edit, editId) + '. Describe changes below; when the preview looks right, use Apply.');
+        renderPageEditsPicker();
+      }
+    }));
+    chipsWrap.appendChild(chip);
+  });
+
+  els.pageEditsRow.appendChild(chipsWrap);
+}
+
+async function refreshBlueprintsAndPicker() {
+  const url = await getCurrentTabUrl();
+  const nk = normalizePageKey(url);
+  if (nk !== currentBlueprintPageKey) {
+    clearPanelRevisionSelection();
+  }
+  if (!url || !url.startsWith('http')) {
+    activeBlueprints = {};
+    currentBlueprintPageKey = '';
+    renderPageEditsPicker();
+    return;
+  }
+  const bpResp = await sendToBrain('GET_ACTIVE_BLUEPRINTS', { url: url });
+  if (bpResp.success) {
+    activeBlueprints = bpResp.blueprints || {};
+    currentBlueprintPageKey = normalizePageKey(bpResp.pageKey || url);
+  }
+  renderPageEditsPicker();
+}
+
 function renderBlueprintList() {
-  if (!els.blueprintList) return;
-  els.blueprintList.innerHTML = '';
+  if (els.blueprintList) els.blueprintList.innerHTML = '';
+  renderPageEditsPicker();
 }
 
 async function loadEditHistory(forceRefresh) {
@@ -772,6 +906,7 @@ function setPanelMode(mode) {
   } else {
     renderChatMessages();
     renderBlueprintList();
+    renderPageEditsPicker();
   }
 }
 
@@ -846,10 +981,14 @@ chrome.runtime.onMessage.addListener(function (message) {
 
     case 'FLOW_STATE_CHANGED':
       if (message.state === 'PICKING' && message.feature) {
+        clearPanelRevisionSelection();
         showNotification('Pick an element on the page for: ' + message.feature);
+        renderPageEditsPicker();
       }
       if (message.state === 'IDLE') {
         closeKeepAlivePort();
+        clearPanelRevisionSelection();
+        renderPageEditsPicker();
       }
       break;
 
@@ -873,7 +1012,10 @@ chrome.runtime.onMessage.addListener(function (message) {
 
     case 'CUSTOMIZE_DASHBOARD_OPEN':
       if (window.WebEditPanel && typeof window.WebEditPanel.openCustomizeDashboard === 'function') {
-        window.WebEditPanel.openCustomizeDashboard(message.selector, message.summary, message.url);
+        window.WebEditPanel.openCustomizeDashboard(message.selector, message.summary, message.url, {
+          initialStyles: message.initialStyles || {},
+          resumeEditId: message.resumeEditId || null
+        });
       }
       break;
 
@@ -1083,6 +1225,10 @@ function registerEventListeners() {
   renderEditHistoryView();
   setPanelMode(currentPanelMode);
   registerEventListeners();
+
+  chrome.tabs.onActivated.addListener(function () {
+    refreshBlueprintsAndPicker();
+  });
   })();
 
 // Expose a minimal API so per-feature panel modules can display messages

@@ -24,6 +24,17 @@ function webeditBuildRefinementUserMessage(userPrompt) {
     '\n\nSECTION: INSTRUCTION\nApply only the changes in REFINEMENT_REQUEST. Output a COMPLETE replacement JSON with keys "html", "css", and "actions" (not a diff). Preserve all interactive behavior, all "on" event bindings, and all persistence (ifStorage/getStorage/setStorage) unless the user explicitly asks to remove them.';
 }
 
+/** Seeds refinement mode for “improve existing Add edit” (must match edge replay shape). */
+function webeditBuildReviseSeedUserMessage(htmlContext, selector, pageUrl) {
+  var ctx = String(htmlContext || '').trim() || 'No anchor HTML re-fetched; the assistant turn after this message carries the canonical html/css/actions JSON.';
+  var sel = String(selector || '').trim() || '(unknown)';
+  var u = String(pageUrl || '').trim();
+  return 'SECTION: CONTEXT_HTML\n```html\n' + ctx + '\n```\n\nSECTION: USER_REQUEST\n' +
+    'An Add feature is already injected on this page at anchor selector: ' + sel + (u ? ' (page: ' + u + ').' : '.') +
+    ' Document it as JSON. The next assistant message in this thread is the frozen spec (html, css, actions); the user will send refinement requests afterward.\n\n' +
+    'SECTION: OUTPUT_CONSTRAINT\nRespond with ONLY a JSON object. Exactly three keys: "html", "css", "actions". No other keys. No markdown. No prose.';
+}
+
 registerFeature('add', {
 
   onStartPick: function (_tabId, _message) {
@@ -71,7 +82,7 @@ registerFeature('add', {
     var flow = brainState.activeFlow || {};
     var htmlContext = flow.htmlContext || '';
     var selector = flow.selector || '';
-    var isRefinement = !!flow.spec;
+    var isRefinement = Array.isArray(flow.conversationHistory) && flow.conversationHistory.length > 0;
 
     transitionState(BRAIN_STATES.PROCESSING);
 
@@ -154,16 +165,18 @@ registerFeature('add', {
   onApply: async function () {
     var flow = brainState.activeFlow || {};
     var spec = flow.spec;
-    var url = flow.url || '';
+    var url = normalizePageKey(flow.url || '');
     var selector = flow.selector || '';
     var lockedTabId = brainState.lockedTabId;
     var editId;
     var syncFailed = false;
 
-    if (!spec) {
+      if (!spec) {
       resetState();
       return { success: false, error: 'No spec to apply' };
     }
+
+    var reviseEditId = flow.reviseEditId ? String(flow.reviseEditId).trim() : '';
 
     try {
       // ── Step 0: Close the Preview Lab ──────────────────────────────────
@@ -178,57 +191,105 @@ registerFeature('add', {
         ledger[url] = {};
       }
 
-      editId = generateEditId();
-      var editData = {
-        pageKey: url,
-        action: 'add',
-        selector: selector,
-        status: 'active',
-        payload: {
-          targetSelector: selector,
-          html: spec.html || '',
-          css: spec.css || '',
-          actions: spec.actions || [],
-          position: 'beforeend'
-        },
-        createdAt: Date.now()
-      };
-
-      ledger[url][editId] = editData;
-      await saveLedger(ledger);
-
-      // ── Step 2: Targeted Dispatch — feature injected instantly ──────────
-
-      try {
-        await dispatchBlueprintsForPage(url, lockedTabId);
-      } catch (e) {
-        console.warn('[Add-Brain] Blueprint dispatch failed:', e.message);
+      var editData;
+      if (reviseEditId && !ledger[url][reviseEditId]) {
+        resetState();
+        return { success: false, error: 'Original edit not found for this page' };
       }
+      if (reviseEditId && ledger[url][reviseEditId]) {
+        editId = reviseEditId;
+        var existing = ledger[url][editId];
+        var prevPayload = existing.payload && typeof existing.payload === 'object' ? existing.payload : {};
+        editData = {
+          pageKey: url,
+          action: existing.action || 'add',
+          selector: selector,
+          status: existing.status || 'active',
+          payload: {
+            targetSelector: selector,
+            html: spec.html || '',
+            css: spec.css || '',
+            actions: spec.actions || [],
+            position: prevPayload.position || 'beforeend',
+            summary: prevPayload.summary,
+            description: prevPayload.description
+          },
+          createdAt: existing.createdAt || Date.now(),
+          updatedAt: Date.now()
+        };
+        ledger[url][editId] = editData;
+        await saveLedger(ledger);
 
-      // ── Step 3: Await Supabase insert ──────────────────────────────────
-
-      var supabaseId = await syncInsertToSupabase(editId, url, editData);
-      if (!supabaseId) {
-        syncFailed = true;
-        console.warn('[Add-Brain] Supabase sync returned failure');
-      } else {
-        if (supabaseId !== editId) {
-          var freshLedger = await getLedger();
-          if (freshLedger[url] && freshLedger[url][editId]) {
-            delete freshLedger[url][editId];
-            freshLedger[url][supabaseId] = editData;
-            await saveLedger(freshLedger);
-          }
-          editId = supabaseId;
+        try {
+          await dispatchBlueprintsForPage(url, lockedTabId);
+        } catch (e) {
+          console.warn('[Add-Brain] Blueprint dispatch failed:', e.message);
         }
-      }
 
-      // ── Step 3b: Re-dispatch with reconciled IDs ────────────────────────
+        var patchOk = await syncEditPayloadToSupabase(editId, editData);
+        if (!patchOk) {
+          syncFailed = true;
+          console.warn('[Add-Brain] Supabase payload update failed');
+        }
 
-      try {
-        await dispatchBlueprintsForPage(url, lockedTabId);
-      } catch (e) {
-        console.warn('[Add-Brain] Post-sync blueprint dispatch failed:', e.message);
+        try {
+          await syncLedgerPageFromSupabase(url);
+        } catch (e) {
+          console.warn('[Add-Brain] Ledger refresh after PATCH failed:', e.message);
+        }
+
+        try {
+          await dispatchBlueprintsForPage(url, lockedTabId);
+        } catch (e) {
+          console.warn('[Add-Brain] Post-patch blueprint dispatch failed:', e.message);
+        }
+      } else {
+        editId = generateEditId();
+        editData = {
+          pageKey: url,
+          action: 'add',
+          selector: selector,
+          status: 'active',
+          payload: {
+            targetSelector: selector,
+            html: spec.html || '',
+            css: spec.css || '',
+            actions: spec.actions || [],
+            position: 'beforeend'
+          },
+          createdAt: Date.now()
+        };
+
+        ledger[url][editId] = editData;
+        await saveLedger(ledger);
+
+        try {
+          await dispatchBlueprintsForPage(url, lockedTabId);
+        } catch (e) {
+          console.warn('[Add-Brain] Blueprint dispatch failed:', e.message);
+        }
+
+        var supabaseId = await syncInsertToSupabase(editId, url, editData);
+        if (!supabaseId) {
+          syncFailed = true;
+          console.warn('[Add-Brain] Supabase sync returned failure');
+        } else {
+          if (supabaseId !== editId) {
+            var freshLedger = await getLedger();
+            if (freshLedger[url] && freshLedger[url][editId]) {
+              delete freshLedger[url][editId];
+              freshLedger[url][supabaseId] = editData;
+              await saveLedger(freshLedger);
+            }
+            editId = supabaseId;
+          }
+        }
+
+        try {
+          await dispatchBlueprintsForPage(url, lockedTabId);
+        } catch (e) {
+          console.warn('[Add-Brain] Post-sync blueprint dispatch failed:', e.message);
+        }
       }
 
       // ── Step 4: Broadcast history ──────────────────────────────────────

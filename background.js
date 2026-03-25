@@ -648,6 +648,171 @@ async function syncStatusToSupabase(editId, newStatus) {
   }
 }
 
+async function syncEditPayloadToSupabase(editId, editData) {
+  try {
+    const auth = await getSessionInfo();
+    if (!auth) {
+      console.warn('[Brain] No active session — skipping Supabase payload update.');
+      return false;
+    }
+
+    const meta = buildHistoryMetadata(editData);
+    const response = await fetch(
+      `${SUPABASE_URL}/rest/v1/edits?id=eq.${encodeURIComponent(editId)}`,
+      {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${auth.accessToken}`,
+          'Prefer': 'return=minimal',
+        },
+        body: JSON.stringify({
+          payload: isPlainObject(editData.payload) ? editData.payload : {},
+          name: meta.summary || '',
+          description: meta.description || '',
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      console.warn(`[Brain] Supabase payload update failed (${response.status}):`, text);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.warn('[Brain] Supabase payload update network error:', e.message);
+    return false;
+  }
+}
+
+async function brainResetForArmingFlow() {
+  const tabId = brainState.lockedTabId;
+  if (brainState.current !== BRAIN_STATES.IDLE && tabId) {
+    if (brainState.activeFlow?.feature === 'add') {
+      try {
+        await dispatchToTab(tabId, { type: 'CLOSE_PREVIEW' });
+      } catch (_) {}
+    }
+    if (brainState.current === BRAIN_STATES.PREVIEWING && brainState.activeFlow?.feature === 'customize') {
+      try {
+        await dispatchToTab(tabId, { type: 'CLEAR_PREVIEW_CSS' });
+      } catch (_) {}
+    }
+    try {
+      await dispatchToTab(tabId, { type: 'STOP_PICK_MODE' });
+    } catch (_) {}
+  }
+  resetState();
+}
+
+async function handleArmReviseAdd(message, callerTabId) {
+  await brainResetForArmingFlow();
+
+  const editId = String(message.editId || '').trim();
+  const url = normalizePageKey(message.url || '');
+  if (!editId || !url) {
+    return { success: false, error: 'Missing editId or url' };
+  }
+
+  const ledger = await getLedger();
+  const edit = ledger[url]?.[editId];
+  if (!edit) {
+    return { success: false, error: 'Edit not found on this page' };
+  }
+
+  const action = String(edit.action || '').toLowerCase();
+  if (action !== 'add' && action !== 'text') {
+    return { success: false, error: 'This edit is not an Add feature' };
+  }
+
+  const payload = isPlainObject(edit.payload) ? edit.payload : {};
+  const html = payload.html || '';
+  const css = payload.css || '';
+  const actions = Array.isArray(payload.actions) ? payload.actions : [];
+  const selector = String(edit.selector || payload.targetSelector || '').trim();
+  if (!selector) {
+    return { success: false, error: 'Missing anchor selector for this edit' };
+  }
+
+  const tabId = await resolveTargetTabId(callerTabId);
+  if (!tabId) {
+    return { success: false, error: 'No active website tab found. Please open or focus a website tab.' };
+  }
+
+  const humanLabel = String(payload.summary || '').trim() || selectorToHumanLabel(selector);
+  const seedUser = webeditBuildReviseSeedUserMessage('', selector, url);
+  const seedModel = JSON.stringify({ html: html, css: css, actions: actions });
+
+  transitionState(BRAIN_STATES.PREVIEWING, {
+    feature: 'add',
+    tabId: tabId,
+    selector: selector,
+    url: url,
+    humanLabel: humanLabel,
+    htmlContext: '',
+    spec: { html: html, css: css, actions: actions, targetSelector: selector },
+    reviseEditId: editId,
+    conversationHistory: [
+      { role: 'user', text: seedUser },
+      { role: 'model', text: seedModel },
+    ],
+  });
+
+  return { success: true, state: 'PREVIEWING', feature: 'add' };
+}
+
+async function handleResumeCustomizeEdit(message, callerTabId) {
+  await brainResetForArmingFlow();
+
+  const editId = String(message.editId || '').trim();
+  const url = normalizePageKey(message.url || '');
+  if (!editId || !url) {
+    return { success: false, error: 'Missing editId or url' };
+  }
+
+  const ledger = await getLedger();
+  const edit = ledger[url]?.[editId];
+  if (!edit) {
+    return { success: false, error: 'Edit not found on this page' };
+  }
+
+  const action = String(edit.action || '').toLowerCase();
+  if (action !== 'customize') {
+    return { success: false, error: 'This edit is not a customization' };
+  }
+
+  const tabId = await resolveTargetTabId(callerTabId);
+  if (!tabId) {
+    return { success: false, error: 'No active website tab found. Please open or focus a website tab.' };
+  }
+
+  const payload = isPlainObject(edit.payload) ? edit.payload : {};
+  const selector = String(edit.selector || payload.selector || '').trim();
+  const summary = String(payload.summary || '').trim() || selectorToHumanLabel(selector);
+  const initialStyles = isPlainObject(payload.styles) ? payload.styles : {};
+
+  transitionState(BRAIN_STATES.PREVIEWING, {
+    feature: 'customize',
+    tabId: tabId,
+    selector: selector,
+    url: url,
+    resumeEditId: editId,
+  });
+
+  chrome.runtime.sendMessage({
+    type: 'CUSTOMIZE_DASHBOARD_OPEN',
+    selector: selector,
+    summary: summary,
+    url: url,
+    initialStyles: initialStyles,
+    resumeEditId: editId,
+  }).catch(() => {});
+
+  return { success: true, state: 'PREVIEWING', feature: 'customize' };
+}
+
 async function fetchHistoryRows(options = {}) {
   const auth = await getSessionInfo();
   if (!auth) {
@@ -991,6 +1156,8 @@ const MESSAGE_SCHEMAS = {
   GET_CHAT_SESSION:      ['sessionId'],
   DELETE_CHAT_SESSION:    ['sessionId'],
   RENAME_CHAT_SESSION:   ['sessionId', 'title'],
+  ARM_REVISE_ADD:        ['editId', 'url'],
+  RESUME_CUSTOMIZE_EDIT: ['editId', 'url'],
 };
 
 function validateMessage(message) {
@@ -1509,13 +1676,23 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
 
         case 'CANCEL_FLOW':
           if (brainState.lockedTabId) {
-            if (brainState.current === BRAIN_STATES.PREVIEWING) {
+            if (brainState.activeFlow?.feature === 'add') {
+              dispatchToTab(brainState.lockedTabId, { type: 'CLOSE_PREVIEW' });
+            } else if (brainState.current === BRAIN_STATES.PREVIEWING) {
               dispatchToTab(brainState.lockedTabId, { type: 'CLEAR_PREVIEW_CSS' });
             }
             dispatchToTab(brainState.lockedTabId, { type: 'STOP_PICK_MODE' });
           }
           resetState();
           response = { success: true, state: 'IDLE' };
+          break;
+
+        case 'ARM_REVISE_ADD':
+          response = await handleArmReviseAdd(message, callerTabId);
+          break;
+
+        case 'RESUME_CUSTOMIZE_EDIT':
+          response = await handleResumeCustomizeEdit(message, callerTabId);
           break;
 
         default:
