@@ -10,6 +10,20 @@
 // All background.js globals are available by the time these callbacks fire.
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Must match supabase/functions/ai-generate-feature-spec/index.ts (conversation replay).
+function webeditBuildInitialUserMessage(htmlContext, userPrompt) {
+  var ctx = htmlContext || 'No context provided';
+  var p = String(userPrompt || '').trim();
+  return 'SECTION: CONTEXT_HTML\n```html\n' + ctx + '\n```\n\nSECTION: USER_REQUEST\n' + p +
+    '\n\nSECTION: OUTPUT_CONSTRAINT\nRespond with ONLY a JSON object. Exactly three keys: "html", "css", "actions". No other keys. No markdown. No prose.';
+}
+
+function webeditBuildRefinementUserMessage(userPrompt) {
+  var p = String(userPrompt || '').trim();
+  return 'SECTION: REFINEMENT_REQUEST\n' + p +
+    '\n\nSECTION: INSTRUCTION\nApply only the changes in REFINEMENT_REQUEST. Output a COMPLETE replacement JSON with keys "html", "css", and "actions" (not a diff). Preserve all interactive behavior, all "on" event bindings, and all persistence (ifStorage/getStorage/setStorage) unless the user explicitly asks to remove them.';
+}
+
 registerFeature('add', {
 
   onStartPick: function (_tabId, _message) {
@@ -80,21 +94,25 @@ registerFeature('add', {
         return { success: false, error: 'AI Generation failed: ' + result.error };
       }
 
-      // Build conversation history for future refinements
+      // Build conversation history for future refinements (text must match edge function templates)
       if (!isRefinement) {
         flow.conversationHistory.push({
           role: 'user',
-          text: 'Context HTML:\n```html\n' + htmlContext + '\n```\n\nUser Request: ' + message.prompt
+          text: webeditBuildInitialUserMessage(htmlContext, message.prompt)
         });
       } else {
         flow.conversationHistory.push({
           role: 'user',
-          text: 'User Refinement: ' + message.prompt
+          text: webeditBuildRefinementUserMessage(message.prompt)
         });
       }
       flow.conversationHistory.push({
         role: 'model',
-        text: JSON.stringify(result.spec)
+        text: JSON.stringify({
+          html: result.spec.html || '',
+          css: result.spec.css || '',
+          actions: result.spec.actions || []
+        })
       });
 
       flow.spec = result.spec;

@@ -5,39 +5,59 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
+/** Fixed user message shape for every initial Add-flow generation. */
+function buildInitialUserMessage(htmlContext: string, userPrompt: string): string {
+  const ctx = htmlContext || "No context provided";
+  return `SECTION: CONTEXT_HTML
+\`\`\`html
+${ctx}
+\`\`\`
 
-  try {
-    const { prompt, htmlContext, history } = await req.json();
+SECTION: USER_REQUEST
+${userPrompt}
 
-    if (!prompt) {
-      return new Response(JSON.stringify({ error: "Missing prompt" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+SECTION: OUTPUT_CONSTRAINT
+Respond with ONLY a JSON object. Exactly three keys: "html", "css", "actions". No other keys. No markdown. No prose.`;
+}
 
-    const apiKey = Deno.env.get("GEMINI_API_KEY");
-    if (!apiKey) {
-      throw new Error("GEMINI_API_KEY is not set");
-    }
+/** Fixed user message shape for every refinement turn (appended after history replay). */
+function buildRefinementUserMessage(userPrompt: string): string {
+  return `SECTION: REFINEMENT_REQUEST
+${userPrompt}
 
-    const systemInstruction = `You are an expert Frontend Engineer building features for the WebEdit AI Chrome Extension.
-Your goal is to generate strictly functional, self-contained HTML, CSS, and interactive behavior based *exactly* on the user's prompt.
+SECTION: INSTRUCTION
+Apply only the changes in REFINEMENT_REQUEST. Output a COMPLETE replacement JSON with keys "html", "css", and "actions" (not a diff). Preserve all interactive behavior, all "on" event bindings, and all persistence (ifStorage/getStorage/setStorage) unless the user explicitly asks to remove them.`;
+}
 
-IMPORTANT: You do NOT output raw JavaScript. Instead, you output an "actions" array of structured DOM commands. These commands are executed by a pre-built interpreter in the extension's content script, which calls real DOM APIs. This bypasses Content Security Policy (CSP) restrictions on all websites.
+const refinementModeAddendum = `
+=== REFINEMENT MODE (ACTIVE) ===
+You are refining a feature you already specified in this conversation. The prior turns contain the user's context and your last JSON output (html, css, actions only).
 
-The Golden Rules:
-1. Zero Hallucinations: Build *only* what the user asked for. Do not build extra UI elements or panels that were not requested.
-2. Strict JSON Output: You must output *only* a valid JSON object with exactly three keys: "html", "css", and "actions". Do not include any conversational text, markdown formatting (like \\\`\\\`\\\`json), or explanations outside the JSON structure.
-3. CRITICAL -- Actions Are Mandatory: The "actions" array MUST NOT be empty for any feature that involves user interaction (toggle, switch, button, dropdown, modal, accordion, tabs, form, or any clickable element). A switch that only animates via CSS :checked without an "on" event binding that triggers real behavior (toggling page styles, saving state, etc.) is INCOMPLETE. Every interactive element MUST have at least one "on" event binding in the actions array. If the user asks for a toggle or switch, the actions array must contain the logic that makes it actually DO something (change styles, toggle classes, save state).
-4. The "Review Before Submit" Rule: Before generating the final JSON, internally review your output against the user's prompt. Ensure every interactive behavior the user described is covered by the actions array. Ask yourself: "If I click every interactive element, does something meaningful happen via the actions array?" If not, add the missing actions.
-5. Namespacing: All CSS classes and IDs MUST be prefixed with \`webedit-ai-\` to avoid conflicts with the host website.
-6. State Persistence: If the feature needs to remember data between page loads (toggles, text, items), use the setStorage/getStorage/ifStorage actions with keys prefixed with \`webedit-ai-\`.
-7. Selectors in actions are scoped to the feature container. Use CSS selectors relative to the feature root (e.g. ".webedit-ai-btn"), NOT the whole page. Exception: use the page-scoped ops (pageAddClass, pageRemoveClass, pageToggleClass, pageSetStyle) when the feature needs to affect elements outside the feature container, like the page body or html element.
+MUST:
+- Output a FULL new JSON object with "html", "css", "actions" — never partial patches.
+- Keep everything the user did NOT ask to change: same capabilities, same persistence pattern, same event handlers unless they request otherwise.
+- If they only ask for visual/layout/CSS changes, keep the actions array logically equivalent; adjust only what is needed for the new markup or styles.
+- Do not remove ifStorage/getStorage restore steps at the start of actions unless the user asks to drop persistence.
+
+The extension handles user Cancel outside the model; you never output cancellation or disclaimers — only the JSON spec.
+`;
+
+const systemInstructionBase = `You are an expert Frontend Engineer for the WebEdit AI Chrome Extension.
+
+=== NON-NEGOTIABLE (READ FIRST) ===
+MUST_OUTPUT_SHAPE: Exactly one JSON object with keys "html", "css", "actions" only. No "js", no "confidence", no extra keys, no markdown fences, no commentary.
+MUST_INTERACTIVE: If the feature has any interactive control (button, switch, checkbox, link that does something, input, dropdown, tab, modal trigger, etc.), "actions" MUST NOT be empty. Every such control MUST have at least one "on" event with nested actions that do real work (DOM or page ops + setStorage when state matters). CSS-only motion without actions is INVALID.
+MUST_PERSIST: If the user can change state (toggle, theme, text field value to remember, etc.), persistence uses browser localStorage. Keys MUST start with "webedit-ai-". The SAME localStorage API exists on every website — only key names and values differ, not the command vocabulary.
+MUST_RESTORE_FIRST: For any feature with remembered state, the "actions" array MUST BEGIN with one or more ifStorage and/or getStorage steps that re-apply saved UI and page effects BEFORE any "on" bindings. Then add "on" handlers that update DOM and call setStorage.
+MUST_NAMESPACE: All CSS classes and IDs in html/css MUST use prefix webedit-ai-.
+MUST_PAGE_OPS: To change the whole page (e.g. dark mode on document), use pageAddClass, pageRemoveClass, pageToggleClass, or pageSetStyle with selectors like "html" or "body". Other ops use selectors relative to the feature root.
+
+You do NOT output raw JavaScript. You output structured DOM commands in "actions". A content-script interpreter runs them with real DOM APIs (CSP-safe).
+
+=== DETAILED RULES ===
+1. Build only what the user asked; no extra panels or chrome.
+2. Before sending JSON, verify: (a) interactive elements have "on" + logic, (b) persistent features start with ifStorage/getStorage restore, (c) three keys only.
+3. Selectors in normal ops are scoped to the feature container; page-scoped ops target the live document.
 
 ## DOM Commands Vocabulary
 
@@ -144,34 +164,69 @@ Selectors here target the real page DOM (like "body", "html", or any page elemen
   ]
 }
 
+=== BEFORE YOU RESPOND — CHECKLIST ===
+[ ] JSON has exactly "html", "css", "actions"
+[ ] Every interactive control has "on" + real behavior in actions
+[ ] If state should survive refresh: actions start with ifStorage/getStorage restore, then "on" handlers call setStorage
+[ ] Classes/IDs use webedit-ai- prefix
+
 Return ONLY this JSON object.`;
+
+serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
+  try {
+    const { prompt, htmlContext, history } = await req.json();
+
+    if (!prompt) {
+      return new Response(JSON.stringify({ error: "Missing prompt" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const apiKey = Deno.env.get("GEMINI_API_KEY");
+    if (!apiKey) {
+      throw new Error("GEMINI_API_KEY is not set");
+    }
+
+    const isRefinement = Array.isArray(history) && history.length > 0;
+
+    const systemParts: Array<{ text: string }> = [{ text: systemInstructionBase }];
+    if (isRefinement) {
+      systemParts.push({ text: refinementModeAddendum });
+    }
 
     const contents: Array<{ role: string; parts: Array<{ text: string }> }> = [];
 
-    if (Array.isArray(history) && history.length > 0) {
+    if (isRefinement) {
       for (const turn of history) {
         contents.push({ role: turn.role, parts: [{ text: turn.text }] });
       }
-      contents.push({ role: "user", parts: [{ text: "User Refinement: " + prompt }] });
+      contents.push({ role: "user", parts: [{ text: buildRefinementUserMessage(String(prompt).trim()) }] });
     } else {
-      const userMessage = `Context HTML (where the feature will be inserted):\n\`\`\`html\n${htmlContext || "No context provided"}\n\`\`\`\n\nUser Request: ${prompt}`;
-      contents.push({ role: "user", parts: [{ text: userMessage }] });
+      contents.push({
+        role: "user",
+        parts: [{ text: buildInitialUserMessage(htmlContext || "", String(prompt).trim()) }],
+      });
     }
 
     const geminiPayload = {
       system_instruction: {
-        parts: [{ text: systemInstruction }]
+        parts: systemParts,
       },
       contents: contents,
       generation_config: {
         response_mime_type: "application/json",
-      }
+      },
     };
 
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
       },
       body: JSON.stringify(geminiPayload),
     });
@@ -189,16 +244,14 @@ Return ONLY this JSON object.`;
       throw new Error("Empty response from Gemini");
     }
 
-    // Try to parse the response as JSON. Gemini should respect response_mime_type.
     let parsedSpec;
     try {
       parsedSpec = JSON.parse(textOutput);
     } catch (parseError) {
       console.error("Failed to parse Gemini output as JSON. Output was:", textOutput);
-      // Fallback: try to extract JSON by finding the first { and last }
       try {
-        const firstBrace = textOutput.indexOf('{');
-        const lastBrace = textOutput.lastIndexOf('}');
+        const firstBrace = textOutput.indexOf("{");
+        const lastBrace = textOutput.lastIndexOf("}");
         if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
           const jsonString = textOutput.substring(firstBrace, lastBrace + 1);
           parsedSpec = JSON.parse(jsonString);
@@ -213,13 +266,12 @@ Return ONLY this JSON object.`;
     const finalSpec = {
       html: parsedSpec.html || "",
       css: parsedSpec.css || "",
-      actions: parsedSpec.actions || []
+      actions: parsedSpec.actions || [],
     };
 
     return new Response(JSON.stringify(finalSpec), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
-
   } catch (error) {
     console.error("Error in ai-generate-feature-spec:", error);
     return new Response(JSON.stringify({ error: error.message }), {
