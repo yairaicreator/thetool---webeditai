@@ -159,14 +159,13 @@ async function generateFeatureSpec(prompt, context = null, history = null) {
       return { ok: false, error: `ai-generate-feature-spec failed with status ${response.status}` };
     }
 
-    // Wrap in standard spec format for sidepanel
     return { 
       ok: true, 
       spec: {
         action: "add",
         html: json.html || "",
         css: json.css || "",
-        js: json.js || ""
+        actions: json.actions || []
       }
     };
   } catch (error) {

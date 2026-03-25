@@ -259,15 +259,9 @@
       applyStyleBlueprint(editId, edit, CUSTOM_STYLE_ID_PREFIX, 'customize');
     }
 
-    if (payload.js) {
-      var scriptId = ADD_SCRIPT_PREFIX + editId;
-      var script = document.getElementById(scriptId);
-      if (!script) {
-        script = document.createElement('script');
-        script.id = scriptId;
-        script.setAttribute('data-webedit-id', editId);
-        script.textContent = String(payload.js);
-        (document.body || document.documentElement).appendChild(script);
+    if (Array.isArray(payload.actions) && payload.actions.length > 0) {
+      if (window.__webeditActions && typeof window.__webeditActions.execute === 'function') {
+        window.__webeditActions.execute(payload.actions, container);
       }
     }
   }
@@ -420,12 +414,12 @@
 
       if (segment.charAt(0) === '#') {
         parts.unshift(segment);
-        break;
-      }
+      break;
+    }
 
       var nth = getNthOfType(current);
       var siblingsOfType = 0;
-      if (current.parentElement) {
+    if (current.parentElement) {
         for (var i = 0; i < current.parentElement.children.length; i++) {
           if (current.parentElement.children[i].tagName === current.tagName) {
             siblingsOfType++;
@@ -623,8 +617,8 @@
           resumeObserver();
         }
         sendResponse({ success: true });
-        return true;
-      }
+    return true;
+  }
 
       case 'CLEAR_PREVIEW_CSS': {
         pauseObserver();
@@ -637,7 +631,7 @@
           resumeObserver();
         }
         sendResponse({ success: true });
-        return true;
+      return true;
       }
 
     }
@@ -656,8 +650,8 @@
     function (response) {
       if (chrome.runtime.lastError) {
         console.warn('[Hands] Init failed:', chrome.runtime.lastError.message);
-        return;
-      }
+            return;
+          }
       if (!response || !response.success) return;
 
       activeBlueprints = response.blueprints || {};
@@ -667,4 +661,4 @@
 
   startWatchdog();
 
-})();
+    })();

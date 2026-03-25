@@ -13,7 +13,7 @@
 // SECTION 1: DOM References
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const els = {
+  const els = {
   headerHamburger: document.getElementById('webedit-header-hamburger'),
   homeBtn:         document.getElementById('webedit-home-btn'),
   editHistoryBtn:  document.getElementById('webedit-edit-history-btn'),
@@ -236,39 +236,39 @@ function ensureSessionId() {
   if (!currentSessionId && isAuthenticated()) {
     currentSessionId = Date.now().toString();
   }
-}
+  }
 
-function addChatMessage(type, content) {
+  function addChatMessage(type, content) {
   ensureSessionId();
   chatMessages.push({ type, content, timestamp: Date.now() });
-  if (chatMessages.length > MAX_MESSAGES) {
-    chatMessages = chatMessages.slice(-MAX_MESSAGES);
-  }
-  renderChatMessages();
+    if (chatMessages.length > MAX_MESSAGES) {
+      chatMessages = chatMessages.slice(-MAX_MESSAGES);
+    }
+    renderChatMessages();
   persistCurrentSession();
 }
 
 function showNotification(text) {
   ensureSessionId();
   chatMessages.push({ type: 'system', content: text, timestamp: Date.now() });
-  if (chatMessages.length > MAX_MESSAGES) {
-    chatMessages = chatMessages.slice(-MAX_MESSAGES);
-  }
-  renderChatMessages();
+    if (chatMessages.length > MAX_MESSAGES) {
+      chatMessages = chatMessages.slice(-MAX_MESSAGES);
+    }
+    renderChatMessages();
   persistCurrentSession();
-}
+  }
 
-function renderChatMessages() {
+  function renderChatMessages() {
   if (!els.chatMessages) return;
   els.chatMessages.innerHTML = '';
 
-  if (chatMessages.length === 0) {
+    if (chatMessages.length === 0) {
     const placeholder = document.createElement('div');
     placeholder.className = 'webedit-chat-placeholder';
     placeholder.innerHTML = '<p>Describe what you want to change to get started</p>';
-    els.chatMessages.appendChild(placeholder);
-    return;
-  }
+      els.chatMessages.appendChild(placeholder);
+      return;
+    }
 
   chatMessages.forEach(function (msg, idx) {
     const msgEl = document.createElement('div');
@@ -276,7 +276,7 @@ function renderChatMessages() {
     const contentEl = document.createElement('div');
     contentEl.className = 'webedit-chat-message-content';
     contentEl.textContent = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content || '');
-    msgEl.appendChild(contentEl);
+        msgEl.appendChild(contentEl);
 
     if (msg.editId) {
       const btnRow = document.createElement('div');
@@ -311,8 +311,8 @@ function renderChatMessages() {
       msgEl.appendChild(btnRow);
     }
 
-    els.chatMessages.appendChild(msgEl);
-  });
+      els.chatMessages.appendChild(msgEl);
+    });
 
   els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
 }
@@ -505,27 +505,27 @@ async function loadEditHistory(forceRefresh) {
     setHistorySites([]);
   }
   renderEditHistoryView();
-}
+  }
 
-function getSessionDisplayName(session) {
+  function getSessionDisplayName(session) {
   if (session?.title && String(session.title).trim()) return String(session.title).trim();
   if (session?.preview && String(session.preview).trim()) {
     const p = String(session.preview).trim();
     return p.length > 60 ? p.substring(0, 57) + '...' : p;
   }
   return 'Untitled chat';
-}
-
-function closeActiveHistoryRenameForm() {
-  if (activeHistoryRenameForm && activeHistoryRenameForm.parentNode) {
-    try { activeHistoryRenameForm.parentNode.removeChild(activeHistoryRenameForm); } catch (_) {}
   }
-  activeHistoryRenameForm = null;
-}
 
-function openHistoryRenameInput(session, hostEl) {
-  closeActiveHistoryRenameForm();
-  if (!hostEl) return;
+  function closeActiveHistoryRenameForm() {
+    if (activeHistoryRenameForm && activeHistoryRenameForm.parentNode) {
+    try { activeHistoryRenameForm.parentNode.removeChild(activeHistoryRenameForm); } catch (_) {}
+    }
+    activeHistoryRenameForm = null;
+  }
+
+  function openHistoryRenameInput(session, hostEl) {
+    closeActiveHistoryRenameForm();
+    if (!hostEl) return;
 
   const form = document.createElement('form');
   form.className = 'webedit-history-rename-form';
@@ -533,9 +533,9 @@ function openHistoryRenameInput(session, hostEl) {
   const input = document.createElement('input');
   input.type = 'text';
   input.className = 'webedit-history-rename-input';
-  input.maxLength = 80;
-  input.value = getSessionDisplayName(session);
-  form.appendChild(input);
+    input.maxLength = 80;
+    input.value = getSessionDisplayName(session);
+    form.appendChild(input);
 
   const actions = document.createElement('div');
   actions.className = 'webedit-history-rename-actions';
@@ -550,15 +550,15 @@ function openHistoryRenameInput(session, hostEl) {
   cancelBtn.className = 'webedit-history-rename-cancel';
   cancelBtn.textContent = 'Cancel';
 
-  actions.appendChild(saveBtn);
-  actions.appendChild(cancelBtn);
-  form.appendChild(actions);
+    actions.appendChild(saveBtn);
+    actions.appendChild(cancelBtn);
+    form.appendChild(actions);
 
   const commit = function (shouldSave) {
-    if (shouldSave) {
+      if (shouldSave) {
       sendToBrain('RENAME_CHAT_SESSION', { sessionId: session.id, title: input.value.trim() });
-    }
-    closeActiveHistoryRenameForm();
+      }
+      closeActiveHistoryRenameForm();
     loadChatSessions();
   };
 
@@ -567,35 +567,35 @@ function openHistoryRenameInput(session, hostEl) {
   cancelBtn.addEventListener('click', function (e) { e.preventDefault(); commit(false); });
   input.addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.preventDefault(); commit(false); } });
   input.addEventListener('blur', function (e) {
-    if (e.relatedTarget === saveBtn || e.relatedTarget === cancelBtn) return;
-    commit(true);
-  });
+      if (e.relatedTarget === saveBtn || e.relatedTarget === cancelBtn) return;
+      commit(true);
+    });
 
-  hostEl.appendChild(form);
-  activeHistoryRenameForm = form;
-  input.focus();
-  input.select();
-}
+    hostEl.appendChild(form);
+    activeHistoryRenameForm = form;
+    input.focus();
+    input.select();
+  }
 
 function renderHistoryList() {
-  if (!els.historyList) return;
+    if (!els.historyList) return;
 
   if (!isAuthenticated()) {
     els.historyList.innerHTML = '<div style="padding:10px; color:#9ca3af; font-size:12px; text-align:center">Log in to view history</div>';
-    return;
-  }
+      return;
+    }
 
   if (!Array.isArray(chatSessions) || chatSessions.length === 0) {
-    closeActiveHistoryRenameForm();
-    els.historyList.innerHTML = '<div style="padding:10px; color:#9ca3af; font-size:12px; text-align:center">No history yet</div>';
-    return;
-  }
+      closeActiveHistoryRenameForm();
+      els.historyList.innerHTML = '<div style="padding:10px; color:#9ca3af; font-size:12px; text-align:center">No history yet</div>';
+      return;
+    }
 
-  closeActiveHistoryRenameForm();
+    closeActiveHistoryRenameForm();
   els.historyList.innerHTML = '';
 
   chatSessions
-    .slice()
+      .slice()
     .sort(function (a, b) { return (b.timestamp || 0) - (a.timestamp || 0); })
     .forEach(function (session) {
       const item = document.createElement('div');
@@ -606,8 +606,8 @@ function renderHistoryList() {
 
       const titleEl = document.createElement('div');
       titleEl.className = 'webedit-history-title';
-      titleEl.textContent = getSessionDisplayName(session);
-      main.appendChild(titleEl);
+        titleEl.textContent = getSessionDisplayName(session);
+        main.appendChild(titleEl);
 
       const renameBtn = document.createElement('button');
       renameBtn.className = 'webedit-history-rename-btn';
@@ -615,10 +615,10 @@ function renderHistoryList() {
       renameBtn.setAttribute('aria-label', 'Rename chat');
       renameBtn.innerHTML = '&#9998;';
       renameBtn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        openHistoryRenameInput(session, item);
-      });
-      main.appendChild(renameBtn);
+          e.stopPropagation();
+          openHistoryRenameInput(session, item);
+        });
+        main.appendChild(renameBtn);
 
       const deleteBtn = document.createElement('button');
       deleteBtn.className = 'webedit-history-delete-btn';
@@ -626,7 +626,7 @@ function renderHistoryList() {
       deleteBtn.setAttribute('aria-label', 'Delete chat');
       deleteBtn.innerHTML = '&#128465;';
       deleteBtn.addEventListener('click', debounce(async function (e) {
-        e.stopPropagation();
+          e.stopPropagation();
         await sendToBrain('DELETE_CHAT_SESSION', { sessionId: session.id });
         if (currentSessionId === session.id) {
           currentSessionId = null;
@@ -635,7 +635,7 @@ function renderHistoryList() {
         }
         loadChatSessions();
       }));
-      main.appendChild(deleteBtn);
+        main.appendChild(deleteBtn);
 
       const dateEl = document.createElement('div');
       dateEl.className = 'webedit-history-date';
@@ -647,9 +647,9 @@ function renderHistoryList() {
       previewEl.className = 'webedit-history-preview';
       previewEl.textContent = session.preview || 'New chat';
 
-      item.appendChild(main);
-      item.appendChild(dateEl);
-      item.appendChild(previewEl);
+        item.appendChild(main);
+        item.appendChild(dateEl);
+        item.appendChild(previewEl);
       item.addEventListener('click', debounce(async function () {
         const resp = await sendToBrain('GET_CHAT_SESSION', { sessionId: session.id });
         if (resp.success && resp.session) {
@@ -659,9 +659,9 @@ function renderHistoryList() {
           renderHistoryList();
         }
       }));
-      els.historyList.appendChild(item);
-    });
-}
+        els.historyList.appendChild(item);
+      });
+  }
 
 function updateAuthUI() {
   if (els.authGuard) {
@@ -680,11 +680,11 @@ function updateAuthUI() {
 
   if (currentUser) {
     renderSignedInButton(currentUser);
-  } else {
+    } else {
     renderSignInButton();
   }
 
-  renderHistoryList();
+      renderHistoryList();
   if (!isAuthenticated()) {
     chatMessages = [];
     historyError = '';
@@ -695,19 +695,19 @@ function updateAuthUI() {
     loadEditHistory(false);
   }
   renderEditHistoryView();
-}
+  }
 
-function renderSignInButton() {
-  if (!els.signinBtn) return;
+  function renderSignInButton() {
+    if (!els.signinBtn) return;
   els.signinBtn.className = 'webedit-nav-btn signin-btn';
   els.signinBtn.textContent = 'Log in';
   els.signinBtn.onclick = function () {
     window.open('https://webeditai.com/#/signup?from=extension', '_blank');
-  };
-}
+    };
+  }
 
-function renderSignedInButton(user) {
-  if (!els.signinBtn) return;
+  function renderSignedInButton(user) {
+    if (!els.signinBtn) return;
   els.signinBtn.className = 'webedit-nav-btn signin-btn webedit-avatar-container';
   els.signinBtn.title = user?.email || 'Account';
   els.signinBtn.innerHTML = '';
@@ -715,7 +715,7 @@ function renderSignedInButton(user) {
   const avatar = document.createElement('div');
   avatar.className = 'webedit-avatar';
   avatar.textContent = (user?.email || 'U')[0].toUpperCase();
-  els.signinBtn.appendChild(avatar);
+    els.signinBtn.appendChild(avatar);
 
   const menu = document.createElement('div');
   menu.className = 'webedit-avatar-menu';
@@ -727,23 +727,23 @@ function renderSignedInButton(user) {
       '<span class="webedit-avatar-menu-icon">&#128075;</span>' +
       '<span>Sign out</span>' +
     '</div>';
-  els.signinBtn.appendChild(menu);
+    els.signinBtn.appendChild(menu);
 
   avatar.addEventListener('click', function (e) {
-    e.preventDefault();
-    e.stopPropagation();
+            e.preventDefault();
+      e.stopPropagation();
     menu.classList.toggle('visible');
-  });
+    });
   document.addEventListener('click', function () { menu.classList.remove('visible'); });
   menu.addEventListener('click', function (e) {
-    e.stopPropagation();
+      e.stopPropagation();
     const action = e.target?.closest('.webedit-avatar-menu-item')?.dataset?.action;
-    if (!action) return;
+      if (!action) return;
     menu.classList.remove('visible');
     if (action === 'signout') {
       sendToBrain('WEBEDIT_SIGN_OUT');
-    }
-  });
+        }
+    });
 }
 
 function setSelectedFeature(tool) {
@@ -943,7 +943,7 @@ function registerEventListeners() {
     persistCurrentSession();
     currentSessionId = Date.now().toString();
     chatMessages = [];
-    renderChatMessages();
+      renderChatMessages();
     persistCurrentSession();
     loadChatSessions();
   }));
@@ -999,7 +999,7 @@ function registerEventListeners() {
       selectedHistoryPageKey = siteTab.dataset.pageKey;
       selectedHistoryCategory = 'remove';
       renderEditHistoryView();
-      return;
+        return;
     }
 
     const catTab = e.target.closest('.webedit-edit-history-cat-tab');
@@ -1023,8 +1023,8 @@ function registerEventListeners() {
       actionBtn.disabled = false;
       if (!resp.success) {
         showNotification(resp.error || 'Could not update edit history');
-        return;
-      }
+      return;
+    }
       historyError = '';
       setHistorySites(resp.sites);
       renderEditHistoryView();
@@ -1079,11 +1079,11 @@ function registerEventListeners() {
 
   // 6. Register all event listeners
   setSelectedFeature(selectedFeature);
-  renderChatMessages();
+    renderChatMessages();
   renderEditHistoryView();
   setPanelMode(currentPanelMode);
   registerEventListeners();
-})();
+  })();
 
 // Expose a minimal API so per-feature panel modules can display messages
 window.WebEditPanel = {

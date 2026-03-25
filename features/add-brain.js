@@ -110,12 +110,12 @@ registerFeature('add', {
           dispatchToTab(tabId, {
             type: 'INJECT_PREVIEW',
             selector: selector,
-            spec: { html: result.spec.html, css: result.spec.css, js: result.spec.js }
+            spec: { html: result.spec.html, css: result.spec.css, actions: result.spec.actions }
           });
         } else {
           dispatchToTab(tabId, {
             type: 'UPDATE_PREVIEW',
-            spec: { html: result.spec.html, css: result.spec.css, js: result.spec.js }
+            spec: { html: result.spec.html, css: result.spec.css, actions: result.spec.actions }
           });
         }
       }
@@ -170,7 +170,7 @@ registerFeature('add', {
           targetSelector: selector,
           html: spec.html || '',
           css: spec.css || '',
-          js: spec.js || '',
+          actions: spec.actions || [],
           position: 'beforeend'
         },
         createdAt: Date.now()
