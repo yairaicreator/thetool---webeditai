@@ -25,8 +25,7 @@
     "sidePanel",
     "storage",
     "activeTab",
-    "scripting",
-    "tabs"
+    "scripting"
   ], 
   "host_permissions": [
     "https://eqfjkvjwsswjxkmomxax.supabase.co/*",
