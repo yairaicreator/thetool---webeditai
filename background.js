@@ -1216,13 +1216,19 @@ async function resolveTargetTabId(callerTabId) {
 
 function startKeepAlive() {
   return setInterval(() => {
-    chrome.storage.local.get('_keepAlive');
-  }, 25000);
+    chrome.runtime.sendMessage({ type: '_KEEP_ALIVE' }).catch(() => {});
+  }, 20000);
 }
 
 function stopKeepAlive(intervalId) {
   clearInterval(intervalId);
 }
+
+chrome.runtime.onConnect.addListener(function (port) {
+  if (port.name === 'keep-alive') {
+    port.onDisconnect.addListener(function () {});
+  }
+});
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 11: The Spinal Cord (Message Router)

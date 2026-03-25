@@ -37,6 +37,24 @@ const els = {
   sendBtn:         document.getElementById('webedit-send-btn'),
 };
 
+// ── Keep-Alive Port: holds the service worker alive during long Add flows ────
+
+var keepAlivePort = null;
+
+function openKeepAlivePort() {
+  if (keepAlivePort) return;
+  keepAlivePort = chrome.runtime.connect({ name: 'keep-alive' });
+  keepAlivePort.onDisconnect.addListener(function () {
+    keepAlivePort = null;
+  });
+}
+
+function closeKeepAlivePort() {
+  if (!keepAlivePort) return;
+  keepAlivePort.disconnect();
+  keepAlivePort = null;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 2: The Chrome Post Office
 // Every Event Listener uses these two helpers to talk to the Brain.
@@ -830,6 +848,9 @@ chrome.runtime.onMessage.addListener(function (message) {
       if (message.state === 'PICKING' && message.feature) {
         showNotification('Pick an element on the page for: ' + message.feature);
       }
+      if (message.state === 'IDLE') {
+        closeKeepAlivePort();
+      }
       break;
 
     case 'PICK_COMPLETED': {
@@ -939,6 +960,8 @@ function registerEventListeners() {
         showNotification(resp.error === 'FLOW_CONFLICT'
           ? 'Another feature flow is already active. Cancel it first.'
           : 'Could not start ' + tool + ': ' + (resp.error || 'unknown'));
+      } else if (tool === 'add') {
+        openKeepAlivePort();
       }
     }));
   });
