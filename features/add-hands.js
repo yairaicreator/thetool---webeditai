@@ -252,6 +252,27 @@
         if (el) el.value = cmd.value != null ? cmd.value : '';
         break;
 
+      // ── Page-Scoped Ops (target the host page, not the feature container) ─
+      case 'pageAddClass':
+        try { el = document.querySelector(cmd.selector); } catch (_) { el = null; }
+        if (el && cmd['class']) el.classList.add(cmd['class']);
+        break;
+
+      case 'pageRemoveClass':
+        try { el = document.querySelector(cmd.selector); } catch (_) { el = null; }
+        if (el && cmd['class']) el.classList.remove(cmd['class']);
+        break;
+
+      case 'pageToggleClass':
+        try { el = document.querySelector(cmd.selector); } catch (_) { el = null; }
+        if (el && cmd['class']) el.classList.toggle(cmd['class']);
+        break;
+
+      case 'pageSetStyle':
+        try { el = document.querySelector(cmd.selector); } catch (_) { el = null; }
+        if (el && cmd.property) el.style[cmd.property] = cmd.value || '';
+        break;
+
       default:
         console.warn('[Add-Hands] Unknown action op:', op);
         break;

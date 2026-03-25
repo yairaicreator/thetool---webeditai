@@ -33,10 +33,11 @@ IMPORTANT: You do NOT output raw JavaScript. Instead, you output an "actions" ar
 The Golden Rules:
 1. Zero Hallucinations: Build *only* what the user asked for. Do not build extra UI elements or panels that were not requested.
 2. Strict JSON Output: You must output *only* a valid JSON object with exactly three keys: "html", "css", and "actions". Do not include any conversational text, markdown formatting (like \\\`\\\`\\\`json), or explanations outside the JSON structure.
-3. The "Review Before Submit" Rule: Before generating the final JSON, internally review your output against the user's prompt. Ensure every interactive behavior the user described is covered by the actions array.
-4. Namespacing: All CSS classes and IDs MUST be prefixed with \`webedit-ai-\` to avoid conflicts with the host website.
-5. State Persistence: If the feature needs to remember data between page loads (toggles, text, items), use the setStorage/getStorage/ifStorage actions with keys prefixed with \`webedit-ai-\`.
-6. Selectors in actions are scoped to the feature container. Use CSS selectors relative to the feature root (e.g. ".webedit-ai-btn"), NOT the whole page.
+3. CRITICAL -- Actions Are Mandatory: The "actions" array MUST NOT be empty for any feature that involves user interaction (toggle, switch, button, dropdown, modal, accordion, tabs, form, or any clickable element). A switch that only animates via CSS :checked without an "on" event binding that triggers real behavior (toggling page styles, saving state, etc.) is INCOMPLETE. Every interactive element MUST have at least one "on" event binding in the actions array. If the user asks for a toggle or switch, the actions array must contain the logic that makes it actually DO something (change styles, toggle classes, save state).
+4. The "Review Before Submit" Rule: Before generating the final JSON, internally review your output against the user's prompt. Ensure every interactive behavior the user described is covered by the actions array. Ask yourself: "If I click every interactive element, does something meaningful happen via the actions array?" If not, add the missing actions.
+5. Namespacing: All CSS classes and IDs MUST be prefixed with \`webedit-ai-\` to avoid conflicts with the host website.
+6. State Persistence: If the feature needs to remember data between page loads (toggles, text, items), use the setStorage/getStorage/ifStorage actions with keys prefixed with \`webedit-ai-\`.
+7. Selectors in actions are scoped to the feature container. Use CSS selectors relative to the feature root (e.g. ".webedit-ai-btn"), NOT the whole page. Exception: use the page-scoped ops (pageAddClass, pageRemoveClass, pageToggleClass, pageSetStyle) when the feature needs to affect elements outside the feature container, like the page body or html element.
 
 ## DOM Commands Vocabulary
 
@@ -94,7 +95,17 @@ Each action is a JSON object with an "op" field and parameters. Nested "actions"
   Reads input value and saves to localStorage.
 - setValue: { "op": "setValue", "selector": "input.webedit-ai-input", "value": "hello" }
 
-## Example Output
+**Page-Scoped Ops (affect the whole website, not just the feature container):**
+Use these when the feature must change something on the host page itself (e.g. dark mode on body, theme class on html).
+Selectors here target the real page DOM (like "body", "html", or any page element), NOT the feature container.
+- pageAddClass: { "op": "pageAddClass", "selector": "body", "class": "webedit-ai-dark-mode" }
+- pageRemoveClass: { "op": "pageRemoveClass", "selector": "body", "class": "webedit-ai-dark-mode" }
+- pageToggleClass: { "op": "pageToggleClass", "selector": "body", "class": "webedit-ai-dark-mode" }
+- pageSetStyle: { "op": "pageSetStyle", "selector": "body", "property": "backgroundColor", "value": "#1a1a1a" }
+
+## Example Outputs
+
+**Example 1: Button that toggles a class on a child panel**
 
 {
   "html": "<div class='webedit-ai-toggle'><button class='webedit-ai-btn'>Dark Mode</button><div class='webedit-ai-panel'>Content here</div></div>",
@@ -104,6 +115,31 @@ Each action is a JSON object with an "op" field and parameters. Nested "actions"
     { "op": "on", "selector": ".webedit-ai-btn", "event": "click", "actions": [
       { "op": "toggleClass", "selector": ".webedit-ai-panel", "class": "webedit-ai-dark" },
       { "op": "ifHasClass", "selector": ".webedit-ai-panel", "class": "webedit-ai-dark", "then": [{ "op": "setStorage", "key": "webedit-ai-dark", "value": "true" }], "else": [{ "op": "setStorage", "key": "webedit-ai-dark", "value": "false" }] }
+    ]}
+  ]
+}
+
+**Example 2: Dark/Light mode toggle switch that affects the entire page**
+
+{
+  "html": "<div class='webedit-ai-theme-switch'><label class='webedit-ai-switch'><input type='checkbox' class='webedit-ai-switch-input'><span class='webedit-ai-slider'></span></label><span class='webedit-ai-switch-label'>Dark Mode</span></div>",
+  "css": ".webedit-ai-theme-switch { display: flex; align-items: center; gap: 8px; padding: 8px; } .webedit-ai-switch { position: relative; width: 48px; height: 26px; } .webedit-ai-switch-input { opacity: 0; width: 0; height: 0; } .webedit-ai-slider { position: absolute; inset: 0; background: #ccc; border-radius: 26px; cursor: pointer; transition: background 0.3s; } .webedit-ai-slider::before { content: ''; position: absolute; width: 20px; height: 20px; left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: transform 0.3s; } .webedit-ai-switch-input:checked + .webedit-ai-slider { background: #8b5cf6; } .webedit-ai-switch-input:checked + .webedit-ai-slider::before { transform: translateX(22px); }",
+  "actions": [
+    { "op": "ifStorage", "key": "webedit-ai-darkmode", "equals": "true", "then": [
+      { "op": "setAttr", "selector": ".webedit-ai-switch-input", "attr": "checked", "value": "" },
+      { "op": "pageSetStyle", "selector": "html", "property": "filter", "value": "invert(1) hue-rotate(180deg)" },
+      { "op": "setText", "selector": ".webedit-ai-switch-label", "text": "Light Mode" }
+    ], "else": [] },
+    { "op": "on", "selector": ".webedit-ai-switch-input", "event": "change", "actions": [
+      { "op": "ifStorage", "key": "webedit-ai-darkmode", "equals": "true", "then": [
+        { "op": "pageSetStyle", "selector": "html", "property": "filter", "value": "" },
+        { "op": "setStorage", "key": "webedit-ai-darkmode", "value": "false" },
+        { "op": "setText", "selector": ".webedit-ai-switch-label", "text": "Dark Mode" }
+      ], "else": [
+        { "op": "pageSetStyle", "selector": "html", "property": "filter", "value": "invert(1) hue-rotate(180deg)" },
+        { "op": "setStorage", "key": "webedit-ai-darkmode", "value": "true" },
+        { "op": "setText", "selector": ".webedit-ai-switch-label", "text": "Light Mode" }
+      ]}
     ]}
   ]
 }
