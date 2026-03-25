@@ -979,7 +979,7 @@ function registerEventListeners() {
     const resp = await sendToBrain('GENERATE_FEATURE', { prompt: text, feature: selectedFeature });
     chatMessages.pop();
     if (!resp.success) {
-      addChatMessage('assistant', 'Error: ' + (resp.error || 'unknown'));
+      addChatMessage('assistant', resp.error || 'Something went wrong. Please try again with a clearer or smaller step-by-step description.');
     } else if (selectedFeature !== 'add') {
       addChatMessage('assistant', 'Feature spec generated. Preview coming soon.');
     }

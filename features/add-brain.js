@@ -91,7 +91,7 @@ registerFeature('add', {
 
       if (!result.ok) {
         transitionState(BRAIN_STATES.PREVIEWING);
-        return { success: false, error: 'AI Generation failed: ' + result.error };
+        return { success: false, error: result.error };
       }
 
       // Build conversation history for future refinements (text must match edge function templates)

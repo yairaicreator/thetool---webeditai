@@ -1170,7 +1170,7 @@ async function handleGenerateFeature(message) {
     const result = await SupabaseClient.generateFeatureSpec(prompt, domContext || null);
 
     if (!result.ok) {
-      return { success: false, error: 'AI Generation failed: ' + result.error };
+      return { success: false, error: result.error };
     }
 
     return { success: true, spec: result.spec };

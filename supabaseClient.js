@@ -100,6 +100,18 @@ async function callPageChat(message, pageContext = null, attachments = []) {
   }
 }
 
+const FEATURE_SPEC_FETCH_TIMEOUT_MS = 120000; // 2 minutes (Gemini + edge function can be slow)
+
+const FEATURE_SPEC_RETRY_HINT =
+  'Seems we faced a small issue. Please try again — describe the feature a bit more clearly, or break it into smaller steps.';
+
+function featureSpecFriendlyFailure(detail) {
+  if (detail) {
+    return FEATURE_SPEC_RETRY_HINT + ' ' + detail;
+  }
+  return FEATURE_SPEC_RETRY_HINT;
+}
+
 async function generateFeatureSpec(prompt, context = null, history = null) {
   const sanitizedPrompt = typeof prompt === 'string' ? prompt.trim() : '';
   if (!sanitizedPrompt) {
@@ -123,7 +135,7 @@ async function generateFeatureSpec(prompt, context = null, history = null) {
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 45000); // 45s timeout
+    const timeoutId = setTimeout(() => controller.abort(), FEATURE_SPEC_FETCH_TIMEOUT_MS);
 
     const response = await fetch(`${SUPABASE_URL}/functions/v1/ai-generate-feature-spec`, {
       method: 'POST',
@@ -135,7 +147,7 @@ async function generateFeatureSpec(prompt, context = null, history = null) {
       body: JSON.stringify(payload),
       signal: controller.signal
     });
-    
+
     clearTimeout(timeoutId);
 
     const text = await response.text();
@@ -148,19 +160,28 @@ async function generateFeatureSpec(prompt, context = null, history = null) {
     }
 
     if (!json) {
-      return { ok: false, error: 'Invalid response from ai-generate-feature-spec' };
+      return {
+        ok: false,
+        error: featureSpecFriendlyFailure('We got an unexpected response from the server.')
+      };
     }
 
     if (!response.ok && typeof json.error === 'string') {
-      return { ok: false, error: json.error };
+      return {
+        ok: false,
+        error: featureSpecFriendlyFailure('(' + json.error + ')')
+      };
     }
 
     if (!response.ok) {
-      return { ok: false, error: `ai-generate-feature-spec failed with status ${response.status}` };
+      return {
+        ok: false,
+        error: featureSpecFriendlyFailure('(Server returned status ' + response.status + '.)')
+      };
     }
 
-    return { 
-      ok: true, 
+    return {
+      ok: true,
       spec: {
         action: "add",
         html: json.html || "",
@@ -170,8 +191,24 @@ async function generateFeatureSpec(prompt, context = null, history = null) {
     };
   } catch (error) {
     console.error('[SupabaseClient] ai-generate-feature-spec request failed:', error);
-    const message = error instanceof Error ? error.message : String(error);
-    return { ok: false, error: message };
+    const name = error && error.name;
+    const msg = (error && error.message) ? String(error.message) : '';
+    if (name === 'AbortError' || /aborted/i.test(msg)) {
+      return {
+        ok: false,
+        error: featureSpecFriendlyFailure('(This took longer than expected — your connection or the AI service may have been slow.)')
+      };
+    }
+    if (error instanceof TypeError) {
+      return {
+        ok: false,
+        error: featureSpecFriendlyFailure('(We could not reach the server. Check your internet connection.)')
+      };
+    }
+    return {
+      ok: false,
+      error: featureSpecFriendlyFailure('')
+    };
   }
 }
 
