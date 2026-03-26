@@ -1122,6 +1122,8 @@ function registerEventListeners() {
     chatMessages.pop();
     if (!resp.success) {
       addChatMessage('assistant', resp.error || 'Something went wrong. Please try again with a clearer or smaller step-by-step description.');
+    } else if (resp.needSecondaryPick && selectedFeature === 'add') {
+      addChatMessage('system', 'Use the highlighted page and the message above to complete the second pick.');
     } else if (selectedFeature !== 'add') {
       addChatMessage('assistant', 'Feature spec generated. Preview coming soon.');
     }
@@ -1141,15 +1143,15 @@ function registerEventListeners() {
       selectedHistoryPageKey = siteTab.dataset.pageKey;
       selectedHistoryCategory = 'remove';
       renderEditHistoryView();
-        return;
+      return;
     }
 
     const catTab = e.target.closest('.webedit-edit-history-cat-tab');
     if (catTab?.dataset?.cat) {
       selectedHistoryCategory = catTab.dataset.cat;
       renderEditHistoryView();
-      return;
-    }
+        return;
+      }
 
     const actionBtn = e.target.closest('.webedit-edit-action-btn');
     if (!actionBtn?.dataset?.editId) return;

@@ -347,6 +347,8 @@
     click: null
   };
 
+  var pickModePhase = 'primary';
+
   function isWebeditElement(el) {
     if (!el || !(el instanceof Element)) return true;
     if (el.closest('[data-webedit-id]')) return true;
@@ -445,13 +447,14 @@
 
   // ── Pick Mode Activation / Deactivation ──
 
-  function handleStartPickMode(feature) {
+  function handleStartPickMode(feature, phase) {
     if (pickModeActive) {
       handleStopPickMode();
     }
 
     pickModeActive = true;
     pickModeFeature = feature;
+    pickModePhase = phase === 'secondary' ? 'secondary' : 'primary';
 
     document.body.classList.add('webedit-pick-active');
 
@@ -527,7 +530,8 @@
         selector: selector,
         url: window.location.href,
         humanLabel: humanLabel,
-        htmlContext: htmlContext
+        htmlContext: htmlContext,
+        pickPhase: pickModePhase
       }, function (response) {
         if (chrome.runtime.lastError) {
           console.warn('[Hands] ELEMENT_PICKED send failed:', chrome.runtime.lastError.message);
@@ -566,6 +570,7 @@
 
     pickModeActive = false;
     pickModeFeature = null;
+    pickModePhase = 'primary';
 
     console.log('[Hands] Pick mode stopped');
   }
@@ -592,7 +597,7 @@
         return true;
 
       case 'START_PICK_MODE':
-        handleStartPickMode(message.feature);
+        handleStartPickMode(message.feature, message.pickPhase);
         sendResponse({ success: true });
         return true;
 

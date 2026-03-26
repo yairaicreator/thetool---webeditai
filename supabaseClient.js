@@ -128,6 +128,12 @@ async function generateFeatureSpec(prompt, context = null, history = null) {
     if (context.anchorElement?.htmlContext) {
       payload.htmlContext = context.anchorElement.htmlContext;
     }
+    if (typeof context.relatedHtmlContext === 'string' && context.relatedHtmlContext.trim()) {
+      payload.relatedHtmlContext = context.relatedHtmlContext.trim();
+    }
+    if (typeof context.pageUrl === 'string' && context.pageUrl.trim()) {
+      payload.pageUrl = context.pageUrl.trim();
+    }
   }
   if (Array.isArray(history) && history.length > 0) {
     payload.history = history;
@@ -177,6 +183,22 @@ async function generateFeatureSpec(prompt, context = null, history = null) {
       return {
         ok: false,
         error: featureSpecFriendlyFailure('(Server returned status ' + response.status + '.)')
+      };
+    }
+
+    if (json.needSecondaryContext === true) {
+      return {
+        ok: true,
+        needSecondaryContext: true,
+        secondaryContextPrompt: typeof json.secondaryContextPrompt === 'string'
+          ? json.secondaryContextPrompt
+          : '',
+        spec: {
+          action: 'add',
+          html: json.html || '',
+          css: json.css || '',
+          actions: Array.isArray(json.actions) ? json.actions : []
+        }
       };
     }
 

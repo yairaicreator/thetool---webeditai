@@ -27,8 +27,13 @@
 
   // ─── Pick bar: shown above the feature buttons during Add pick ─────────
 
-  function showPickBar() {
-    if (pickBarEl) return;
+  function showPickBar(barText) {
+    var text = barText || 'Add Mode \u2014 pick where you want the feature';
+    if (pickBarEl) {
+      var existingMsg = pickBarEl.querySelector('.webedit-remove-cancel-bar-msg');
+      if (existingMsg) existingMsg.textContent = text;
+      return;
+    }
 
     var bottomControls = document.getElementById('webedit-bottom-controls');
     if (!bottomControls) return;
@@ -39,7 +44,7 @@
 
     var msg = document.createElement('span');
     msg.className = 'webedit-remove-cancel-bar-msg';
-    msg.textContent = 'Add Mode \u2014 pick where you want the feature';
+    msg.textContent = text;
     pickBarEl.appendChild(msg);
 
     var btn = document.createElement('button');
@@ -146,18 +151,45 @@
     switch (message.type) {
       case 'FLOW_STATE_CHANGED':
         if (message.state === 'PICKING' && message.feature === 'add') {
-          showPickBar();
+          var barLabel = message.pickPhase === 'secondary'
+            ? 'Second pick \u2014 click the related area on the page (see chat).'
+            : null;
+          showPickBar(barLabel);
         } else if (message.state === 'IDLE') {
           hidePickBar();
           hideActionBar();
         }
         break;
 
+      case 'ADD_SECONDARY_PICK_NEEDED': {
+        var why = message.secondaryContextPrompt || 'This feature needs another section on the page. Please pick it.';
+        chat('assistant', why);
+        showPickBar('Second pick \u2014 click the related area on the page.');
+        break;
+      }
+
+      case 'ADD_SECONDARY_PICK_COMPLETED': {
+        hidePickBar();
+        var secLabel = message.summary || 'additional section';
+        chat('system', 'Additional section selected: ' + secLabel);
+        chat('system', 'Generating the full feature\u2026');
+        break;
+      }
+
+      case 'ADD_SPEC_VALIDATION_WARNING': {
+        var bad = Array.isArray(message.unknownOps) ? message.unknownOps.join(', ') : '';
+        if (bad) {
+          chat('system', 'Note: this preview uses unsupported action types (' + bad + '). Those steps are skipped. Use Refine to fix, or Apply if the rest looks fine.');
+          notify('Some generated actions are not supported: ' + bad);
+        }
+        break;
+      }
+
       case 'ADD_PICK_COMPLETED': {
         hidePickBar();
         var label = message.summary || 'an element';
         chat('system', 'Element selected: ' + label);
-        chat('assistant', 'Describe the feature you want to add to this section.');
+        chat('assistant', 'Describe what the feature should do. Include: what triggers it (e.g. a click), what should change on the page or in the widget, whether state should be remembered after refresh, and if another part of the page is involved, say which.');
         break;
       }
 

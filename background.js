@@ -20,6 +20,7 @@ function getFeatureHandler(featureName, handlerName) {
 
 importScripts('features/remove-brain.js');
 importScripts('features/customize-brain.js');
+importScripts('features/add-action-ops.js');
 importScripts('features/add-brain.js');
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1108,7 +1109,8 @@ function transitionState(newState, flow) {
   chrome.runtime.sendMessage({
     type: 'FLOW_STATE_CHANGED',
     state: newState,
-    feature: flow?.feature || brainState.activeFlow?.feature || null
+    feature: flow?.feature || brainState.activeFlow?.feature || null,
+    pickPhase: flow?.addPickPhase || null
   }).catch(() => {});
 }
 
@@ -1535,7 +1537,11 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
             response = { success: true, state: 'PICKING', feature };
           }
 
-          const dispatchResult = await dispatchToTab(pickTabId, { type: 'START_PICK_MODE', feature: feature });
+          const dispatchResult = await dispatchToTab(pickTabId, {
+            type: 'START_PICK_MODE',
+            feature: feature,
+            pickPhase: message.pickPhase === 'secondary' ? 'secondary' : 'primary'
+          });
           if (!dispatchResult || !dispatchResult.success) {
             resetState();
             response = { success: false, error: 'Could not reach the website. Please reload the page and try again.' };
@@ -1552,10 +1558,16 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
 
           const pickedSelector = String(message.selector || '').trim();
           const pickedUrl = normalizePageKey(message.url || '');
+          const pickPhase = message.pickPhase === 'secondary' ? 'secondary' : 'primary';
 
-          brainState.activeFlow.selector = pickedSelector;
-          brainState.activeFlow.url = pickedUrl;
-          brainState.activeFlow.humanLabel = String(message.humanLabel || '').trim();
+          if (pickPhase === 'secondary' && activeFeature === 'add') {
+            brainState.activeFlow.secondaryHtmlContext = String(message.htmlContext || '');
+            brainState.activeFlow.secondaryHumanLabel = String(message.humanLabel || '').trim();
+          } else {
+            brainState.activeFlow.selector = pickedSelector;
+            brainState.activeFlow.url = pickedUrl;
+            brainState.activeFlow.humanLabel = String(message.humanLabel || '').trim();
+          }
 
           if (brainState.lockedTabId) {
             dispatchToTab(brainState.lockedTabId, { type: 'STOP_PICK_MODE' });

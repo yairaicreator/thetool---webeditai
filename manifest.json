@@ -54,6 +54,7 @@
         "contentScript.js",
         "features/remove-hands.js",
         "features/customize-hands.js",
+        "features/add-action-ops.js",
         "features/add-hands.js"
       ],
       "css": [

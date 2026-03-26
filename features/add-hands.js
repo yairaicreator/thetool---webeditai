@@ -273,6 +273,76 @@
         if (el && cmd.property) el.style[cmd.property] = cmd.value || '';
         break;
 
+      case 'pageQueryText': {
+        if (!cmd.selector || !cmd.storageKey) break;
+        var mode = (cmd.mode || 'first').toLowerCase();
+        var gathered = '';
+        try {
+          if (mode === 'all') {
+            var nodes = document.querySelectorAll(cmd.selector);
+            var parts = [];
+            for (var pi = 0; pi < nodes.length; pi++) {
+              var t = (nodes[pi].textContent || '').trim().replace(/\s+/g, ' ');
+              if (t) parts.push(t);
+            }
+            gathered = parts.join('\n');
+          } else {
+            var one = document.querySelector(cmd.selector);
+            if (one) gathered = (one.textContent || '').trim();
+          }
+        } catch (_) {}
+        try { localStorage.setItem(cmd.storageKey, gathered); } catch (_) {}
+        break;
+      }
+
+      case 'pageClick': {
+        if (!cmd.selector) break;
+        try { el = document.querySelector(cmd.selector); } catch (_) { el = null; }
+        if (el && typeof el.click === 'function') el.click();
+        break;
+      }
+
+      case 'copyToClipboard': {
+        var toCopy = '';
+        if (cmd.storageKey) {
+          try {
+            var fromStore = localStorage.getItem(cmd.storageKey);
+            if (fromStore != null) toCopy = String(fromStore);
+          } catch (_) {}
+        }
+        if (!toCopy && cmd.text != null) toCopy = String(cmd.text);
+        if (!toCopy) break;
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(toCopy).catch(function () {});
+          }
+        } catch (_) {}
+        break;
+      }
+
+      case 'pageCreateElement': {
+        var ptag = cmd.tag || 'div';
+        var pNew = document.createElement(ptag);
+        if (cmd.id) pNew.id = cmd.id;
+        if (cmd.classes) {
+          var pcls = Array.isArray(cmd.classes) ? cmd.classes : String(cmd.classes).split(/\s+/);
+          for (var pci = 0; pci < pcls.length; pci++) {
+            if (pcls[pci]) pNew.classList.add(pcls[pci]);
+          }
+        }
+        if (cmd.text) pNew.textContent = cmd.text;
+        if (cmd.html) pNew.innerHTML = cmd.html;
+        var pParent = null;
+        if (cmd.parent) {
+          try { pParent = document.querySelector(cmd.parent); } catch (_) { pParent = null; }
+        }
+        if (!pParent) pParent = document.body || document.documentElement;
+        if (pParent) {
+          insertContainerAtTarget(pNew, pParent, cmd.position || 'beforeend');
+        }
+        break;
+      }
+
       default:
         console.warn('[Add-Hands] Unknown action op:', op);
         break;
