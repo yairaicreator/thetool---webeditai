@@ -14,6 +14,7 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 
   const els = {
+  chatPanel:       document.getElementById('webedit-chat-panel'),
   headerHamburger: document.getElementById('webedit-header-hamburger'),
   homeBtn:         document.getElementById('webedit-home-btn'),
   signinBtn:       document.getElementById('webedit-signin-btn'),
@@ -23,8 +24,13 @@
   authGuardSignin: document.getElementById('webedit-auth-guard-signin'),
   historySidebar:  document.getElementById('webedit-history-sidebar'),
   historyList:     document.getElementById('webedit-history-list'),
-  historyProfileStrip: document.getElementById('webedit-history-profile-strip'),
-  historyProfileEmail: document.getElementById('webedit-history-profile-email'),
+  historyProfileCard: document.getElementById('webedit-history-profile-card'),
+  historyProfileAvatar: document.getElementById('webedit-history-profile-avatar'),
+  historyProfileName: document.getElementById('webedit-history-profile-name'),
+  historyProfileSub: document.getElementById('webedit-history-profile-sub'),
+  chatHome:        document.getElementById('webedit-chat-home'),
+  chatThread:      document.getElementById('webedit-chat-thread'),
+  bottomNav:       document.getElementById('webedit-bottom-nav'),
   sidebarNavNewChat: document.getElementById('webedit-sidebar-nav-new-chat'),
   sidebarNavRecentEdits: document.getElementById('webedit-sidebar-nav-recent-edits'),
   sidebarNavTemplates: document.getElementById('webedit-sidebar-nav-templates'),
@@ -199,8 +205,11 @@ let currentPanelMode = 'chat';
 let historySites = [];
 let historyLoading = false;
 let historyError = '';
-let selectedHistoryPageKey = '';
-let selectedHistoryCategory = 'remove';
+const ALL_SITES_KEY = '__all__';
+const HISTORY_CAT_KEYS = ['remove', 'add', 'customize'];
+
+let selectedHistoryPageKey = ALL_SITES_KEY;
+let selectedHistoryCategory = 'all';
 let panelRevisionEditId = null;
 let panelRevisionKind = null;
 
@@ -208,18 +217,31 @@ function isAuthenticated() {
   return authState === 'authenticated';
 }
 
+function updateSidebarNavActive() {
+  if (els.sidebarNavRecentEdits) {
+    els.sidebarNavRecentEdits.classList.toggle('is-active', currentPanelMode === 'history');
+  }
+  [els.sidebarNavNewChat, els.sidebarNavTemplates, els.sidebarNavSettings].forEach(function (el) {
+    if (el) el.classList.remove('is-active');
+  });
+}
+
 function updateBottomNavActive() {
   if (els.navChat) {
-    els.navChat.classList.toggle('active', currentPanelMode === 'chat');
-    if (currentPanelMode === 'chat') {
+    const on = currentPanelMode === 'chat';
+    els.navChat.classList.toggle('active', on);
+    els.navChat.classList.remove('active-history-tab');
+    if (on) {
       els.navChat.setAttribute('aria-current', 'page');
     } else {
       els.navChat.removeAttribute('aria-current');
     }
   }
   if (els.navHistory) {
-    els.navHistory.classList.toggle('active', currentPanelMode === 'history');
-    if (currentPanelMode === 'history') {
+    const on = currentPanelMode === 'history';
+    els.navHistory.classList.toggle('active', on);
+    els.navHistory.classList.toggle('active-history-tab', on);
+    if (on) {
       els.navHistory.setAttribute('aria-current', 'page');
     } else {
       els.navHistory.removeAttribute('aria-current');
@@ -227,18 +249,37 @@ function updateBottomNavActive() {
   }
   if (els.navBrowse) {
     els.navBrowse.classList.remove('active');
+    els.navBrowse.classList.remove('active-history-tab');
     els.navBrowse.removeAttribute('aria-current');
   }
+  updateSidebarNavActive();
+}
+
+function getUserDisplayName(user) {
+  if (!user) return '';
+  const meta = user.user_metadata && typeof user.user_metadata === 'object' ? user.user_metadata : {};
+  const full = String(meta.full_name || meta.name || '').trim();
+  if (full) return full;
+  const em = String(user.email || '').trim();
+  if (!em) return 'User';
+  const at = em.indexOf('@');
+  return at > 0 ? em.slice(0, at) : em;
 }
 
 function updateHistorySidebarProfile() {
-  if (!els.historyProfileStrip || !els.historyProfileEmail) return;
-  if (currentUser && currentUser.email) {
-    els.historyProfileEmail.textContent = currentUser.email;
-    els.historyProfileStrip.classList.remove('hidden');
+  if (!els.historyProfileCard || !els.historyProfileName || !els.historyProfileAvatar) return;
+  if (currentUser && (currentUser.email || currentUser.id)) {
+    const name = getUserDisplayName(currentUser);
+    els.historyProfileName.textContent = name || 'User';
+    els.historyProfileAvatar.textContent = (currentUser.email || name || 'U')[0].toUpperCase();
+    if (els.historyProfileSub) {
+      els.historyProfileSub.textContent = currentUser.email || 'The Digital Editor';
+    }
+    els.historyProfileCard.classList.remove('hidden');
   } else {
-    els.historyProfileEmail.textContent = '';
-    els.historyProfileStrip.classList.add('hidden');
+    els.historyProfileName.textContent = '';
+    els.historyProfileAvatar.textContent = 'U';
+    els.historyProfileCard.classList.add('hidden');
   }
 }
 
@@ -291,6 +332,77 @@ function formatHistoryDate(value) {
   });
 }
 
+function formatRelativeTime(value) {
+  const t = Date.parse(value || '') || 0;
+  if (!t) return '';
+  const sec = Math.floor((Date.now() - t) / 1000);
+  if (sec < 45) return 'just now';
+  if (sec < 3600) return Math.floor(sec / 60) + 'm ago';
+  if (sec < 86400) return Math.floor(sec / 3600) + 'h ago';
+  if (sec < 604800) return Math.floor(sec / 86400) + 'd ago';
+  return formatHistoryDate(value);
+}
+
+function getHostnameUpper(pageKey) {
+  if (!pageKey) return 'SITE';
+  try {
+    return new URL(pageKey).hostname.replace(/^www\./i, '').toUpperCase();
+  } catch (_) {
+    return 'SITE';
+  }
+}
+
+function editsForSite(site) {
+  const out = [];
+  if (!site || !site.categories) return out;
+  HISTORY_CAT_KEYS.forEach(function (cat) {
+    const arr = site.categories[cat] || [];
+    arr.forEach(function (edit) {
+      out.push({ edit: edit, category: cat });
+    });
+  });
+  return out;
+}
+
+function historyCountForCategory(cat) {
+  if (!historySites.length) return 0;
+  if (cat === 'all') {
+    if (selectedHistoryPageKey === ALL_SITES_KEY) {
+      return historySites.reduce(function (sum, site) {
+        return sum + editsForSite(site).length;
+      }, 0);
+    }
+    const one = historySites.find(function (s) { return s.pageKey === selectedHistoryPageKey; });
+    return one ? editsForSite(one).length : 0;
+  }
+  if (selectedHistoryPageKey === ALL_SITES_KEY) {
+    return historySites.reduce(function (sum, site) {
+      return sum + (site.categories[cat] || []).length;
+    }, 0);
+  }
+  const site = historySites.find(function (s) { return s.pageKey === selectedHistoryPageKey; });
+  if (!site) return 0;
+  return (site.categories[cat] || []).length;
+}
+
+function getFilteredSortedEdits() {
+  const rows = [];
+  const sites = selectedHistoryPageKey === ALL_SITES_KEY
+    ? historySites
+    : historySites.filter(function (s) { return s.pageKey === selectedHistoryPageKey; });
+  sites.forEach(function (site) {
+    editsForSite(site).forEach(function (row) {
+      if (selectedHistoryCategory !== 'all' && row.category !== selectedHistoryCategory) return;
+      rows.push(row);
+    });
+  });
+  rows.sort(function (a, b) {
+    return (Date.parse(b.edit.updatedAt || b.edit.createdAt || '') || 0) -
+      (Date.parse(a.edit.updatedAt || a.edit.createdAt || '') || 0);
+  });
+  return rows;
+}
+
 function setHistorySites(nextSites) {
   historySites = Array.isArray(nextSites) ? nextSites : [];
   if (!historySites.length) {
@@ -298,9 +410,11 @@ function setHistorySites(nextSites) {
     return;
   }
 
-  const stillExists = historySites.some(function (site) { return site.pageKey === selectedHistoryPageKey; });
-  if (!stillExists) {
-    selectedHistoryPageKey = historySites[0].pageKey;
+  if (selectedHistoryPageKey !== ALL_SITES_KEY) {
+    const stillExists = historySites.some(function (site) { return site.pageKey === selectedHistoryPageKey; });
+    if (!stillExists) {
+      selectedHistoryPageKey = ALL_SITES_KEY;
+    }
   }
 }
 
@@ -330,15 +444,25 @@ function showNotification(text) {
   persistCurrentSession();
   }
 
+function updateChatHomeVisibility() {
+  if (!els.chatHome) return;
+  const showHero = currentPanelMode === 'chat' && chatMessages.length === 0 && isAuthenticated();
+  els.chatHome.hidden = !showHero;
+}
+
   function renderChatMessages() {
-  if (!els.chatMessages) return;
-  els.chatMessages.innerHTML = '';
+  if (!els.chatMessages || !els.chatThread) return;
+  updateChatHomeVisibility();
+  els.chatThread.innerHTML = '';
 
     if (chatMessages.length === 0) {
-    const placeholder = document.createElement('div');
-    placeholder.className = 'webedit-chat-placeholder';
-    placeholder.innerHTML = '<p>Describe what you want to change to get started</p>';
-      els.chatMessages.appendChild(placeholder);
+    if (!isAuthenticated()) {
+      const placeholder = document.createElement('div');
+      placeholder.className = 'webedit-chat-placeholder';
+      placeholder.innerHTML = '<p>Log in to describe what you want to change.</p>';
+      els.chatThread.appendChild(placeholder);
+    }
+    els.chatMessages.scrollTop = 0;
       return;
     }
 
@@ -383,7 +507,7 @@ function showNotification(text) {
       msgEl.appendChild(btnRow);
     }
 
-      els.chatMessages.appendChild(msgEl);
+    els.chatThread.appendChild(msgEl);
     });
 
   els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
@@ -399,44 +523,41 @@ function renderHistoryPreview(token) {
   );
 }
 
-function renderHistoryCategory(title, key, edits) {
-  const items = Array.isArray(edits) ? edits : [];
-  let html = '<section class="webedit-edit-history-category">';
-  html += '<div class="webedit-edit-history-category-header">';
-  html += '<h3>' + escapeHtml(title) + '</h3>';
-  html += '<span>' + items.length + '</span>';
-  html += '</div>';
-
-  if (!items.length) {
-    html += '<div class="webedit-edit-history-empty-card">No ' + escapeHtml(title.toLowerCase()) + ' edits yet.</div>';
-    html += '</section>';
-    return html;
+function renderCategoryIconMarkup(categoryKey) {
+  if (categoryKey === 'remove') {
+    return '<span class="webedit-edit-history-cat-icon webedit-edit-history-cat-remove" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10 10 0 1 1 19 12h-2M12 8v4l3 3"/></svg></span>';
   }
+  if (categoryKey === 'add') {
+    return '<span class="webedit-edit-history-cat-icon webedit-edit-history-cat-add" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></span>';
+  }
+  return '<span class="webedit-edit-history-cat-icon webedit-edit-history-cat-customize" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></span>';
+}
 
-  items.forEach(function (edit) {
-    html += '<article class="webedit-edit-history-card">';
-    html += '<div class="webedit-edit-history-card-main">';
-    html += '<div class="webedit-edit-history-card-topline">';
-    html += '<div>';
-    html += '<div class="webedit-edit-history-card-title">' + escapeHtml(edit.summary || 'Untitled edit') + '</div>';
-    html += '<div class="webedit-edit-history-card-meta">' + escapeHtml(formatHistoryDate(edit.updatedAt || edit.createdAt)) + '</div>';
+function renderSingleEditHistoryCard(edit, categoryKey) {
+  const host = getHostnameUpper(edit.pageKey);
+  const rel = formatRelativeTime(edit.updatedAt || edit.createdAt);
+  const meta = rel ? host + ' • ' + rel : host;
+  let html = '<article class="webedit-edit-history-card webedit-edit-history-card-v2">';
+  html += '<div class="webedit-edit-history-card-topline">';
+  html += renderCategoryIconMarkup(categoryKey);
+  html += '<div class="webedit-edit-history-card-title-block">';
+  html += '<div class="webedit-edit-history-card-title">' + escapeHtml(edit.summary || 'Untitled edit') + '</div>';
+  html += '<div class="webedit-edit-history-card-meta">' + escapeHtml(meta) + '</div>';
+  html += '</div>';
+  html += '</div>';
+  html += '<p class="webedit-edit-history-card-description">' + escapeHtml(edit.description || '') + '</p>';
+  if (categoryKey === 'customize') {
+    html += '<div class="webedit-edit-history-previews">';
+    html += renderHistoryPreview(edit.previews?.before);
+    html += renderHistoryPreview(edit.previews?.after);
     html += '</div>';
-    html += '<button class="webedit-edit-action-btn" type="button" data-edit-id="' + escapeHtml(edit.id) + '" data-page-key="' + escapeHtml(edit.pageKey) + '" data-action="' + (edit.isActive ? 'undo' : 'redo') + '">';
-    html += edit.isActive ? 'Undo' : 'Redo';
-    html += '</button>';
-    html += '</div>';
-    html += '<p class="webedit-edit-history-card-description">' + escapeHtml(edit.description || '') + '</p>';
-    if (key === 'customize') {
-      html += '<div class="webedit-edit-history-previews">';
-      html += renderHistoryPreview(edit.previews?.before);
-      html += renderHistoryPreview(edit.previews?.after);
-      html += '</div>';
-    }
-    html += '</div>';
-    html += '</article>';
-  });
-
-  html += '</section>';
+  }
+  html += '<div class="webedit-edit-history-card-actions">';
+  html += '<button class="webedit-edit-action-btn webedit-edit-action-btn-block" type="button" data-edit-id="' + escapeHtml(edit.id) + '" data-page-key="' + escapeHtml(edit.pageKey) + '" data-action="' + (edit.isActive ? 'undo' : 'redo') + '">';
+  html += edit.isActive ? 'Undo' : 'Redo';
+  html += '</button>';
+  html += '</div>';
+  html += '</article>';
   return html;
 }
 
@@ -456,7 +577,7 @@ function renderEditHistoryView() {
   if (!isAuthenticated()) {
     els.editHistoryView.innerHTML =
       '<div class="webedit-edit-history-state">' +
-        '<h3>Log in to view EditHistory</h3>' +
+        '<h3>Log in to view Edit History</h3>' +
         '<p>Your edit timeline appears here after authentication.</p>' +
       '</div>';
     return;
@@ -465,7 +586,7 @@ function renderEditHistoryView() {
   if (historyLoading) {
     els.editHistoryView.innerHTML =
       '<div class="webedit-edit-history-state">' +
-        '<h3>Loading EditHistory</h3>' +
+        '<h3>Loading edit history</h3>' +
         '<p>Fetching your edits from the Brain.</p>' +
       '</div>';
     return;
@@ -474,7 +595,7 @@ function renderEditHistoryView() {
   if (historyError) {
     els.editHistoryView.innerHTML =
       '<div class="webedit-edit-history-state">' +
-        '<h3>Could not load EditHistory</h3>' +
+        '<h3>Could not load edit history</h3>' +
         '<p>' + escapeHtml(historyError) + '</p>' +
       '</div>';
     return;
@@ -489,26 +610,31 @@ function renderEditHistoryView() {
     return;
   }
 
-  const currentSite = historySites.find(function (site) { return site.pageKey === selectedHistoryPageKey; }) || historySites[0];
-  selectedHistoryPageKey = currentSite.pageKey;
+  const catTabKeys = ['all', 'remove', 'add', 'customize'];
+  if (catTabKeys.indexOf(selectedHistoryCategory) === -1) {
+    selectedHistoryCategory = 'all';
+  }
 
-  const cats = ['remove', 'add', 'customize'];
-  if (cats.indexOf(selectedHistoryCategory) === -1) selectedHistoryCategory = 'remove';
+  if (selectedHistoryPageKey !== ALL_SITES_KEY) {
+    const siteOk = historySites.some(function (s) { return s.pageKey === selectedHistoryPageKey; });
+    if (!siteOk) selectedHistoryPageKey = ALL_SITES_KEY;
+  }
 
   let html = '<div class="webedit-edit-history-shell">';
 
-  html += '<div class="webedit-edit-history-header-title">';
-  html += '<h2>EditHistory</h2>';
-  html += '<p>All your edits across every website, in one place.</p>';
+  html += '<div class="webedit-edit-history-activity-block">';
+  html += '<div class="webedit-edit-history-activity-label">Activity log</div>';
+  html += '<h2 class="webedit-edit-history-page-title">Recent Edits</h2>';
   html += '</div>';
 
   html += '<div class="webedit-edit-history-sites-section">';
-  html += '<div class="webedit-edit-history-sites-label">Websites</div>';
-  html += '<div class="webedit-edit-history-sites" role="tablist" aria-label="Edited websites">';
+  html += '<div class="webedit-edit-history-sites" role="tablist" aria-label="Sites">';
+  const allSitesActive = selectedHistoryPageKey === ALL_SITES_KEY ? ' active' : '';
+  html += '<button class="webedit-edit-history-site-tab webedit-edit-history-site-tab-all' + allSitesActive + '" type="button" data-page-key="' + escapeHtml(ALL_SITES_KEY) + '">All Sites</button>';
   historySites.forEach(function (site) {
-    const activeClass = site.pageKey === currentSite.pageKey ? ' active' : '';
+    const activeClass = site.pageKey === selectedHistoryPageKey ? ' active' : '';
     const favicon = getFaviconUrl(site.siteOrigin || site.pageKey);
-    const displayTitle = site.siteTitle || site.hostname || 'Untitled';
+    const displayTitle = site.hostname || site.siteTitle || 'Site';
     html += '<button class="webedit-edit-history-site-tab' + activeClass + '" type="button" data-page-key="' + escapeHtml(site.pageKey) + '">';
     if (favicon) {
       html += '<img class="webedit-edit-history-site-favicon" src="' + escapeHtml(favicon) + '" alt="" width="16" height="16">';
@@ -520,21 +646,27 @@ function renderEditHistoryView() {
   html += '</div>';
 
   html += '<div class="webedit-edit-history-site-panel">';
-
   html += '<div class="webedit-edit-history-cat-tabs" role="tablist" aria-label="Edit categories">';
-  cats.forEach(function (cat) {
-    const count = (currentSite.categories && currentSite.categories[cat]) ? currentSite.categories[cat].length : 0;
+  catTabKeys.forEach(function (cat) {
+    const count = historyCountForCategory(cat);
+    const label = cat === 'all' ? 'All Edits' : (cat.charAt(0).toUpperCase() + cat.slice(1));
     const activeClass = cat === selectedHistoryCategory ? ' active' : '';
     html += '<button class="webedit-edit-history-cat-tab' + activeClass + '" type="button" data-cat="' + cat + '">';
-    html += escapeHtml(cat.charAt(0).toUpperCase() + cat.slice(1));
+    html += escapeHtml(label);
     html += '<span class="webedit-edit-history-cat-count">' + count + '</span>';
     html += '</button>';
   });
   html += '</div>';
 
   html += '<div class="webedit-edit-history-cat-panel">';
-  var catLabel = selectedHistoryCategory.charAt(0).toUpperCase() + selectedHistoryCategory.slice(1);
-  html += renderHistoryCategory(catLabel, selectedHistoryCategory, currentSite.categories ? currentSite.categories[selectedHistoryCategory] : []);
+  const rows = getFilteredSortedEdits();
+  if (!rows.length) {
+    html += '<div class="webedit-edit-history-empty-card">No edits in this view yet.</div>';
+  } else {
+    rows.forEach(function (row) {
+      html += renderSingleEditHistoryCard(row.edit, row.category);
+    });
+  }
   html += '</div>';
 
   html += '</div>';
@@ -961,6 +1093,10 @@ function setPanelMode(mode) {
   currentPanelMode = mode === 'history' ? 'history' : 'chat';
   const showHistory = currentPanelMode === 'history';
 
+  if (els.chatPanel) {
+    els.chatPanel.classList.toggle('webedit-panel-mode-history', showHistory);
+  }
+
   els.blueprintList?.classList.toggle('hidden', showHistory);
   els.chatMessages?.classList.toggle('hidden', showHistory);
   els.editHistoryView?.classList.toggle('hidden', !showHistory);
@@ -976,6 +1112,7 @@ function setPanelMode(mode) {
     renderPageEditsPicker();
   }
   updateBottomNavActive();
+  updateChatHomeVisibility();
 }
 
 function toggleHistorySidebar(forceState) {
@@ -1124,6 +1261,8 @@ function registerEventListeners() {
       if (!els.historySidebar.classList.contains('visible')) return;
       if (els.historySidebar.contains(e.target)) return;
       if (els.headerHamburger.contains(e.target)) return;
+      if (els.bottomNav && els.bottomNav.contains(e.target)) return;
+      if (els.signinBtn && els.signinBtn.contains(e.target)) return;
       toggleHistorySidebar(false);
     });
   }
@@ -1147,7 +1286,14 @@ function registerEventListeners() {
   });
 
   els.navBrowse?.addEventListener('click', function () {
-    window.open('https://webeditai.com/', '_blank');
+    const url = 'https://webeditai.com/';
+    if (chrome.tabs && chrome.tabs.create) {
+      chrome.tabs.create({ url: url }).catch(function () {
+        window.open(url, '_blank');
+      });
+    } else {
+      window.open(url, '_blank');
+    }
   });
 
   els.sidebarNavNewChat?.addEventListener('click', function () {
@@ -1224,11 +1370,24 @@ function registerEventListeners() {
     }
   });
 
+  els.chatHome?.addEventListener('click', function (e) {
+    if (!e.target.closest('[data-home-action="recent-edits"]')) return;
+    setPanelMode('history');
+    toggleHistorySidebar(false);
+  });
+  els.chatHome?.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    if (!e.target.closest('[data-home-action="recent-edits"]')) return;
+    e.preventDefault();
+    setPanelMode('history');
+    toggleHistorySidebar(false);
+  });
+
   els.editHistoryView?.addEventListener('click', function (e) {
     const siteTab = e.target.closest('.webedit-edit-history-site-tab');
     if (siteTab?.dataset?.pageKey) {
       selectedHistoryPageKey = siteTab.dataset.pageKey;
-      selectedHistoryCategory = 'remove';
+      selectedHistoryCategory = 'all';
       renderEditHistoryView();
       return;
     }
