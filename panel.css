@@ -1934,6 +1934,13 @@
   padding: 12px;
 }
 
+.webedit-history-list-empty {
+  padding: 10px;
+  color: #9ca3af;
+  font-size: 12px;
+  text-align: center;
+}
+
 .webedit-history-item {
   position: relative;
   padding: 12px;

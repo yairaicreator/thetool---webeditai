@@ -914,13 +914,13 @@ function renderHistoryList() {
     if (!els.historyList) return;
 
   if (!isAuthenticated()) {
-    els.historyList.innerHTML = '<div style="padding:10px; color:#9ca3af; font-size:12px; text-align:center">Log in to view history</div>';
+    els.historyList.innerHTML = '<div class="webedit-history-list-empty">Log in to view history</div>';
       return;
     }
 
   if (!Array.isArray(chatSessions) || chatSessions.length === 0) {
       closeActiveHistoryRenameForm();
-      els.historyList.innerHTML = '<div style="padding:10px; color:#9ca3af; font-size:12px; text-align:center">No history yet</div>';
+      els.historyList.innerHTML = '<div class="webedit-history-list-empty">No history yet</div>';
       return;
     }
 
