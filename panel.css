@@ -1188,7 +1188,7 @@
   justify-content: center;
   gap: 8px;
   padding: 8px 28px 6px;
-  background: #d7fbff;
+  background: transparent;
   flex-shrink: 0;
 }
 
