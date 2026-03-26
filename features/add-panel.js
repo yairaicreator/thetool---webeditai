@@ -27,12 +27,10 @@
 
   // ─── Pick bar: shown above the feature buttons during Add pick ─────────
 
-  function showPickBar(barText) {
-    var text = barText || 'Add Mode \u2014 pick where you want the feature';
+  function showPickBar(isSecondary) {
     if (pickBarEl) {
-      var existingMsg = pickBarEl.querySelector('.webedit-remove-cancel-bar-msg');
-      if (existingMsg) existingMsg.textContent = text;
-      return;
+      try { pickBarEl.remove(); } catch (_) {}
+      pickBarEl = null;
     }
 
     var bottomControls = document.getElementById('webedit-bottom-controls');
@@ -44,7 +42,9 @@
 
     var msg = document.createElement('span');
     msg.className = 'webedit-remove-cancel-bar-msg';
-    msg.textContent = text;
+    msg.textContent = isSecondary
+      ? 'Add Mode \u2014 second pick: choose the related section on the page'
+      : 'Add Mode \u2014 pick where you want the feature';
     pickBarEl.appendChild(msg);
 
     var btn = document.createElement('button');
@@ -151,45 +151,43 @@
     switch (message.type) {
       case 'FLOW_STATE_CHANGED':
         if (message.state === 'PICKING' && message.feature === 'add') {
-          var barLabel = message.pickPhase === 'secondary'
-            ? 'Second pick \u2014 click the related area on the page (see chat).'
-            : null;
-          showPickBar(barLabel);
+          showPickBar(message.pickPhase === 'secondary');
         } else if (message.state === 'IDLE') {
           hidePickBar();
           hideActionBar();
         }
         break;
 
+      case 'ADD_PICK_COMPLETED': {
+        hidePickBar();
+        var label = message.summary || 'an element';
+        chat('system', 'Element selected: ' + label);
+        chat('assistant', 'Now describe what this feature should do. Include: the one main action users take, what success looks like, what must not change elsewhere on the page, whether state should be remembered after refresh, and if it matters on mobile. If the feature must read or control another part of the page, say which area.');
+        break;
+      }
+
+      case 'ADD_NEED_SECONDARY_PICK':
       case 'ADD_SECONDARY_PICK_NEEDED': {
-        var why = message.secondaryContextPrompt || 'This feature needs another section on the page. Please pick it.';
-        chat('assistant', why);
-        showPickBar('Second pick \u2014 click the related area on the page.');
+        var why = (message.secondaryContextPrompt || message.message || '').trim();
+        chat('assistant', why || 'This feature needs another section of the page. Pick the related area on the website (second pick).');
         break;
       }
 
       case 'ADD_SECONDARY_PICK_COMPLETED': {
         hidePickBar();
-        var secLabel = message.summary || 'additional section';
-        chat('system', 'Additional section selected: ' + secLabel);
-        chat('system', 'Generating the full feature\u2026');
+        var p = message.primarySummary || 'first region';
+        var s = message.summary || 'second region';
+        chat('system', 'Related section selected: ' + s);
+        chat('assistant', 'Generating the feature using both regions. If anything about how ' + p + ' and ' + s + ' should interact is wrong, use Refine after preview.');
         break;
       }
 
       case 'ADD_SPEC_VALIDATION_WARNING': {
-        var bad = Array.isArray(message.unknownOps) ? message.unknownOps.join(', ') : '';
-        if (bad) {
-          chat('system', 'Note: this preview uses unsupported action types (' + bad + '). Those steps are skipped. Use Refine to fix, or Apply if the rest looks fine.');
-          notify('Some generated actions are not supported: ' + bad);
+        if (message.reason === 'unknown_ops' && Array.isArray(message.unknownOps) && message.unknownOps.length) {
+          chat('assistant', 'Note: The preview may be incomplete. These commands are not supported yet: ' + message.unknownOps.join(', ') + '. Try Refine and ask for supported actions only.');
+        } else if (message.reason === 'empty_actions') {
+          chat('assistant', 'Note: The HTML looks interactive but the generated actions list is empty, so clicks may do nothing. Try Refine and ask for explicit button or control behavior.');
         }
-        break;
-      }
-
-      case 'ADD_PICK_COMPLETED': {
-        hidePickBar();
-        var label = message.summary || 'an element';
-        chat('system', 'Element selected: ' + label);
-        chat('assistant', 'Describe what the feature should do. Include: what triggers it (e.g. a click), what should change on the page or in the widget, whether state should be remembered after refresh, and if another part of the page is involved, say which.');
         break;
       }
 

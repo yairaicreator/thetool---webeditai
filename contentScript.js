@@ -11,6 +11,7 @@
   var activeBlueprints = {};
   var pickModeActive = false;
   var pickModeFeature = null;
+  var pickModePhase = 'primary';
 
   // ═══════════════════════════════════════════════════════════════════════════════
   // SECTION 2: Constants
@@ -347,8 +348,6 @@
     click: null
   };
 
-  var pickModePhase = 'primary';
-
   function isWebeditElement(el) {
     if (!el || !(el instanceof Element)) return true;
     if (el.closest('[data-webedit-id]')) return true;
@@ -447,14 +446,15 @@
 
   // ── Pick Mode Activation / Deactivation ──
 
-  function handleStartPickMode(feature, phase) {
+  function handleStartPickMode(message) {
     if (pickModeActive) {
       handleStopPickMode();
     }
 
+    var feature = message && message.feature;
+    pickModePhase = message && message.pickPhase === 'secondary' ? 'secondary' : 'primary';
     pickModeActive = true;
     pickModeFeature = feature;
-    pickModePhase = phase === 'secondary' ? 'secondary' : 'primary';
 
     document.body.classList.add('webedit-pick-active');
 
@@ -597,7 +597,7 @@
         return true;
 
       case 'START_PICK_MODE':
-        handleStartPickMode(message.feature, message.pickPhase);
+        handleStartPickMode(message);
         sendResponse({ success: true });
         return true;
 

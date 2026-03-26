@@ -1514,12 +1514,25 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
 
         case 'START_PICK_MODE': {
           const feature = message.feature;
+          const secondaryAddPick =
+            feature === 'add' &&
+            message.pickPhase === 'secondary' &&
+            brainState.activeFlow?.feature === 'add' &&
+            brainState.activeFlow?.selector &&
+            brainState.activeFlow?.awaitingSecondaryPick === true &&
+            (brainState.current === BRAIN_STATES.PREVIEWING || brainState.current === BRAIN_STATES.PICKING);
 
           if (brainState.current !== BRAIN_STATES.IDLE) {
-            if (brainState.lockedTabId) {
-              dispatchToTab(brainState.lockedTabId, { type: 'STOP_PICK_MODE' });
+            if (secondaryAddPick) {
+              if (brainState.lockedTabId) {
+                dispatchToTab(brainState.lockedTabId, { type: 'STOP_PICK_MODE' });
+              }
+            } else {
+              if (brainState.lockedTabId) {
+                dispatchToTab(brainState.lockedTabId, { type: 'STOP_PICK_MODE' });
+              }
+              resetState();
             }
-            resetState();
           }
 
           const pickTabId = await resolveTargetTabId(callerTabId);
@@ -1528,7 +1541,25 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
             break;
           }
 
-          transitionState(BRAIN_STATES.PICKING, { feature, tabId: pickTabId });
+          if (secondaryAddPick) {
+            const af = brainState.activeFlow;
+            transitionState(BRAIN_STATES.PICKING, {
+              feature: 'add',
+              tabId: pickTabId,
+              selector: af.selector,
+              url: af.url,
+              humanLabel: af.humanLabel,
+              htmlContext: af.htmlContext,
+              secondaryHtmlContext: af.secondaryHtmlContext || '',
+              secondaryHumanLabel: af.secondaryHumanLabel || '',
+              conversationHistory: af.conversationHistory || [],
+              pendingPrompt: af.pendingPrompt || '',
+              awaitingSecondaryPick: true,
+              addPickPhase: 'secondary'
+            });
+          } else {
+            transitionState(BRAIN_STATES.PICKING, { feature, tabId: pickTabId });
+          }
 
           const startHandler = getFeatureHandler(feature, 'onStartPick');
           if (startHandler) {

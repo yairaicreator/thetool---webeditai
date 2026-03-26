@@ -15,6 +15,13 @@
   var previewTarget = null;
   var namedIntervals = {};
 
+  function webeditClipboardWrite(text) {
+    if (!navigator.clipboard || !navigator.clipboard.writeText) return;
+    navigator.clipboard.writeText(text != null ? String(text) : '').catch(function (err) {
+      console.warn('[Add-Hands] Clipboard write failed:', err && err.message ? err.message : err);
+    });
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   // DOM Commands Vocabulary — Interpreter Engine
   // Executes an array of structured action objects using real DOM API calls.
@@ -100,10 +107,37 @@
         });
         break;
 
+      case 'appendText':
+        el = resolveEl(cmd.selector, root);
+        if (el) el.textContent = (el.textContent || '') + (cmd.text != null ? cmd.text : '');
+        break;
+
+      case 'prependText':
+        el = resolveEl(cmd.selector, root);
+        if (el) el.textContent = (cmd.text != null ? cmd.text : '') + (el.textContent || '');
+        break;
+
       case 'removeAttr':
         els = resolveAll(cmd.selector, root);
         els.forEach(function (el) {
           if (cmd.attr) el.removeAttribute(cmd.attr);
+        });
+        break;
+
+      case 'toggleAttr':
+        els = resolveAll(cmd.selector, root);
+        els.forEach(function (node) {
+          if (!cmd.attr) return;
+          if (cmd.onValue !== undefined && cmd.offValue !== undefined) {
+            var cur = node.getAttribute(cmd.attr);
+            var onS = String(cmd.onValue);
+            var offS = String(cmd.offValue);
+            node.setAttribute(cmd.attr, cur === onS ? offS : onS);
+          } else if (node.hasAttribute(cmd.attr)) {
+            node.removeAttribute(cmd.attr);
+          } else {
+            node.setAttribute(cmd.attr, cmd.value != null ? String(cmd.value) : '');
+          }
         });
         break;
 
@@ -273,72 +307,148 @@
         if (el && cmd.property) el.style[cmd.property] = cmd.value || '';
         break;
 
-      case 'pageQueryText': {
-        if (!cmd.selector || !cmd.storageKey) break;
-        var mode = (cmd.mode || 'first').toLowerCase();
-        var gathered = '';
-        try {
-          if (mode === 'all') {
-            var nodes = document.querySelectorAll(cmd.selector);
-            var parts = [];
-            for (var pi = 0; pi < nodes.length; pi++) {
-              var t = (nodes[pi].textContent || '').trim().replace(/\s+/g, ' ');
-              if (t) parts.push(t);
-            }
-            gathered = parts.join('\n');
-          } else {
-            var one = document.querySelector(cmd.selector);
-            if (one) gathered = (one.textContent || '').trim();
-          }
-        } catch (_) {}
-        try { localStorage.setItem(cmd.storageKey, gathered); } catch (_) {}
+      case 'pageShow':
+        try { els = Array.from(document.querySelectorAll(cmd.selector || '')); } catch (_) { els = []; }
+        els.forEach(function (node) { node.style.display = ''; });
         break;
-      }
 
-      case 'pageClick': {
-        if (!cmd.selector) break;
+      case 'pageHide':
+        try { els = Array.from(document.querySelectorAll(cmd.selector || '')); } catch (_) { els = []; }
+        els.forEach(function (node) { node.style.display = 'none'; });
+        break;
+
+      case 'pageToggle':
+        try { els = Array.from(document.querySelectorAll(cmd.selector || '')); } catch (_) { els = []; }
+        els.forEach(function (node) {
+          node.style.display = (node.style.display === 'none') ? '' : 'none';
+        });
+        break;
+
+      case 'pageToggleAttr':
+        try { els = Array.from(document.querySelectorAll(cmd.selector || '')); } catch (_) { els = []; }
+        els.forEach(function (node) {
+          if (!cmd.attr) return;
+          if (cmd.onValue !== undefined && cmd.offValue !== undefined) {
+            var curP = node.getAttribute(cmd.attr);
+            var onP = String(cmd.onValue);
+            var offP = String(cmd.offValue);
+            node.setAttribute(cmd.attr, curP === onP ? offP : onP);
+          } else if (node.hasAttribute(cmd.attr)) {
+            node.removeAttribute(cmd.attr);
+          } else {
+            node.setAttribute(cmd.attr, cmd.value != null ? String(cmd.value) : '');
+          }
+        });
+        break;
+
+      case 'pageClick':
         try { el = document.querySelector(cmd.selector); } catch (_) { el = null; }
         if (el && typeof el.click === 'function') el.click();
         break;
-      }
 
-      case 'copyToClipboard': {
-        var toCopy = '';
-        if (cmd.storageKey) {
+      case 'pageFocus':
+        try { el = document.querySelector(cmd.selector); } catch (_) { el = null; }
+        if (el && typeof el.focus === 'function') {
           try {
-            var fromStore = localStorage.getItem(cmd.storageKey);
-            if (fromStore != null) toCopy = String(fromStore);
-          } catch (_) {}
+            el.focus({ preventScroll: false });
+          } catch (_) {
+            try { el.focus(); } catch (_) {}
+          }
         }
-        if (!toCopy && cmd.text != null) toCopy = String(cmd.text);
-        if (!toCopy) break;
+        break;
+
+      case 'pageQueryText': {
+        var mode = cmd.mode === 'all' ? 'all' : 'first';
+        var parts = [];
         try {
-          if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(toCopy).catch(function () {});
+          var list = document.querySelectorAll(cmd.selector || '');
+          for (var qi = 0; qi < list.length; qi++) {
+            var t = (list[qi].textContent || '').trim();
+            if (t) parts.push(t);
+            if (mode === 'first' && parts.length) break;
           }
         } catch (_) {}
+        var joined = mode === 'all' ? parts.join('\n') : (parts[0] || '');
+        if (cmd.storageKey) {
+          try { localStorage.setItem(cmd.storageKey, joined); } catch (_) {}
+        }
         break;
       }
 
+      case 'pageQueryValue':
+        try { el = document.querySelector(cmd.selector); } catch (_) { el = null; }
+        if (el && cmd.storageKey && 'value' in el) {
+          try {
+            localStorage.setItem(cmd.storageKey, el.value != null ? String(el.value) : '');
+          } catch (_) {}
+        }
+        break;
+
+      case 'copyToClipboard': {
+        var clip = '';
+        if (cmd.storageKey) {
+          try {
+            var got = localStorage.getItem(cmd.storageKey);
+            if (got != null && got !== '') clip = String(got);
+          } catch (_) {}
+        }
+        if (clip === '' && cmd.text != null) clip = String(cmd.text);
+        webeditClipboardWrite(clip);
+        break;
+      }
+
+      case 'copyText':
+        webeditClipboardWrite(cmd.text != null ? cmd.text : '');
+        break;
+
+      case 'copyFromSelector': {
+        var csel = resolveEl(cmd.selector, root);
+        if (!csel) break;
+        var cstr = cmd.useValue && 'value' in csel
+          ? String(csel.value != null ? csel.value : '')
+          : String(csel.textContent || '');
+        webeditClipboardWrite(cstr);
+        break;
+      }
+
+      case 'pageCopyFromSelector': {
+        var pcsel = null;
+        try { pcsel = document.querySelector(cmd.selector); } catch (_) { pcsel = null; }
+        if (!pcsel) break;
+        var pcstr = cmd.useValue && 'value' in pcsel
+          ? String(pcsel.value != null ? pcsel.value : '')
+          : String(pcsel.textContent || '');
+        webeditClipboardWrite(pcstr);
+        break;
+      }
+
+      case 'copyFromStorage':
+        if (cmd.key) {
+          var cstor = '';
+          try { cstor = localStorage.getItem(cmd.key) || ''; } catch (_) {}
+          webeditClipboardWrite(cstor);
+        }
+        break;
+
       case 'pageCreateElement': {
         var ptag = cmd.tag || 'div';
-        var pNew = document.createElement(ptag);
-        if (cmd.id) pNew.id = cmd.id;
+        var pnew = document.createElement(ptag);
+        if (cmd.id) pnew.id = cmd.id;
         if (cmd.classes) {
-          var pcls = Array.isArray(cmd.classes) ? cmd.classes : String(cmd.classes).split(/\s+/);
-          for (var pci = 0; pci < pcls.length; pci++) {
-            if (pcls[pci]) pNew.classList.add(pcls[pci]);
-          }
+          var pcl = Array.isArray(cmd.classes) ? cmd.classes : String(cmd.classes).split(/\s+/);
+          pcl.forEach(function (c) { if (c) pnew.classList.add(c); });
         }
-        if (cmd.text) pNew.textContent = cmd.text;
-        if (cmd.html) pNew.innerHTML = cmd.html;
-        var pParent = null;
-        if (cmd.parent) {
-          try { pParent = document.querySelector(cmd.parent); } catch (_) { pParent = null; }
+        if (cmd.text) pnew.textContent = cmd.text;
+        if (cmd.html) pnew.innerHTML = cmd.html;
+        var pparent = null;
+        var pp = cmd.parent;
+        if (pp === 'body' || pp === 'document.body') {
+          pparent = document.body || document.documentElement;
+        } else if (pp) {
+          try { pparent = document.querySelector(pp); } catch (_) { pparent = null; }
         }
-        if (!pParent) pParent = document.body || document.documentElement;
-        if (pParent) {
-          insertContainerAtTarget(pNew, pParent, cmd.position || 'beforeend');
+        if (pparent) {
+          insertContainerAtTarget(pnew, pparent, cmd.position || 'beforeend');
         }
         break;
       }
@@ -423,6 +533,12 @@
 
     if (Array.isArray(spec.actions) && spec.actions.length > 0) {
       executeActions(spec.actions, container);
+    }
+    if (typeof window.__webeditCollectUnknownActionOps === 'function') {
+      var unk = window.__webeditCollectUnknownActionOps(spec.actions || []);
+      if (unk.length) {
+        console.warn('[Add-Hands] Unsupported ops in spec (showing up to 12):', unk.slice(0, 12).join(', '));
+      }
     }
   }
 

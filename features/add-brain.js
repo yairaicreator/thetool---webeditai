@@ -11,27 +11,26 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // Must match supabase/functions/ai-generate-feature-spec/index.ts (conversation replay).
-function webeditBuildInitialUserMessage(htmlContext, userPrompt, relatedHtmlContext, pageUrl) {
+function webeditBuildInitialUserMessage(htmlContext, userPrompt, relatedHtmlContext) {
   var ctx = htmlContext || 'No context provided';
+  var rel = relatedHtmlContext && String(relatedHtmlContext).trim()
+    ? String(relatedHtmlContext).trim()
+    : '';
   var p = String(userPrompt || '').trim();
   var out = 'SECTION: CONTEXT_HTML\n```html\n' + ctx + '\n```\n';
-  var rel = relatedHtmlContext != null ? String(relatedHtmlContext).trim() : '';
   if (rel) {
-    out += '\nSECTION: RELATED_CONTEXT_HTML\nA second region the user picked on the same page (use together with CONTEXT_HTML for cross-region behavior).\n```html\n' + rel + '\n```\n';
-  }
-  var u = pageUrl != null ? String(pageUrl).trim() : '';
-  if (u) {
-    out += '\nSECTION: PAGE_URL\n' + u + '\n(Site-specific hints are heuristic only; the live DOM may differ.)\n';
+    out += '\nSECTION: SECONDARY_CONTEXT_HTML\n```html\n' + rel + '\n```\n';
   }
   out += '\nSECTION: USER_REQUEST\n' + p +
-    '\n\nSECTION: OUTPUT_CONSTRAINT\nEither (A) a complete feature spec as JSON with exactly "html", "css", "actions", OR (B) if you truly cannot build the feature without another region the user has NOT yet provided, JSON with "needSecondaryContext": true, "secondaryContextPrompt" (short user-facing string: why pick and what to pick), and empty "html", "css", "actions". Use (B) only on the FIRST generation turn when RELATED_CONTEXT_HTML is absent and the request clearly depends on another part of the page (e.g. copy from a distant panel, wire a button to content outside CONTEXT_HTML). If RELATED_CONTEXT_HTML is already present, you MUST output (A) only. No markdown fences. No prose outside the JSON.';
+    '\n\nUSER_REQUEST_HINT: Name one primary user action, what success looks like, what must stay unchanged on the page, persistence (remember state or not), and desktop vs mobile if relevant. If the feature must read or control another area of the page, say so (you may be asked to pick that section next).' +
+    '\n\nSECTION: OUTPUT_CONSTRAINT\nRespond with ONLY a JSON object. Exactly three keys: "html", "css", "actions". No other keys. No markdown. No prose.';
   return out;
 }
 
 function webeditBuildRefinementUserMessage(userPrompt) {
   var p = String(userPrompt || '').trim();
   return 'SECTION: REFINEMENT_REQUEST\n' + p +
-    '\n\nSECTION: INSTRUCTION\nApply only the changes in REFINEMENT_REQUEST. Output a COMPLETE replacement JSON with keys "html", "css", and "actions" (not a diff). Preserve all interactive behavior, all "on" event bindings, and all persistence (ifStorage/getStorage/setStorage) unless the user explicitly asks to remove them. Do not use needSecondaryContext during refinement — output the full spec only.';
+    '\n\nSECTION: INSTRUCTION\nApply only the changes in REFINEMENT_REQUEST. Output a COMPLETE replacement JSON with keys "html", "css", and "actions" (not a diff). Preserve all interactive behavior, all "on" event bindings, and all persistence (ifStorage/getStorage/setStorage) unless the user explicitly asks to remove them.';
 }
 
 /** Seeds refinement mode for “improve existing Add edit” (must match edge replay shape). */
@@ -45,65 +44,111 @@ function webeditBuildReviseSeedUserMessage(htmlContext, selector, pageUrl) {
     'SECTION: OUTPUT_CONSTRAINT\nRespond with ONLY a JSON object. Exactly three keys: "html", "css", "actions". No other keys. No markdown. No prose.';
 }
 
+function webeditHtmlLooksInteractive(html) {
+  var h = String(html || '');
+  return /<(button|input|select|textarea)\b/i.test(h) || /role\s*=\s*["']button["']/i.test(h);
+}
+
+function webeditEmitSpecValidationWarnings(spec) {
+  var actions = spec && Array.isArray(spec.actions) ? spec.actions : [];
+  var unknownOps = typeof __webeditCollectUnknownActionOps === 'function'
+    ? __webeditCollectUnknownActionOps(actions)
+    : [];
+  if (unknownOps.length) {
+    chrome.runtime.sendMessage({
+      type: 'ADD_SPEC_VALIDATION_WARNING',
+      reason: 'unknown_ops',
+      unknownOps: unknownOps
+    }).catch(function () {});
+  }
+  if (actions.length === 0 && webeditHtmlLooksInteractive(spec && spec.html)) {
+    chrome.runtime.sendMessage({
+      type: 'ADD_SPEC_VALIDATION_WARNING',
+      reason: 'empty_actions'
+    }).catch(function () {});
+  }
+}
+
 /**
- * Shared LLM → preview path for Add (initial generate, after secondary pick, refinements).
- * Mutates flow; updates brainState.activeFlow on success paths.
+ * Runs LLM generate + preview + history. message.prompt is required.
  */
-async function runAddFeatureGeneration(message, flow, isRefinement) {
+async function runAddFeatureGeneration(message) {
+  var flow = brainState.activeFlow || {};
   var htmlContext = flow.htmlContext || '';
+  var relatedHtmlContext = flow.secondaryHtmlContext || '';
   var selector = flow.selector || '';
+  var isRefinement = Array.isArray(flow.conversationHistory) && flow.conversationHistory.length > 0;
+
+  transitionState(BRAIN_STATES.PROCESSING);
+
+  if (!flow.conversationHistory) {
+    flow.conversationHistory = [];
+  }
+
   var keepAliveId = startKeepAlive();
   try {
     var history = isRefinement ? flow.conversationHistory : null;
 
-    var genContext = {
-      anchorElement: { htmlContext: htmlContext, selector: selector }
-    };
-    var sec = flow.secondaryHtmlContext != null ? String(flow.secondaryHtmlContext).trim() : '';
-    if (sec) {
-      genContext.relatedHtmlContext = sec;
-    }
-    if (flow.url && String(flow.url).trim()) {
-      genContext.pageUrl = String(flow.url).trim();
-    }
-
-    var result = await SupabaseClient.generateFeatureSpec(message.prompt, genContext, history);
+    var result = await SupabaseClient.generateFeatureSpec(
+      message.prompt,
+      {
+        anchorElement: { htmlContext: htmlContext, selector: selector },
+        relatedHtmlContext: relatedHtmlContext,
+        secondaryHtmlContext: relatedHtmlContext
+      },
+      history
+    );
 
     if (!result.ok) {
-      transitionState(BRAIN_STATES.PREVIEWING);
+      transitionState(BRAIN_STATES.PREVIEWING, flow);
       brainState.activeFlow = flow;
       return { success: false, error: result.error };
     }
 
-    if (result.needSecondaryContext && !isRefinement) {
-      flow.pendingPrompt = message.prompt;
-      flow.addPickPhase = 'secondary';
+    if (result.needSecondaryContext === true) {
+      flow.pendingPrompt = String(message.prompt || '').trim();
+      flow.awaitingSecondaryPick = true;
+      flow.secondaryHtmlContext = flow.secondaryHtmlContext || '';
+      delete flow.spec;
       brainState.activeFlow = flow;
-      transitionState(BRAIN_STATES.PICKING, flow);
 
-      var promptText = result.secondaryContextPrompt ||
-        'This feature seems to depend on another part of the page. Please pick that section.';
+      var tabId = brainState.lockedTabId;
+      transitionState(BRAIN_STATES.PICKING, {
+        feature: 'add',
+        tabId: tabId,
+        selector: flow.selector,
+        url: flow.url,
+        humanLabel: flow.humanLabel,
+        htmlContext: flow.htmlContext,
+        secondaryHtmlContext: flow.secondaryHtmlContext,
+        secondaryHumanLabel: flow.secondaryHumanLabel,
+        conversationHistory: flow.conversationHistory,
+        pendingPrompt: flow.pendingPrompt,
+        awaitingSecondaryPick: true,
+        addPickPhase: 'secondary'
+      });
+
       chrome.runtime.sendMessage({
-        type: 'ADD_SECONDARY_PICK_NEEDED',
-        secondaryContextPrompt: promptText
+        type: 'ADD_NEED_SECONDARY_PICK',
+        secondaryContextPrompt: result.secondaryContextPrompt || '',
+        message: result.secondaryContextPrompt || ''
       }).catch(function () {});
 
-      var tabPick = brainState.lockedTabId;
-      if (tabPick) {
-        await dispatchToTab(tabPick, { type: 'START_PICK_MODE', feature: 'add', pickPhase: 'secondary' });
+      if (tabId) {
+        await dispatchToTab(tabId, {
+          type: 'START_PICK_MODE',
+          feature: 'add',
+          pickPhase: 'secondary'
+        });
       }
 
-      return { success: true, needSecondaryPick: true };
-    }
-
-    if (!flow.conversationHistory) {
-      flow.conversationHistory = [];
+      return { success: true, awaitingSecondaryPick: true };
     }
 
     if (!isRefinement) {
       flow.conversationHistory.push({
         role: 'user',
-        text: webeditBuildInitialUserMessage(htmlContext, message.prompt, flow.secondaryHtmlContext, flow.url)
+        text: webeditBuildInitialUserMessage(htmlContext, message.prompt, relatedHtmlContext)
       });
     } else {
       flow.conversationHistory.push({
@@ -122,35 +167,25 @@ async function runAddFeatureGeneration(message, flow, isRefinement) {
 
     flow.spec = result.spec;
     flow.spec.targetSelector = selector;
-    flow.pendingPrompt = undefined;
-    flow.specUnknownOps = undefined;
-
-    var unknownOps = [];
-    if (typeof globalThis.__webeditCollectUnknownActionOps === 'function') {
-      unknownOps = globalThis.__webeditCollectUnknownActionOps(result.spec.actions || []);
-    }
-    if (unknownOps.length > 0) {
-      flow.specUnknownOps = unknownOps;
-      chrome.runtime.sendMessage({
-        type: 'ADD_SPEC_VALIDATION_WARNING',
-        unknownOps: unknownOps
-      }).catch(function () {});
-    }
-
+    flow.awaitingSecondaryPick = false;
+    flow.pendingPrompt = '';
+    flow.addPickPhase = null;
     brainState.activeFlow = flow;
 
-    transitionState(BRAIN_STATES.PREVIEWING);
+    webeditEmitSpecValidationWarnings(flow.spec);
 
-    var tabId = brainState.lockedTabId;
-    if (tabId) {
+    transitionState(BRAIN_STATES.PREVIEWING, flow);
+
+    var genTabId = brainState.lockedTabId;
+    if (genTabId) {
       if (!isRefinement) {
-        dispatchToTab(tabId, {
+        dispatchToTab(genTabId, {
           type: 'INJECT_PREVIEW',
           selector: selector,
           spec: { html: result.spec.html, css: result.spec.css, actions: result.spec.actions }
         });
       } else {
-        dispatchToTab(tabId, {
+        dispatchToTab(genTabId, {
           type: 'UPDATE_PREVIEW',
           spec: { html: result.spec.html, css: result.spec.css, actions: result.spec.actions }
         });
@@ -177,30 +212,51 @@ registerFeature('add', {
   },
 
   onElementPicked: async function (_callerTabId, message) {
-    if (message.pickPhase === 'secondary') {
-      var flowSec = brainState.activeFlow || {};
-      flowSec.addPickPhase = undefined;
-      brainState.activeFlow = flowSec;
-      transitionState(BRAIN_STATES.PREVIEWING, flowSec);
-
-      chrome.runtime.sendMessage({
-        type: 'ADD_SECONDARY_PICK_COMPLETED',
-        summary: flowSec.secondaryHumanLabel || 'additional section'
-      }).catch(function () {});
-
-      var pend = flowSec.pendingPrompt || '';
-      if (!pend) {
-        return { success: false, error: 'No pending prompt' };
-      }
-
-      transitionState(BRAIN_STATES.PROCESSING);
-      return await runAddFeatureGeneration({ prompt: pend }, flowSec, false);
-    }
-
     var flow = brainState.activeFlow || {};
+    var pickPhase = message.pickPhase === 'secondary' ? 'secondary' : 'primary';
     var selector = flow.selector || '';
     var url = flow.url || '';
     var humanLabel = flow.humanLabel || selectorToHumanLabel(selector);
+    var primaryHtml = flow.htmlContext || '';
+
+    if (pickPhase === 'secondary') {
+      var secHtml = message.htmlContext || '';
+      var secLabel = String(message.humanLabel || '').trim();
+      transitionState(BRAIN_STATES.PREVIEWING, {
+        feature: 'add',
+        tabId: brainState.lockedTabId,
+        selector: selector,
+        url: url,
+        humanLabel: humanLabel,
+        htmlContext: primaryHtml,
+        secondaryHtmlContext: secHtml,
+        secondaryHumanLabel: secLabel,
+        conversationHistory: flow.conversationHistory || [],
+        pendingPrompt: flow.pendingPrompt,
+        awaitingSecondaryPick: false,
+        addPickPhase: null
+      });
+      flow = brainState.activeFlow;
+
+      chrome.runtime.sendMessage({
+        type: 'ADD_SECONDARY_PICK_COMPLETED',
+        summary: secLabel,
+        primarySummary: humanLabel
+      }).catch(function () {});
+
+      var pending = String(flow.pendingPrompt || '').trim();
+      if (pending) {
+        return runAddFeatureGeneration({ prompt: pending });
+      }
+
+      return {
+        success: true,
+        feature: 'add',
+        state: 'PREVIEWING',
+        selector: selector,
+        url: url
+      };
+    }
 
     var htmlContext = message.htmlContext || '';
 
@@ -210,7 +266,13 @@ registerFeature('add', {
       selector: selector,
       url: url,
       humanLabel: humanLabel,
-      htmlContext: htmlContext
+      htmlContext: htmlContext,
+      secondaryHtmlContext: '',
+      secondaryHumanLabel: '',
+      conversationHistory: flow.conversationHistory || [],
+      pendingPrompt: '',
+      awaitingSecondaryPick: false,
+      addPickPhase: null
     });
 
     chrome.runtime.sendMessage({
@@ -229,20 +291,8 @@ registerFeature('add', {
     };
   },
 
-  // Called by the GENERATE_FEATURE router when an Add flow is active.
-  // First call: sends prompt + context to LLM, dispatches INJECT_PREVIEW.
-  // Refinement calls: builds conversation history, dispatches UPDATE_PREVIEW.
   onGenerate: async function (message) {
-    var flow = brainState.activeFlow || {};
-    var isRefinement = Array.isArray(flow.conversationHistory) && flow.conversationHistory.length > 0;
-
-    transitionState(BRAIN_STATES.PROCESSING);
-
-    if (!flow.conversationHistory) {
-      flow.conversationHistory = [];
-    }
-
-    return await runAddFeatureGeneration(message, flow, isRefinement);
+    return runAddFeatureGeneration(message);
   },
 
   onApply: async function () {

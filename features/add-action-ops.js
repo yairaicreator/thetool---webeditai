@@ -8,9 +8,10 @@
 (function () {
   var KNOWN = [
     'on',
-    'addClass', 'removeClass', 'toggleClass',
+    'addClass', 'removeClass', 'toggleClass', 'toggleAttr',
     'setStyle',
     'setText', 'setHTML', 'setAttr', 'removeAttr',
+    'appendText', 'prependText',
     'show', 'hide', 'toggle',
     'createElement', 'removeElement', 'pageCreateElement',
     'setStorage', 'getStorage', 'removeStorage',
@@ -19,7 +20,9 @@
     'scrollTo',
     'getValue', 'setValue',
     'pageAddClass', 'pageRemoveClass', 'pageToggleClass', 'pageSetStyle',
-    'pageQueryText', 'pageClick', 'copyToClipboard'
+    'pageShow', 'pageHide', 'pageToggle', 'pageToggleAttr',
+    'pageQueryText', 'pageQueryValue', 'pageClick', 'pageFocus',
+    'copyText', 'copyFromSelector', 'pageCopyFromSelector', 'copyFromStorage', 'copyToClipboard'
   ];
 
   var knownSet = new Set(KNOWN);

@@ -1122,8 +1122,6 @@ function registerEventListeners() {
     chatMessages.pop();
     if (!resp.success) {
       addChatMessage('assistant', resp.error || 'Something went wrong. Please try again with a clearer or smaller step-by-step description.');
-    } else if (resp.needSecondaryPick && selectedFeature === 'add') {
-      addChatMessage('system', 'Use the highlighted page and the message above to complete the second pick.');
     } else if (selectedFeature !== 'add') {
       addChatMessage('assistant', 'Feature spec generated. Preview coming soon.');
     }
