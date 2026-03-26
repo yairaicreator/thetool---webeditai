@@ -1,6 +1,7 @@
 /* WebEdit AI Chat Panel - Side Panel Design */
 
 #webedit-chat-panel {
+  --webedit-bottom-nav-height: 52px;
   position: fixed;
   top: 0;
   right: 0;
@@ -30,15 +31,34 @@
 
 /* Header Navigation Bar */
 .webedit-panel-header {
-  display: flex;
+  display: grid;
+  grid-template-columns: 44px 1fr 56px;
   align-items: center;
-  justify-content: space-around;
-  padding: 0;
+  column-gap: 4px;
+  padding: 0 6px;
   background: linear-gradient(90deg, #5b8def 0%, #b370d9 50%, #ec4899 100%);
   border-radius: 24px 0 0 0;
   position: relative;
   flex-shrink: 0;
   height: 48px;
+}
+
+.webedit-panel-header .webedit-nav-btn {
+  flex: none;
+}
+
+.webedit-panel-header .webedit-nav-btn.logo-btn {
+  justify-self: center;
+  max-width: 100%;
+  padding: 8px 10px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.webedit-panel-header .webedit-nav-btn.signin-btn {
+  justify-self: end;
 }
 
 .webedit-nav-btn {
@@ -64,19 +84,6 @@
 
 .webedit-nav-btn.signin-btn {
   background: rgba(236, 72, 153, 0.3);
-}
-
-.webedit-nav-btn.history-btn {
-  background: rgba(15, 23, 42, 0.18);
-}
-
-.webedit-nav-btn.back-btn {
-  background: rgba(59, 130, 246, 0.28);
-}
-
-.webedit-nav-btn.active-view {
-  background: rgba(255, 255, 255, 0.24);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
 }
 
 /* Avatar container */
@@ -347,7 +354,7 @@
   top: 48px;
   left: 0;
   right: 0;
-  bottom: 0;
+  bottom: var(--webedit-bottom-nav-height, 52px);
   background: rgba(215, 251, 255, 0.95);
   display: flex;
   align-items: center;
@@ -1304,6 +1311,62 @@
   }
 }
 
+/* Bottom tab bar (Chat / History / Browse) */
+.webedit-bottom-nav {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  justify-content: space-around;
+  flex-shrink: 0;
+  min-height: var(--webedit-bottom-nav-height);
+  padding: 6px 6px 8px;
+  background: #ffffff;
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow: 0 -4px 16px rgba(15, 23, 42, 0.06);
+  z-index: 15;
+}
+
+.webedit-bottom-nav-btn {
+  border: none;
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 4px 8px;
+  cursor: pointer;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-radius: 10px;
+  flex: 1;
+  max-width: 140px;
+  font-family: inherit;
+  transition: background 0.2s, color 0.2s;
+}
+
+.webedit-bottom-nav-btn:hover {
+  background: rgba(15, 23, 42, 0.04);
+  color: #334155;
+}
+
+.webedit-bottom-nav-btn.active {
+  color: #5b21b6;
+  background: rgba(139, 92, 246, 0.14);
+}
+
+.webedit-bottom-nav-icon {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.webedit-bottom-nav-label {
+  line-height: 1.2;
+}
+
 /* History Sidebar */
 .webedit-history-sidebar {
   position: absolute;
@@ -1311,7 +1374,7 @@
   /* Below header */
   left: 0;
   width: 250px;
-  bottom: 0;
+  bottom: var(--webedit-bottom-nav-height, 52px);
   background: white;
   z-index: 20;
   transform: translateX(-100%);
@@ -1319,6 +1382,54 @@
   box-shadow: 4px 0 12px rgba(0, 0, 0, 0.1);
   display: flex;
   flex-direction: column;
+}
+
+.webedit-history-profile-strip {
+  padding: 12px 16px 8px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.webedit-history-profile-email {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: #475569;
+  word-break: break-all;
+}
+
+.webedit-sidebar-new-chat-primary {
+  margin: 12px 16px 8px;
+  width: calc(100% - 32px);
+  box-sizing: border-box;
+  padding: 12px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 12px;
+}
+
+.webedit-history-sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 8px 12px;
+  gap: 2px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.webedit-sidebar-nav-item {
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 14px;
+  color: #1f2937;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+
+.webedit-sidebar-nav-item:hover {
+  background: #f3f4f6;
 }
 
 .webedit-history-sidebar.visible {

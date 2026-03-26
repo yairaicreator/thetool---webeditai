@@ -11,11 +11,8 @@
     <!-- Header Navigation Bar -->
     <div class="webedit-panel-header">
       <button class="webedit-header-hamburger" id="webedit-header-hamburger" type="button" aria-label="Open chat history">☰</button>
-      <!--<button class="webedit-nav-btn logo-btn" id="webedit-home-btn" type="button">WebEdit AI</button>-->
-      <button class="webedit-nav-btn history-btn" id="webedit-edit-history-btn" type="button">EditHistory</button>
-      <button class="webedit-nav-btn back-btn hidden" id="webedit-back-to-edit-btn" type="button">Back to Edit</button>
+      <button class="webedit-nav-btn logo-btn" id="webedit-home-btn" type="button">WebEdit AI</button>
       <button class="webedit-nav-btn signin-btn" id="webedit-signin-btn" type="button">Log in</button>
-      <!-- Resize and Close buttons are not needed in Side Panel as it's managed by Chrome -->
     </div>
 
     <div class="webedit-auth-guard hidden" id="webedit-auth-guard" aria-live="polite">
@@ -26,11 +23,20 @@
       </div>
     </div>
 
-    <!-- History Sidebar -->
+    <!-- History Sidebar (Chat History + nav) -->
     <div class="webedit-history-sidebar" id="webedit-history-sidebar">
+      <div class="webedit-history-profile-strip hidden" id="webedit-history-profile-strip">
+        <span class="webedit-history-profile-email" id="webedit-history-profile-email"></span>
+      </div>
+      <button class="webedit-new-chat-btn webedit-sidebar-new-chat-primary" id="webedit-new-chat-btn" type="button">New Chat</button>
+      <nav class="webedit-history-sidebar-nav" aria-label="Chat history menu">
+        <button type="button" class="webedit-sidebar-nav-item" id="webedit-sidebar-nav-new-chat">New Chat</button>
+        <button type="button" class="webedit-sidebar-nav-item" id="webedit-sidebar-nav-recent-edits">Recent Edits</button>
+        <button type="button" class="webedit-sidebar-nav-item" id="webedit-sidebar-nav-templates">Templates</button>
+        <button type="button" class="webedit-sidebar-nav-item" id="webedit-sidebar-nav-settings">Settings</button>
+      </nav>
       <div class="webedit-history-header">
-        <span>Chat History</span>
-        <button class="webedit-new-chat-btn" id="webedit-new-chat-btn">New Chat</button>
+        <span>Sessions</span>
       </div>
       <div class="webedit-history-list" id="webedit-history-list"></div>
     </div>
@@ -55,7 +61,7 @@
       </div>
     </div>
 
-    <!-- Chat Input Bar (at bottom) -->
+    <!-- Chat Input Bar -->
     <div class="webedit-input-container" id="webedit-input-container">
       <div class="webedit-attachment-preview" id="webedit-attachment-preview"></div>
       <div class="webedit-input-row">
@@ -72,6 +78,21 @@
       </div>
       <input class="webedit-file-input" id="webedit-file-input" type="file" multiple accept="image/*,.pdf,.doc,.docx,.txt,.json,.csv,.md" />
     </div>
+
+    <nav class="webedit-bottom-nav" id="webedit-bottom-nav" aria-label="Primary navigation">
+      <button type="button" class="webedit-bottom-nav-btn active" id="webedit-nav-chat" data-nav="chat" aria-current="page">
+        <span class="webedit-bottom-nav-icon" aria-hidden="true">💬</span>
+        <span class="webedit-bottom-nav-label">Chat</span>
+      </button>
+      <button type="button" class="webedit-bottom-nav-btn" id="webedit-nav-history" data-nav="history">
+        <span class="webedit-bottom-nav-icon" aria-hidden="true">📜</span>
+        <span class="webedit-bottom-nav-label">History</span>
+      </button>
+      <button type="button" class="webedit-bottom-nav-btn" id="webedit-nav-browse" data-nav="browse">
+        <span class="webedit-bottom-nav-icon" aria-hidden="true">🧭</span>
+        <span class="webedit-bottom-nav-label">Browse</span>
+      </button>
+    </nav>
   </div>
   <script src="sidepanel.js"></script>
   <script src="features/remove-panel.js"></script>

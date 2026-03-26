@@ -16,8 +16,6 @@
   const els = {
   headerHamburger: document.getElementById('webedit-header-hamburger'),
   homeBtn:         document.getElementById('webedit-home-btn'),
-  editHistoryBtn:  document.getElementById('webedit-edit-history-btn'),
-  backToEditBtn:   document.getElementById('webedit-back-to-edit-btn'),
   signinBtn:       document.getElementById('webedit-signin-btn'),
   authGuard:       document.getElementById('webedit-auth-guard'),
   authGuardTitle:  document.getElementById('webedit-auth-guard-title'),
@@ -25,6 +23,12 @@
   authGuardSignin: document.getElementById('webedit-auth-guard-signin'),
   historySidebar:  document.getElementById('webedit-history-sidebar'),
   historyList:     document.getElementById('webedit-history-list'),
+  historyProfileStrip: document.getElementById('webedit-history-profile-strip'),
+  historyProfileEmail: document.getElementById('webedit-history-profile-email'),
+  sidebarNavNewChat: document.getElementById('webedit-sidebar-nav-new-chat'),
+  sidebarNavRecentEdits: document.getElementById('webedit-sidebar-nav-recent-edits'),
+  sidebarNavTemplates: document.getElementById('webedit-sidebar-nav-templates'),
+  sidebarNavSettings: document.getElementById('webedit-sidebar-nav-settings'),
   newChatBtn:      document.getElementById('webedit-new-chat-btn'),
   mainContent:     document.getElementById('webedit-main-content'),
   featureButtons:  Array.from(document.querySelectorAll('.webedit-feature-btn')),
@@ -36,7 +40,13 @@
   inputContainer:  document.getElementById('webedit-input-container'),
   chatInput:       document.getElementById('webedit-chat-input'),
   sendBtn:         document.getElementById('webedit-send-btn'),
+  navChat:         document.getElementById('webedit-nav-chat'),
+  navHistory:      document.getElementById('webedit-nav-history'),
+  navBrowse:       document.getElementById('webedit-nav-browse'),
 };
+
+/** @type {HTMLElement | null} Dropdown under header profile (signed-in only) */
+let accountMenuElement = null;
 
 // ── Keep-Alive Port: holds the service worker alive during long Add flows ────
 
@@ -196,6 +206,63 @@ let panelRevisionKind = null;
 
 function isAuthenticated() {
   return authState === 'authenticated';
+}
+
+function updateBottomNavActive() {
+  if (els.navChat) {
+    els.navChat.classList.toggle('active', currentPanelMode === 'chat');
+    if (currentPanelMode === 'chat') {
+      els.navChat.setAttribute('aria-current', 'page');
+    } else {
+      els.navChat.removeAttribute('aria-current');
+    }
+  }
+  if (els.navHistory) {
+    els.navHistory.classList.toggle('active', currentPanelMode === 'history');
+    if (currentPanelMode === 'history') {
+      els.navHistory.setAttribute('aria-current', 'page');
+    } else {
+      els.navHistory.removeAttribute('aria-current');
+    }
+  }
+  if (els.navBrowse) {
+    els.navBrowse.classList.remove('active');
+    els.navBrowse.removeAttribute('aria-current');
+  }
+}
+
+function updateHistorySidebarProfile() {
+  if (!els.historyProfileStrip || !els.historyProfileEmail) return;
+  if (currentUser && currentUser.email) {
+    els.historyProfileEmail.textContent = currentUser.email;
+    els.historyProfileStrip.classList.remove('hidden');
+  } else {
+    els.historyProfileEmail.textContent = '';
+    els.historyProfileStrip.classList.add('hidden');
+  }
+}
+
+function openAccountMenu() {
+  if (accountMenuElement) {
+    setTimeout(function () {
+      accountMenuElement.classList.add('visible');
+    }, 0);
+    return;
+  }
+  window.open('https://webeditai.com/#/signup?from=extension', '_blank');
+}
+
+function startNewChatSession() {
+  if (!isAuthenticated()) {
+    showNotification('Please log in to create a chat');
+    return;
+  }
+  persistCurrentSession();
+  currentSessionId = Date.now().toString();
+  chatMessages = [];
+  renderChatMessages();
+  persistCurrentSession();
+  loadChatSessions();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -818,6 +885,7 @@ function updateAuthUI() {
     renderSignInButton();
   }
 
+  updateHistorySidebarProfile();
       renderHistoryList();
   if (!isAuthenticated()) {
     chatMessages = [];
@@ -833,6 +901,7 @@ function updateAuthUI() {
 
   function renderSignInButton() {
     if (!els.signinBtn) return;
+    accountMenuElement = null;
   els.signinBtn.className = 'webedit-nav-btn signin-btn';
   els.signinBtn.textContent = 'Log in';
   els.signinBtn.onclick = function () {
@@ -862,6 +931,7 @@ function updateAuthUI() {
       '<span>Sign out</span>' +
     '</div>';
     els.signinBtn.appendChild(menu);
+  accountMenuElement = menu;
 
   avatar.addEventListener('click', function (e) {
             e.preventDefault();
@@ -897,9 +967,6 @@ function setPanelMode(mode) {
   els.bottomControls?.classList.toggle('hidden', showHistory);
   els.inputContainer?.classList.toggle('hidden', showHistory);
   els.mainContent?.classList.toggle('history-mode', showHistory);
-  els.editHistoryBtn?.classList.toggle('active-view', showHistory);
-  els.editHistoryBtn?.classList.toggle('hidden', showHistory);
-  els.backToEditBtn?.classList.toggle('hidden', !showHistory);
 
   if (showHistory) {
     loadEditHistory(false);
@@ -908,6 +975,7 @@ function setPanelMode(mode) {
     renderBlueprintList();
     renderPageEditsPicker();
   }
+  updateBottomNavActive();
 }
 
 function toggleHistorySidebar(forceState) {
@@ -1061,17 +1129,44 @@ function registerEventListeners() {
   }
 
   if (els.homeBtn) {
-    els.homeBtn.addEventListener('click', function () {
-      window.open('https://webeditai.com/', '_blank');
+    els.homeBtn.addEventListener('click', function (e) {
+      e.preventDefault();
+      setPanelMode('chat');
+      toggleHistorySidebar(false);
     });
   }
 
-  els.editHistoryBtn?.addEventListener('click', function () {
-    setPanelMode(currentPanelMode === 'history' ? 'chat' : 'history');
+  els.navChat?.addEventListener('click', function () {
+    setPanelMode('chat');
+    toggleHistorySidebar(false);
   });
 
-  els.backToEditBtn?.addEventListener('click', function () {
-    setPanelMode('chat');
+  els.navHistory?.addEventListener('click', function () {
+    setPanelMode('history');
+    toggleHistorySidebar(false);
+  });
+
+  els.navBrowse?.addEventListener('click', function () {
+    window.open('https://webeditai.com/', '_blank');
+  });
+
+  els.sidebarNavNewChat?.addEventListener('click', function () {
+    startNewChatSession();
+  });
+
+  els.sidebarNavRecentEdits?.addEventListener('click', function () {
+    setPanelMode('history');
+    toggleHistorySidebar(false);
+  });
+
+  els.sidebarNavTemplates?.addEventListener('click', function () {
+    /* intentional no-op */
+  });
+
+  els.sidebarNavSettings?.addEventListener('click', function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    openAccountMenu();
   });
 
   // Auth guard sign-in
@@ -1081,13 +1176,7 @@ function registerEventListeners() {
 
   // New Chat
   els.newChatBtn?.addEventListener('click', debounce(function () {
-    if (!isAuthenticated()) { showNotification('Please log in to create a chat'); return; }
-    persistCurrentSession();
-    currentSessionId = Date.now().toString();
-    chatMessages = [];
-      renderChatMessages();
-    persistCurrentSession();
-    loadChatSessions();
+    startNewChatSession();
   }));
 
   // Feature buttons: Remove, Customize, Add
