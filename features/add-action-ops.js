@@ -16,7 +16,7 @@
     'createElement', 'removeElement', 'pageCreateElement',
     'setStorage', 'getStorage', 'removeStorage',
     'ifStorage', 'ifHasClass', 'ifVisible',
-    'delay', 'interval', 'clearInterval',
+    'delay', 'interval', 'clearInterval', 'run',
     'scrollTo',
     'getValue', 'setValue',
     'pageAddClass', 'pageRemoveClass', 'pageToggleClass', 'pageSetStyle',

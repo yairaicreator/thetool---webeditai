@@ -463,6 +463,11 @@
         break;
       }
 
+      // LLMs sometimes emit this as a grouping step — no eval, only nested DOM ops.
+      case 'run':
+        executeActions(cmd.actions || [], root);
+        break;
+
       default:
         console.warn('[Add-Hands] Unknown action op:', op);
         break;

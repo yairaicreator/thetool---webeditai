@@ -16,7 +16,7 @@ const ALLOWED_ACTION_OPS = new Set([
   "createElement", "removeElement", "pageCreateElement",
   "setStorage", "getStorage", "removeStorage",
   "ifStorage", "ifHasClass", "ifVisible",
-  "delay", "interval", "clearInterval",
+  "delay", "interval", "clearInterval", "run",
   "scrollTo",
   "getValue", "setValue",
   "pageAddClass", "pageRemoveClass", "pageToggleClass", "pageSetStyle",
@@ -205,6 +205,9 @@ Each action is a JSON object with an "op" field and parameters. Nested "actions"
 - delay: { "op": "delay", "ms": 1000, "actions": [...] }
 - interval: { "op": "interval", "ms": 5000, "actions": [...], "id": "webedit-ai-timer-1" }
 - clearInterval: { "op": "clearInterval", "id": "webedit-ai-timer-1" }
+
+**Grouping (no script execution):**
+- run: { "op": "run", "actions": [...] } — runs nested actions in order. Same effect as listing those steps in the parent array; use when structuring steps. Not JavaScript eval.
 
 **Scroll:**
 - scrollTo: { "op": "scrollTo", "selector": ".el" }
