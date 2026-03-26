@@ -384,6 +384,16 @@
         }
         break;
 
+      // Same as pageQueryValue — LLMs often emit this name for "read host input into storage".
+      case 'pageGetValue':
+        try { el = document.querySelector(cmd.selector); } catch (_) { el = null; }
+        if (el && cmd.storageKey && 'value' in el) {
+          try {
+            localStorage.setItem(cmd.storageKey, el.value != null ? String(el.value) : '');
+          } catch (_) {}
+        }
+        break;
+
       case 'copyToClipboard': {
         var clip = '';
         if (cmd.storageKey) {

@@ -21,7 +21,7 @@
     'getValue', 'setValue',
     'pageAddClass', 'pageRemoveClass', 'pageToggleClass', 'pageSetStyle',
     'pageShow', 'pageHide', 'pageToggle', 'pageToggleAttr',
-    'pageQueryText', 'pageQueryValue', 'pageClick', 'pageFocus',
+    'pageQueryText', 'pageQueryValue', 'pageGetValue', 'pageClick', 'pageFocus',
     'copyText', 'copyFromSelector', 'pageCopyFromSelector', 'copyFromStorage', 'copyToClipboard'
   ];
 

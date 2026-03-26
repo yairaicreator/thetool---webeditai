@@ -21,7 +21,7 @@ const ALLOWED_ACTION_OPS = new Set([
   "getValue", "setValue",
   "pageAddClass", "pageRemoveClass", "pageToggleClass", "pageSetStyle",
   "pageShow", "pageHide", "pageToggle", "pageToggleAttr",
-  "pageQueryText", "pageQueryValue", "pageClick", "pageFocus",
+  "pageQueryText", "pageQueryValue", "pageGetValue", "pageClick", "pageFocus",
   "copyText", "copyFromSelector", "pageCopyFromSelector", "copyFromStorage", "copyToClipboard",
 ]);
 
@@ -140,7 +140,8 @@ You do NOT output raw JavaScript. You output structured DOM commands in "actions
 | Copy from one element | copyFromSelector { selector, useValue?: true } | pageCopyFromSelector { selector, useValue?: true } |
 | Copy from localStorage key | copyFromStorage { "key":"webedit-ai-..." } | same |
 | Copy text from element(s) | setText from feature nodes; or getValue → copyToClipboard with storageKey | pageQueryText { selector, mode:"first"|"all", storageKey } then copyToClipboard { storageKey } |
-| Copy host input .value | Prefer feature-local input + getValue → copyToClipboard; or pageQueryValue { selector, storageKey } then copyToClipboard { storageKey } | pageQueryValue |
+| Copy host input .value / transcript textarea | pageGetValue or pageQueryValue { selector, storageKey } then copyToClipboard { storageKey } | same |
+| Copy many transcript lines (repeated segments) | pageQueryText { selector, mode:"all", storageKey } then copyToClipboard { storageKey } | same |
 | Toggle visibility | show / hide / toggle on feature selectors | pageShow / pageHide / pageToggle |
 | Toggle look / theme | toggleClass, addClass, removeClass | pageToggleClass, pageAddClass, pageRemoveClass |
 | Toggle attribute (aria-expanded, hidden, etc.) | toggleAttr { selector, attr, onValue?, offValue?, value? } | pageToggleAttr { selector, attr, ... } |
@@ -227,6 +228,8 @@ On strict pages the browser may reject writes; the extension logs a console warn
   mode "first" stores text from first match; "all" joins non-empty text from all matches with newlines.
 - pageQueryValue: { "op": "pageQueryValue", "selector": "input#search", "storageKey": "webedit-ai-field" }
   Stores element.value in localStorage (inputs, textarea, select).
+- pageGetValue: { "op": "pageGetValue", "selector": "textarea#transcript", "storageKey": "webedit-ai-buf" }
+  Identical to pageQueryValue — use either name. Reads the first matching host input/textarea/select .value into localStorage under storageKey.
 
 **Host page interaction / placement:**
 - pageClick: { "op": "pageClick", "selector": "button.existing" } — invokes .click() on first match
@@ -248,6 +251,14 @@ User picks HTML that includes a host button selector. Feature renders .webedit-a
 ## Pattern: Notebook (feature-local)
 
 Use textarea.webedit-ai-note with getValue on blur or button + setStorage; restore with getStorage/ifStorage; appendText optional for bullet lines.
+
+## Pattern: Copy host transcript (e.g. YouTube) + temporary "✓" / "V" feedback
+
+1. If the visible transcript lines are NOT in the first pick HTML, output needSecondaryContext and ask the user to second-pick the transcript container; use selectors from SECONDARY_CONTEXT_HTML.
+2. **Many line elements:** pageQueryText { "selector": "<segment selector from picked HTML>", "mode": "all", "storageKey": "webedit-ai-transcript" } then copyToClipboard { "storageKey": "webedit-ai-transcript" } inside the same click handler (user gesture required for clipboard).
+3. **Single textarea / input holding transcript:** pageGetValue or pageQueryValue { selector, storageKey: "webedit-ai-transcript" } then copyToClipboard { storageKey: "webedit-ai-transcript" }.
+4. **After copy:** setText on the feature button/label to "✓" or "V", then delay { "ms": 3000, "actions": [ { "op": "setText", "selector": ".webedit-ai-copy-label", "text": "Copy" } ] } to restore the icon text (adjust selector to your markup).
+5. Never use pageEval. If selectors fail on shadow-heavy UIs, still render the widget; copying may be no-op until the user picks a region whose HTML exposes stable selectors.
 
 ## Example Outputs
 
