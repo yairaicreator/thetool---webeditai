@@ -50,19 +50,11 @@
           <span class="webedit-sidebar-nav-icon" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg></span>
           <span class="webedit-sidebar-nav-label">Recent Edits</span>
         </button>
-        <button type="button" class="webedit-sidebar-nav-item" id="webedit-sidebar-nav-templates" data-sidebar-action="templates">
-          <span class="webedit-sidebar-nav-icon" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></span>
-          <span class="webedit-sidebar-nav-label">Templates</span>
-        </button>
         <button type="button" class="webedit-sidebar-nav-item" id="webedit-sidebar-nav-settings" data-sidebar-action="settings">
           <span class="webedit-sidebar-nav-icon" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M2 14h4M10 8h4M18 16h4"/></svg></span>
           <span class="webedit-sidebar-nav-label">Settings</span>
         </button>
       </nav>
-      <div class="webedit-sidebar-pro-card" aria-hidden="false">
-        <div class="webedit-sidebar-pro-label">Pro plan</div>
-        <p class="webedit-sidebar-pro-copy">Unlock unlimited AI editing and premium templates.</p>
-      </div>
       <div class="webedit-history-header">
         <span>Chats</span>
       </div>
@@ -74,32 +66,9 @@
       <div id="webedit-blueprint-list" class="webedit-blueprint-list"></div>
       <div class="webedit-chat-messages" id="webedit-chat-messages">
         <div class="webedit-chat-home" id="webedit-chat-home" hidden>
-          <div class="webedit-chat-home-hero">
-            <div class="webedit-chat-home-icon-wrap" aria-hidden="true">
-              <svg class="webedit-chat-home-sparkle" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6L17 7M7 17l-1.4 1.4"/><circle cx="12" cy="12" r="3"/></svg>
-              <span class="webedit-chat-home-pencil" aria-hidden="true">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-              </span>
-            </div>
-            <h1 class="webedit-chat-home-title">Refine your digital reading experience.</h1>
-            <p class="webedit-chat-home-lead">Transform any webpage into a workspace. Refine content, automate layouts, and organize the web with AI.</p>
-          </div>
-          <div class="webedit-chat-home-cards">
-            <div class="webedit-chat-home-card webedit-chat-home-card-action" data-home-action="recent-edits" role="button" tabindex="0">
-              <span class="webedit-chat-home-card-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></span>
-              <div class="webedit-chat-home-card-title">Recent Edits</div>
-              <p class="webedit-chat-home-card-text">Pick up where you left off on the current site.</p>
-            </div>
-            <div class="webedit-chat-home-card">
-              <span class="webedit-chat-home-card-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></span>
-              <div class="webedit-chat-home-card-title">Smart Templates</div>
-              <p class="webedit-chat-home-card-text">Apply pre-set styles to messy dashboards instantly.</p>
-            </div>
-            <div class="webedit-chat-home-card">
-              <span class="webedit-chat-home-card-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 12l4-4 4 4 6-6"/><path d="M21 8v5h-5"/></svg></span>
-              <div class="webedit-chat-home-card-title">Page Analysis</div>
-              <p class="webedit-chat-home-card-text">Extract key data and structure from any article.</p>
-            </div>
+          <div class="webedit-chat-empty-prompt">
+            <p class="webedit-chat-empty-prompt-title">Start customizing this page</p>
+            <p class="webedit-chat-empty-prompt-text">Pick <strong>Remove</strong>, <strong>Customize</strong>, or <strong>Add</strong> below, then tell the AI what to change—or open the menu for your chat history and recent edits.</p>
           </div>
         </div>
         <div class="webedit-chat-thread" id="webedit-chat-thread"></div>
@@ -127,11 +96,7 @@
 
     <!-- Chat Input Bar -->
     <div class="webedit-input-container" id="webedit-input-container">
-      <div class="webedit-attachment-preview" id="webedit-attachment-preview"></div>
       <div class="webedit-input-row">
-        <button class="webedit-attach-btn" id="webedit-attach-btn" type="button" aria-label="Attach files">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-        </button>
         <textarea 
           class="webedit-chat-input" 
           id="webedit-chat-input" 
@@ -144,7 +109,6 @@
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
         </button>
       </div>
-      <input class="webedit-file-input" id="webedit-file-input" type="file" multiple accept="image/*,.pdf,.doc,.docx,.txt,.json,.csv,.md" />
     </div>
 
     <nav class="webedit-bottom-nav" id="webedit-bottom-nav" aria-label="Primary navigation">

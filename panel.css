@@ -506,128 +506,50 @@
   min-height: 0;
 }
 
-/* Chat home (empty state hero) */
+/* Empty-state prompt fills the scroll area; hide empty thread column */
+.webedit-chat-messages:has(#webedit-chat-home:not([hidden])) .webedit-chat-thread {
+  display: none;
+}
+
+/* Chat empty state (authenticated, no messages yet) */
 .webedit-chat-home {
   display: flex;
   flex-direction: column;
-  gap: 20px;
-  padding-bottom: 8px;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 32px 20px 24px;
+  flex: 1;
+  min-height: 0;
 }
 
 .webedit-chat-home[hidden] {
   display: none !important;
 }
 
-.webedit-chat-home-hero {
-  text-align: center;
-  padding: 8px 4px 0;
+.webedit-chat-empty-prompt {
+  max-width: 300px;
 }
 
-.webedit-chat-home-icon-wrap {
-  position: relative;
-  width: 76px;
-  height: 76px;
-  margin: 0 auto 18px;
-  border-radius: 20px;
-  background: linear-gradient(160deg, #ede9fe 0%, #e0e7ff 45%, #dbeafe 100%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 14px 32px rgba(93, 95, 239, 0.18);
-}
-
-.webedit-chat-home-sparkle {
-  color: var(--we-primary);
-  flex-shrink: 0;
-}
-
-.webedit-chat-home-pencil {
-  position: absolute;
-  top: -6px;
-  right: -6px;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: #fff;
-  border: 2px solid #c7d2fe;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--we-history-blue);
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.12);
-}
-
-.webedit-chat-home-pencil svg {
-  display: block;
-}
-
-.webedit-chat-home-title {
-  margin: 0 0 10px;
-  font-size: 23px;
+.webedit-chat-empty-prompt-title {
+  margin: 0 0 12px;
+  font-size: 20px;
   font-weight: 800;
-  line-height: 1.25;
+  line-height: 1.3;
   color: #0f172a;
   letter-spacing: -0.02em;
 }
 
-.webedit-chat-home-lead {
+.webedit-chat-empty-prompt-text {
   margin: 0;
   font-size: 14px;
   line-height: 1.55;
   color: #64748b;
-  max-width: 320px;
-  margin-left: auto;
-  margin-right: auto;
 }
 
-.webedit-chat-home-cards {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.webedit-chat-home-card {
-  border-radius: 16px;
-  padding: 16px 18px;
-  background: rgba(255, 255, 255, 0.88);
-  border: 1px solid rgba(199, 210, 254, 0.55);
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.07);
-}
-
-.webedit-chat-home-card-action {
-  cursor: pointer;
-  transition: transform 0.15s, box-shadow 0.15s;
-}
-
-.webedit-chat-home-card-action:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 12px 24px rgba(91, 33, 182, 0.12);
-}
-
-.webedit-chat-home-card-icon {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  margin-bottom: 10px;
-  color: var(--we-primary);
-}
-
-.webedit-chat-home-card-icon svg {
-  display: block;
-}
-
-.webedit-chat-home-card-title {
-  font-size: 15px;
+.webedit-chat-empty-prompt-text strong {
+  color: #334155;
   font-weight: 700;
-  color: #1e1b4b;
-  margin-bottom: 4px;
-}
-
-.webedit-chat-home-card-text {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.5;
-  color: #64748b;
 }
 
 /* Placeholder for empty chat */
@@ -1421,52 +1343,11 @@
 .webedit-input-row {
   display: grid;
   grid-template-columns: 1fr 44px;
-  grid-template-rows: 44px 44px;
+  grid-template-rows: minmax(64px, auto);
   gap: 8px 10px;
-  align-items: stretch;
+  align-items: end;
 }
 
-.webedit-attachment-preview {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 10px;
-}
-
-.webedit-attachment-preview:empty {
-  display: none;
-}
-
-.webedit-attachment-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border-radius: 12px;
-  background: #eef2ff;
-  border: 1px solid #c7d2fe;
-  font-size: 11px;
-  color: #3730a3;
-}
-
-.webedit-attachment-thumb {
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  object-fit: cover;
-  border: 1px solid #cbd5ff;
-}
-
-.webedit-attachment-remove {
-  border: none;
-  background: transparent;
-  color: #6b7280;
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-}
-
-.webedit-attach-btn,
 .webedit-send-btn {
   border: none;
   border-radius: 12px;
@@ -1474,57 +1355,25 @@
   height: 44px;
   font-size: 18px;
   cursor: pointer;
-  background: #ffffff;
-  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
+  background: var(--we-primary);
+  color: #fff;
+  box-shadow: 0 8px 22px rgba(93, 95, 239, 0.35);
   display: flex;
   align-items: center;
   justify-content: center;
   transition: transform 0.2s, box-shadow 0.2s, background 0.2s;
-}
-
-.webedit-attach-btn {
-  color: #64748b;
-  border: 1px solid rgba(15, 23, 42, 0.06);
-}
-
-.webedit-attach-btn:hover,
-.webedit-send-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
-}
-
-.webedit-send-btn {
-  background: var(--we-primary);
-  color: #fff;
-  box-shadow: 0 8px 22px rgba(93, 95, 239, 0.35);
-}
-
-.webedit-send-btn:hover {
-  background: var(--we-primary-hover);
-}
-
-.webedit-send-btn svg {
-  stroke: currentColor;
-}
-
-/* Put Send above Attach, and let the textarea span the full height */
-.webedit-send-btn {
   grid-column: 2;
   grid-row: 1;
 }
 
-.webedit-attach-btn {
-  grid-column: 2;
-  grid-row: 2;
+.webedit-send-btn:hover {
+  transform: translateY(-1px);
+  background: var(--we-primary-hover);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
 }
 
-.webedit-chat-input {
-  grid-column: 1;
-  grid-row: 1 / span 2;
-}
-
-.webedit-file-input {
-  display: none;
+.webedit-send-btn svg {
+  stroke: currentColor;
 }
 
 .webedit-input-container.focused {
@@ -1532,6 +1381,8 @@
 }
 
 .webedit-chat-input {
+  grid-column: 1;
+  grid-row: 1;
   flex: 1;
   width: 100%;
   border: 1px solid #cbd5ff;
@@ -1814,30 +1665,6 @@
   font-size: 18px;
   font-weight: 300;
   line-height: 1;
-}
-
-.webedit-sidebar-pro-card {
-  margin: 12px 16px 8px;
-  padding: 12px 14px;
-  border-radius: 14px;
-  background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%);
-  border: 1px solid #ddd6fe;
-}
-
-.webedit-sidebar-pro-label {
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--we-primary);
-  margin-bottom: 6px;
-}
-
-.webedit-sidebar-pro-copy {
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.45;
-  color: #4c1d95;
 }
 
 .webedit-history-sidebar-nav {

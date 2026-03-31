@@ -33,7 +33,6 @@
   bottomNav:       document.getElementById('webedit-bottom-nav'),
   sidebarNavNewChat: document.getElementById('webedit-sidebar-nav-new-chat'),
   sidebarNavRecentEdits: document.getElementById('webedit-sidebar-nav-recent-edits'),
-  sidebarNavTemplates: document.getElementById('webedit-sidebar-nav-templates'),
   sidebarNavSettings: document.getElementById('webedit-sidebar-nav-settings'),
   newChatBtn:      document.getElementById('webedit-new-chat-btn'),
   mainContent:     document.getElementById('webedit-main-content'),
@@ -221,7 +220,7 @@ function updateSidebarNavActive() {
   if (els.sidebarNavRecentEdits) {
     els.sidebarNavRecentEdits.classList.toggle('is-active', currentPanelMode === 'history');
   }
-  [els.sidebarNavNewChat, els.sidebarNavTemplates, els.sidebarNavSettings].forEach(function (el) {
+  [els.sidebarNavNewChat, els.sidebarNavSettings].forEach(function (el) {
     if (el) el.classList.remove('is-active');
   });
 }
@@ -1305,10 +1304,6 @@ function registerEventListeners() {
     toggleHistorySidebar(false);
   });
 
-  els.sidebarNavTemplates?.addEventListener('click', function () {
-    /* intentional no-op */
-  });
-
   els.sidebarNavSettings?.addEventListener('click', function (e) {
     e.preventDefault();
     e.stopPropagation();
@@ -1368,19 +1363,6 @@ function registerEventListeners() {
       e.preventDefault();
       handleSend();
     }
-  });
-
-  els.chatHome?.addEventListener('click', function (e) {
-    if (!e.target.closest('[data-home-action="recent-edits"]')) return;
-    setPanelMode('history');
-    toggleHistorySidebar(false);
-  });
-  els.chatHome?.addEventListener('keydown', function (e) {
-    if (e.key !== 'Enter' && e.key !== ' ') return;
-    if (!e.target.closest('[data-home-action="recent-edits"]')) return;
-    e.preventDefault();
-    setPanelMode('history');
-    toggleHistorySidebar(false);
   });
 
   els.editHistoryView?.addEventListener('click', function (e) {
