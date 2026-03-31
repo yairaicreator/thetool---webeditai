@@ -1,6 +1,7 @@
 'use strict';
 
 importScripts('supabaseClient.js');
+importScripts('elementLabels.js');
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 0: Feature Module Registry (must load before feature importScripts)
@@ -274,31 +275,14 @@ function normalizePreviewToken(token, fallback) {
   return fallback;
 }
 
-function getDefaultSummary(category, selector) {
-  const shortSelector = String(selector || '').trim();
-  if (category === 'remove') return shortSelector ? 'Hidden element' : 'Removed item';
-  if (category === 'add') return shortSelector ? 'Added feature' : 'New feature';
-  return shortSelector ? 'Styled element' : 'Customized item';
-}
-
-function getDefaultDescription(category, selector) {
-  const target = String(selector || '').trim() || 'the selected element';
-  if (category === 'remove') {
-    return 'This edit hides ' + target + ' from the page layout.';
-  }
-  if (category === 'add') {
-    return 'This edit adds new content or functionality near ' + target + '.';
-  }
-  return 'This edit changes the visual appearance of ' + target + '.';
-}
-
 function buildHistoryMetadata(editData) {
   const payload = isPlainObject(editData?.payload) ? editData.payload : {};
   const category = getCategoryFromAction(editData?.action, payload);
-  const summary = String(payload.summary || payload.title || payload.label || '').trim()
-    || getDefaultSummary(category, editData?.selector);
+  const fromPayload = String(payload.summary || payload.title || payload.label || '').trim();
+  const derivedLabel = fromPayload || selectorToHumanLabel(editData?.selector);
+  const summary = fromPayload || getDefaultSummary(category, derivedLabel);
   const description = String(payload.description || payload.details || payload.prompt || '').trim()
-    || getDefaultDescription(category, editData?.selector);
+    || getDefaultDescription(category, derivedLabel);
 
   return {
     historyCategory: category,
@@ -399,6 +383,9 @@ function rowToHistoryEntry(row) {
     getDefaultPreview(category, 'after')
   );
 
+  const fromRow = String(row.name || payload.summary || '').trim();
+  const derivedEl = fromRow || selectorToHumanLabel(selector);
+
   return {
     id: row.id,
     pageKey,
@@ -409,8 +396,8 @@ function rowToHistoryEntry(row) {
     siteOrigin: website.origin || '',
     selector,
     category,
-    summary: String(row.name || payload.summary || '').trim() || getDefaultSummary(category, selector),
-    description: String(row.description || payload.description || '').trim() || getDefaultDescription(category, selector),
+    summary: fromRow || getDefaultSummary(category, derivedEl),
+    description: String(row.description || payload.description || '').trim() || getDefaultDescription(category, derivedEl),
     isActive: row.status === 'active',
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
@@ -528,7 +515,7 @@ async function ensureWebsiteRow(auth, url) {
       full_url: normalizedUrl,
       origin: origin,
       path: path,
-      title: parsed.hostname || normalizedUrl,
+      title: hostnameToFriendlySiteName(parsed.hostname) || parsed.hostname || normalizedUrl,
     }),
   });
 
@@ -1132,6 +1119,16 @@ function resetState() {
   }).catch(() => {});
 }
 
+function notifyFlowCancelled(feature) {
+  if (!feature) return;
+  const map = { remove: 'Remove', customize: 'Customize', add: 'Add' };
+  const name = map[feature] || 'That action';
+  chrome.runtime.sendMessage({
+    type: 'WEBEDIT_FLOW_CANCELLED',
+    text: name + ' was cancelled. You can start again anytime.',
+  }).catch(() => {});
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 6: Strict Data Validation
 // Rejects messages missing required fields before they reach any handler.
@@ -1617,12 +1614,14 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
               pickedLedger[pickedUrl] = {};
             }
             const pickedEditId = generateEditId();
+            const pickedHuman = String(message.humanLabel || '').trim();
+            const pickedSummary = pickedHuman || selectorToHumanLabel(pickedSelector);
             const pickedEditData = {
               pageKey: pickedUrl,
               action: activeFeature,
               selector: pickedSelector,
               status: 'active',
-              payload: { selector: pickedSelector },
+              payload: { selector: pickedSelector, summary: pickedSummary },
               createdAt: Date.now(),
             };
             pickedLedger[pickedUrl][pickedEditId] = pickedEditData;
@@ -1640,7 +1639,8 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
               feature: activeFeature,
               selector: pickedSelector,
               url: pickedUrl,
-              editId: finalPickedId
+              editId: finalPickedId,
+              summary: pickedSummary,
             }).catch(() => {});
 
             resetState();
@@ -1686,13 +1686,16 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
           break;
         }
 
-        case 'CUSTOMIZE_CANCEL':
+        case 'CUSTOMIZE_CANCEL': {
+          const cancelledCustomize = brainState.activeFlow?.feature || 'customize';
           if (brainState.lockedTabId) {
             dispatchToTab(brainState.lockedTabId, { type: 'CLEAR_PREVIEW_CSS' });
           }
           resetState();
+          notifyFlowCancelled(cancelledCustomize);
           response = { success: true, state: 'IDLE' };
           break;
+        }
 
         case 'ADD_APPLY': {
           if (brainState.activeFlow?.feature !== 'add') {
@@ -1713,11 +1716,14 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
           const addCancelHandler = getFeatureHandler('add', 'onCancel');
           if (addCancelHandler) { addCancelHandler(); }
           else { resetState(); }
+          notifyFlowCancelled('add');
           response = { success: true, state: 'IDLE' };
           break;
         }
 
-        case 'CANCEL_FLOW':
+        case 'CANCEL_FLOW': {
+          const cancelFeature = brainState.activeFlow?.feature;
+          const wasBusy = brainState.current !== BRAIN_STATES.IDLE;
           if (brainState.lockedTabId) {
             if (brainState.activeFlow?.feature === 'add') {
               dispatchToTab(brainState.lockedTabId, { type: 'CLOSE_PREVIEW' });
@@ -1727,8 +1733,12 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
             dispatchToTab(brainState.lockedTabId, { type: 'STOP_PICK_MODE' });
           }
           resetState();
+          if (wasBusy && cancelFeature) {
+            notifyFlowCancelled(cancelFeature);
+          }
           response = { success: true, state: 'IDLE' };
           break;
+        }
 
         case 'ARM_REVISE_ADD':
           response = await handleArmReviseAdd(message, callerTabId);

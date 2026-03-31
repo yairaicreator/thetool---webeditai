@@ -444,6 +444,123 @@
     return parts.join(' > ');
   }
 
+  function clampPickLabel(s, max) {
+    s = String(s || '').trim().replace(/\s+/g, ' ');
+    if (!s) return '';
+    if (s.length <= max) return s;
+    return s.substring(0, Math.max(0, max - 1)) + '…';
+  }
+
+  function labelFromInteractiveAncestors(el) {
+    var cur = el;
+    for (var d = 0; d < 8 && cur; d++) {
+      if (cur.getAttribute) {
+        var a = (cur.getAttribute('aria-label') || '').trim();
+        if (a) return clampPickLabel(a, 70);
+        var t = (cur.getAttribute('title') || '').trim();
+        if (t && t.length < 100) return clampPickLabel(t, 70);
+      }
+      var tn = cur.tagName ? cur.tagName.toLowerCase() : '';
+      if (tn === 'button' || tn === 'a' || (cur.getAttribute && cur.getAttribute('role') === 'button')) {
+        var it = clampPickLabel((cur.innerText || '').trim().replace(/\s+/g, ' '), 60);
+        if (it) return it;
+      }
+      cur = cur.parentElement;
+    }
+    return '';
+  }
+
+  function deriveHumanLabelForPickTarget(target) {
+    if (!target || !(target instanceof Element)) return 'Element';
+
+    var tag = target.tagName ? target.tagName.toLowerCase() : '';
+
+    if (tag === 'input' || tag === 'textarea') {
+      var val = (target.value && String(target.value).trim()) || '';
+      if (val) return clampPickLabel(val, 50);
+      var ph = (target.getAttribute('placeholder') || '').trim();
+      if (ph) return 'Input (“' + clampPickLabel(ph, 40) + '”)';
+      var typ = (target.getAttribute('type') || 'text').toLowerCase();
+      return 'Input (' + typ + ')';
+    }
+
+    if (tag === 'img') {
+      var alt = (target.getAttribute('alt') || '').trim();
+      if (alt) return 'Image: ' + clampPickLabel(alt, 50);
+      return 'Image';
+    }
+
+    var fromDirect = (target.getAttribute('aria-label') || '').trim()
+      || (target.getAttribute('alt') || '').trim()
+      || (target.getAttribute('title') || '').trim();
+    if (fromDirect) return clampPickLabel(fromDirect, 70);
+
+    var tid = (target.getAttribute('data-testid') || target.getAttribute('data-label') || '').trim();
+    if (tid) {
+      var pretty = tid.replace(/[-_]/g, ' ');
+      return clampPickLabel(pretty.charAt(0).toUpperCase() + pretty.slice(1), 60);
+    }
+
+    var labelledBy = target.getAttribute('aria-labelledby');
+    if (labelledBy && document.getElementById) {
+      var ids = labelledBy.split(/\s+/).filter(Boolean);
+      var chunks = [];
+      for (var i = 0; i < ids.length; i++) {
+        var node = document.getElementById(ids[i]);
+        if (node && node.textContent) chunks.push(node.textContent.trim());
+      }
+      var merged = clampPickLabel(chunks.join(' ').replace(/\s+/g, ' '), 70);
+      if (merged) return merged;
+    }
+
+    var role = (target.getAttribute('role') || '').toLowerCase();
+    var inner = clampPickLabel((target.innerText || '').trim().replace(/\s+/g, ' '), 100);
+
+    if (inner) {
+      if (inner.length <= 60) return inner;
+      var fromBtn = labelFromInteractiveAncestors(target);
+      if (fromBtn) return fromBtn;
+      return inner.substring(0, 57) + '…';
+    }
+
+    var svgRoot = tag === 'svg' ? target : (target.closest ? target.closest('svg') : null);
+    if (svgRoot) {
+      var titleEl = svgRoot.querySelector && svgRoot.querySelector('title');
+      var st = titleEl && titleEl.textContent ? titleEl.textContent.trim() : '';
+      if (st) return clampPickLabel(st, 60);
+      var btn = target.closest && target.closest('button, a, [role="button"]');
+      if (btn) {
+        var bl = (btn.getAttribute('aria-label') || '').trim();
+        if (bl) return clampPickLabel(bl, 70);
+        var bt = clampPickLabel((btn.innerText || '').trim().replace(/\s+/g, ' '), 50);
+        if (bt) return 'Icon: ' + bt;
+      }
+      return 'Icon';
+    }
+
+    var inherited = labelFromInteractiveAncestors(target);
+    if (inherited) return inherited;
+
+    var friendly = {
+      nav: 'Navigation', header: 'Header', footer: 'Footer',
+      aside: 'Sidebar', section: 'Section', main: 'Main content', article: 'Article',
+      button: 'Button', a: 'Link', form: 'Form', ul: 'List', ol: 'List',
+      li: 'List item', table: 'Table', canvas: 'Canvas', select: 'Dropdown',
+      textarea: 'Text field', label: 'Label', h1: 'Heading', h2: 'Heading',
+      h3: 'Heading', h4: 'Heading', h5: 'Heading', h6: 'Heading',
+      p: 'Paragraph', span: 'Text', div: 'Section', iframe: 'Embedded frame',
+      video: 'Video', audio: 'Audio', time: 'Time', figure: 'Figure',
+    };
+    var roleMap = {
+      navigation: 'Navigation', banner: 'Header', contentinfo: 'Footer',
+      menu: 'Menu', menubar: 'Menu bar', tablist: 'Tabs', dialog: 'Dialog',
+      search: 'Search', img: 'Image', link: 'Link', button: 'Button',
+    };
+    if (role && roleMap[role]) return roleMap[role];
+
+    return friendly[tag] || (tag ? tag.charAt(0).toUpperCase() + tag.slice(1) : 'Element');
+  }
+
   // ── Pick Mode Activation / Deactivation ──
 
   function handleStartPickMode(message) {
@@ -488,34 +605,7 @@
         return;
       }
 
-      var humanLabel = '';
-      var textContent = (target.textContent || '').trim().replace(/\s+/g, ' ');
-      if (textContent && textContent.length <= 60) {
-        humanLabel = textContent;
-      } else if (textContent && textContent.length > 0) {
-        humanLabel = textContent.substring(0, 57) + '...';
-      }
-      if (!humanLabel) {
-        humanLabel = target.getAttribute('aria-label')
-          || target.getAttribute('alt')
-          || target.getAttribute('title')
-          || target.getAttribute('placeholder')
-          || '';
-      }
-      if (!humanLabel) {
-        var tag = target.tagName.toLowerCase();
-        var friendly = {
-          nav: 'a navigation bar', header: 'the page header', footer: 'the page footer',
-          img: 'an image', button: 'a button', a: 'a link', input: 'an input field',
-          aside: 'a sidebar', section: 'a section', iframe: 'an embedded frame', video: 'a video',
-          audio: 'an audio player', form: 'a form', ul: 'a list', ol: 'a list',
-          table: 'a table', svg: 'an icon', canvas: 'a canvas', select: 'a dropdown',
-          textarea: 'a text area', label: 'a label', h1: 'a heading', h2: 'a heading',
-          h3: 'a heading', h4: 'a heading', h5: 'a heading', h6: 'a heading',
-          p: 'a paragraph', span: 'a text element', div: 'a section on the page'
-        };
-        humanLabel = friendly[tag] || ('a ' + tag + ' element');
-      }
+      var humanLabel = deriveHumanLabelForPickTarget(target);
 
       var htmlContext = '';
       if (pickModeFeature === 'add') {

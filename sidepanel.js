@@ -342,14 +342,7 @@ function formatRelativeTime(value) {
   return formatHistoryDate(value);
 }
 
-function getHostnameUpper(pageKey) {
-  if (!pageKey) return 'SITE';
-  try {
-    return new URL(pageKey).hostname.replace(/^www\./i, '').toUpperCase();
-  } catch (_) {
-    return 'SITE';
-  }
-}
+// siteTabDisplayName, pageKeyToFriendlySiteName — elementLabels.js (loaded before this file)
 
 function editsForSite(site) {
   const out = [];
@@ -533,9 +526,9 @@ function renderCategoryIconMarkup(categoryKey) {
 }
 
 function renderSingleEditHistoryCard(edit, categoryKey) {
-  const host = getHostnameUpper(edit.pageKey);
+  const siteName = pageKeyToFriendlySiteName(edit.pageKey);
   const rel = formatRelativeTime(edit.updatedAt || edit.createdAt);
-  const meta = rel ? host + ' • ' + rel : host;
+  const meta = rel ? siteName + ' • ' + rel : siteName;
   let html = '<article class="webedit-edit-history-card webedit-edit-history-card-v2">';
   html += '<div class="webedit-edit-history-card-topline">';
   html += renderCategoryIconMarkup(categoryKey);
@@ -633,7 +626,7 @@ function renderEditHistoryView() {
   historySites.forEach(function (site) {
     const activeClass = site.pageKey === selectedHistoryPageKey ? ' active' : '';
     const favicon = getFaviconUrl(site.siteOrigin || site.pageKey);
-    const displayTitle = site.hostname || site.siteTitle || 'Site';
+    const displayTitle = siteTabDisplayName(site);
     html += '<button class="webedit-edit-history-site-tab' + activeClass + '" type="button" data-page-key="' + escapeHtml(site.pageKey) + '">';
     if (favicon) {
       html += '<img class="webedit-edit-history-site-favicon" src="' + escapeHtml(favicon) + '" alt="" width="16" height="16">';
@@ -1193,6 +1186,12 @@ chrome.runtime.onMessage.addListener(function (message) {
         closeKeepAlivePort();
         clearPanelRevisionSelection();
         renderPageEditsPicker();
+      }
+      break;
+
+    case 'WEBEDIT_FLOW_CANCELLED':
+      if (message.text) {
+        showNotification(message.text);
       }
       break;
 

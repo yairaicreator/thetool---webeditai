@@ -31,12 +31,13 @@ registerFeature('remove', {
       }
 
       editId = generateEditId();
+      var pickedLabel = String(flow.humanLabel || '').trim() || selectorToHumanLabel(selector);
       var editData = {
         pageKey: url,
         action: 'remove',
         selector: selector,
         status: 'active',
-        payload: { selector: selector },
+        payload: { selector: selector, summary: pickedLabel },
         createdAt: Date.now(),
       };
 
@@ -87,7 +88,7 @@ registerFeature('remove', {
 
       // ── Step 5: Notify Panel ─────────────────────────────────────────────
 
-      var summary = flow.humanLabel || selectorToHumanLabel(selector);
+      var summary = String(flow.humanLabel || '').trim() || selectorToHumanLabel(selector);
 
       chrome.runtime.sendMessage({
         type: 'PICK_COMPLETED',
@@ -121,35 +122,4 @@ registerFeature('remove', {
   }
 });
 
-// ─── Helper: derive a short human-readable label from a CSS selector ────────
-
-function selectorToHumanLabel(selector) {
-  if (!selector) return 'an element';
-
-  if (selector.charAt(0) === '#') {
-    var id = selector.split(/[\s>+~:[\]]/)[0].slice(1);
-    return '"' + id.replace(/[-_]/g, ' ') + '" element';
-  }
-
-  var classMatch = selector.match(/\.([a-zA-Z][\w-]*)/);
-  if (classMatch) {
-    return '"' + classMatch[1].replace(/[-_]/g, ' ') + '" element';
-  }
-
-  var tagMatch = selector.match(/^([a-z][a-z0-9]*)/i);
-  if (tagMatch) {
-    var tag = tagMatch[1].toLowerCase();
-    var friendly = {
-      nav: 'navigation', header: 'header', footer: 'footer',
-      aside: 'sidebar', section: 'section', article: 'article',
-      div: 'div', span: 'span', ul: 'list', ol: 'list',
-      li: 'list item', img: 'image', a: 'link', p: 'paragraph',
-      button: 'button', form: 'form', input: 'input field',
-      table: 'table', iframe: 'iframe'
-    };
-    return (friendly[tag] || tag) + ' element';
-  }
-
-  var short = selector.length > 40 ? selector.substring(0, 37) + '...' : selector;
-  return '"' + short + '"';
-}
+// selectorToHumanLabel is provided by elementLabels.js (imported before this file).

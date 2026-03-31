@@ -19,14 +19,16 @@ registerFeature('customize', {
     var flow = brainState.activeFlow || {};
     var url = flow.url || '';
     var selector = flow.selector || '';
-    var summary = selectorToHumanLabel(selector);
+    var human = String(flow.humanLabel || '').trim();
+    var summary = human || selectorToHumanLabel(selector);
 
-    // Transition to PREVIEWING — the flow stays open for live preview
+    // Transition to PREVIEWING — the flow stays open for live preview (keep humanLabel)
     transitionState(BRAIN_STATES.PREVIEWING, {
       feature: 'customize',
       tabId: brainState.lockedTabId,
       selector: selector,
-      url: url
+      url: url,
+      humanLabel: human || summary,
     });
 
     // Tell the Panel to open the customization dashboard
@@ -48,6 +50,7 @@ registerFeature('customize', {
 
   onApply: async function (message) {
     var flow = brainState.activeFlow || {};
+    var flowHuman = String(flow.humanLabel || '').trim();
     var url = normalizePageKey(message.url || flow.url || '');
     var selector = message.selector || flow.selector || '';
     var styles = message.styles || {};
@@ -85,7 +88,7 @@ registerFeature('customize', {
           payload: {
             selector: selector,
             styles: styles,
-            summary: message.summary || prevPayload.summary || '',
+            summary: String(message.summary || '').trim() || String(prevPayload.summary || '').trim() || flowHuman || selectorToHumanLabel(selector),
             description: message.description || prevPayload.description || ''
           },
           createdAt: existing.createdAt || Date.now(),
@@ -119,6 +122,7 @@ registerFeature('customize', {
         }
       } else {
         editId = generateEditId();
+        var dashSummary = String(message.summary || '').trim();
         editData = {
           pageKey: url,
           action: 'customize',
@@ -127,7 +131,7 @@ registerFeature('customize', {
           payload: {
             selector: selector,
             styles: styles,
-            summary: message.summary || '',
+            summary: dashSummary || flowHuman || selectorToHumanLabel(selector),
             description: message.description || ''
           },
           createdAt: Date.now()
@@ -173,7 +177,7 @@ registerFeature('customize', {
       }
 
       // ── Step 6: Notify Panel ─────────────────────────────────────────────
-      var summary = String(message.summary || '').trim() || selectorToHumanLabel(selector);
+      var summary = String(message.summary || '').trim() || flowHuman || selectorToHumanLabel(selector);
 
       chrome.runtime.sendMessage({
         type: 'PICK_COMPLETED',
@@ -207,6 +211,4 @@ registerFeature('customize', {
   }
 });
 
-// ─── Reuse the same human-label helper as Remove ─────────────────────────────
-// selectorToHumanLabel is defined in remove-brain.js and available globally
-// because importScripts runs synchronously before this file loads.
+// selectorToHumanLabel, getDefaultSummary, etc. come from elementLabels.js.
