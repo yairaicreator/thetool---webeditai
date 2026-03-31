@@ -789,12 +789,17 @@ async function handleResumeCustomizeEdit(message, callerTabId) {
     resumeEditId: editId,
   });
 
+  var initialTextContent = payload.textContent !== undefined && payload.textContent !== null
+    ? String(payload.textContent)
+    : '';
+
   chrome.runtime.sendMessage({
     type: 'CUSTOMIZE_DASHBOARD_OPEN',
     selector: selector,
     summary: summary,
     url: url,
     initialStyles: initialStyles,
+    initialTextContent: initialTextContent,
     resumeEditId: editId,
   }).catch(() => {});
 
@@ -1661,11 +1666,15 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
             break;
           }
           if (brainState.lockedTabId) {
-            dispatchToTab(brainState.lockedTabId, {
+            var previewPayload = {
               type: 'INJECT_PREVIEW_CSS',
               selector: message.selector,
               cssText: message.cssText
-            });
+            };
+            if (Object.prototype.hasOwnProperty.call(message, 'textContent')) {
+              previewPayload.textContent = message.textContent;
+            }
+            dispatchToTab(brainState.lockedTabId, previewPayload);
           }
           response = { success: true };
           break;

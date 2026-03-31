@@ -58,11 +58,21 @@ registerFeature('customize', {
     var resumeEditId = String(message.resumeEditId || flow.resumeEditId || '').trim();
     var editId;
     var syncFailed = false;
+    var originalTextForPayload;
 
     try {
       // ── Step 1: Clear the temporary preview CSS ──────────────────────────
       if (lockedTabId) {
         dispatchToTab(lockedTabId, { type: 'CLEAR_PREVIEW_CSS' }).catch(function () {});
+      }
+
+      if (Object.prototype.hasOwnProperty.call(message, 'textContent') && lockedTabId && selector) {
+        try {
+          var snap = await dispatchToTab(lockedTabId, { type: 'SNAPSHOT_ELEMENT_TEXT', selector: selector });
+          if (snap && typeof snap.originalText === 'string') {
+            originalTextForPayload = snap.originalText;
+          }
+        } catch (_) {}
       }
 
       // ── Step 2: Save to Global Ledger ────────────────────────────────────
@@ -80,17 +90,33 @@ registerFeature('customize', {
         editId = resumeEditId;
         var existing = ledger[url][editId];
         var prevPayload = existing.payload && typeof existing.payload === 'object' ? existing.payload : {};
+        var resumePayload = {
+          selector: selector,
+          styles: styles,
+          summary: String(message.summary || '').trim() || String(prevPayload.summary || '').trim() || flowHuman || selectorToHumanLabel(selector),
+          description: message.description || prevPayload.description || ''
+        };
+        if (Object.prototype.hasOwnProperty.call(message, 'textContent')) {
+          resumePayload.textContent = message.textContent === null || message.textContent === undefined
+            ? ''
+            : String(message.textContent);
+          if (originalTextForPayload !== undefined) {
+            resumePayload.originalTextContent = originalTextForPayload;
+          } else if (prevPayload.originalTextContent !== undefined) {
+            resumePayload.originalTextContent = prevPayload.originalTextContent;
+          }
+        } else {
+          if (prevPayload.textContent !== undefined) resumePayload.textContent = prevPayload.textContent;
+          if (prevPayload.originalTextContent !== undefined) {
+            resumePayload.originalTextContent = prevPayload.originalTextContent;
+          }
+        }
         editData = {
           pageKey: url,
           action: 'customize',
           selector: selector,
           status: existing.status || 'active',
-          payload: {
-            selector: selector,
-            styles: styles,
-            summary: String(message.summary || '').trim() || String(prevPayload.summary || '').trim() || flowHuman || selectorToHumanLabel(selector),
-            description: message.description || prevPayload.description || ''
-          },
+          payload: resumePayload,
           createdAt: existing.createdAt || Date.now(),
           updatedAt: Date.now()
         };
@@ -123,17 +149,26 @@ registerFeature('customize', {
       } else {
         editId = generateEditId();
         var dashSummary = String(message.summary || '').trim();
+        var newPayload = {
+          selector: selector,
+          styles: styles,
+          summary: dashSummary || flowHuman || selectorToHumanLabel(selector),
+          description: message.description || ''
+        };
+        if (Object.prototype.hasOwnProperty.call(message, 'textContent')) {
+          newPayload.textContent = message.textContent === null || message.textContent === undefined
+            ? ''
+            : String(message.textContent);
+          if (originalTextForPayload !== undefined) {
+            newPayload.originalTextContent = originalTextForPayload;
+          }
+        }
         editData = {
           pageKey: url,
           action: 'customize',
           selector: selector,
           status: 'active',
-          payload: {
-            selector: selector,
-            styles: styles,
-            summary: dashSummary || flowHuman || selectorToHumanLabel(selector),
-            description: message.description || ''
-          },
+          payload: newPayload,
           createdAt: Date.now()
         };
 

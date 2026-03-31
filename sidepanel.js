@@ -1217,6 +1217,7 @@ chrome.runtime.onMessage.addListener(function (message) {
       if (window.WebEditPanel && typeof window.WebEditPanel.openCustomizeDashboard === 'function') {
         window.WebEditPanel.openCustomizeDashboard(message.selector, message.summary, message.url, {
           initialStyles: message.initialStyles || {},
+          initialTextContent: message.initialTextContent != null ? String(message.initialTextContent) : '',
           resumeEditId: message.resumeEditId || null
         });
       }

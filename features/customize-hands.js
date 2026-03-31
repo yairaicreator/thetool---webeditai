@@ -2,21 +2,15 @@
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Customize Feature — Hands Module
-// Runs in the content-script world alongside contentScript.js.
-// Handles the selection highlight on the element being customized and manages
-// the temporary preview <style> tag for live CSS preview.
-// The dashboard UI lives in the Panel zone (customize-panel.js).
+// Selection highlight only. Preview <style> and text live in contentScript.js
+// to avoid duplicate listeners and to use the observer pause/resume path.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 (function () {
 
-  var PREVIEW_STYLE_ID = 'webedit-preview-style';
-  var highlightedSelector = null;
-
   function addSelectionHighlight(selector) {
     removeSelectionHighlight();
     if (!selector) return;
-    highlightedSelector = selector;
     try {
       var els = document.querySelectorAll(selector);
       for (var i = 0; i < els.length; i++) {
@@ -30,26 +24,6 @@
     for (var i = 0; i < highlighted.length; i++) {
       highlighted[i].classList.remove('webedit-customize-selected');
     }
-    highlightedSelector = null;
-  }
-
-  function injectPreviewCss(cssText) {
-    var style = document.getElementById(PREVIEW_STYLE_ID);
-    if (!style) {
-      style = document.createElement('style');
-      style.id = PREVIEW_STYLE_ID;
-      style.setAttribute('data-webedit-id', 'preview');
-      (document.head || document.documentElement).appendChild(style);
-    }
-    style.textContent = cssText || '';
-  }
-
-  function clearPreviewCss() {
-    var style = document.getElementById(PREVIEW_STYLE_ID);
-    if (style) {
-      style.remove();
-    }
-    removeSelectionHighlight();
   }
 
   chrome.runtime.onMessage.addListener(function (message, _sender, sendResponse) {
@@ -67,7 +41,6 @@
         break;
 
       case 'INJECT_PREVIEW_CSS':
-        injectPreviewCss(message.cssText);
         if (message.selector) {
           addSelectionHighlight(message.selector);
         }
@@ -75,7 +48,7 @@
         return true;
 
       case 'CLEAR_PREVIEW_CSS':
-        clearPreviewCss();
+        removeSelectionHighlight();
         sendResponse({ success: true });
         return true;
     }

@@ -13,6 +13,9 @@
   var pickModeFeature = null;
   var pickModePhase = 'primary';
 
+  /** Live preview text: restore original on CLEAR or empty preview value */
+  var previewTextSession = null;
+
   // ═══════════════════════════════════════════════════════════════════════════════
   // SECTION 2: Constants
   // ═══════════════════════════════════════════════════════════════════════════════
@@ -190,6 +193,68 @@
     style.textContent = cssText;
   }
 
+  function applyCommittedCustomizeText(selector, text) {
+    if (!selector) return;
+    try {
+      var el = document.querySelector(selector);
+      if (el) el.textContent = text;
+    } catch (_) {}
+  }
+
+  function restoreCustomizeElementText(selector, originalText) {
+    if (!selector) return;
+    try {
+      var el = document.querySelector(selector);
+      if (el) el.textContent = originalText === undefined || originalText === null ? '' : String(originalText);
+    } catch (_) {}
+  }
+
+  function applyCustomizeBlueprint(editId, edit) {
+    var payload = getBlueprintPayload(edit);
+    var cssText = buildCssText(edit, payload, 'customize');
+    if (cssText) {
+      applyStyleBlueprint(editId, edit, CUSTOM_STYLE_ID_PREFIX, 'customize');
+    } else {
+      var sid = CUSTOM_STYLE_ID_PREFIX + editId;
+      var orphan = document.getElementById(sid);
+      if (orphan) orphan.remove();
+    }
+    if (payload.textContent !== undefined && payload.textContent !== null && edit.selector) {
+      applyCommittedCustomizeText(edit.selector, String(payload.textContent));
+    }
+  }
+
+  function handlePreviewText(message) {
+    var sel = message.selector || '';
+    if (!sel || !Object.prototype.hasOwnProperty.call(message, 'textContent')) return;
+    var textVal = message.textContent;
+    try {
+      var el = document.querySelector(sel);
+      if (!el) return;
+      if (!previewTextSession || previewTextSession.selector !== sel) {
+        previewTextSession = { selector: sel, original: el.textContent };
+      }
+      if (textVal === '' || textVal === null) {
+        if (previewTextSession.original !== null && previewTextSession.original !== undefined) {
+          el.textContent = previewTextSession.original;
+        }
+        return;
+      }
+      el.textContent = String(textVal);
+    } catch (_) {}
+  }
+
+  function clearPreviewText() {
+    if (!previewTextSession) return;
+    try {
+      var el = document.querySelector(previewTextSession.selector);
+      if (el && previewTextSession.original !== null && previewTextSession.original !== undefined) {
+        el.textContent = previewTextSession.original;
+      }
+    } catch (_) {}
+    previewTextSession = null;
+  }
+
   function insertContainerAtTarget(container, target, position) {
     if (!target) {
       (document.body || document.documentElement).appendChild(container);
@@ -292,7 +357,7 @@
         }
 
         if (category === 'customize') {
-          applyStyleBlueprint(editId, edit, CUSTOM_STYLE_ID_PREFIX, 'customize');
+          applyCustomizeBlueprint(editId, edit);
           continue;
         }
 
@@ -666,7 +731,19 @@
   }
 
   function handleExecuteBlueprint(blueprints) {
-    activeBlueprints = blueprints || {};
+    var prev = activeBlueprints;
+    var next = blueprints || {};
+    var removedIds = Object.keys(prev).filter(function (id) { return !next[id]; });
+    for (var r = 0; r < removedIds.length; r++) {
+      var oldEdit = prev[removedIds[r]];
+      if (getBlueprintCategory(oldEdit) === 'customize') {
+        var pl = getBlueprintPayload(oldEdit);
+        if (pl && Object.prototype.hasOwnProperty.call(pl, 'originalTextContent') && oldEdit.selector) {
+          restoreCustomizeElementText(oldEdit.selector, pl.originalTextContent);
+        }
+      }
+    }
+    activeBlueprints = next;
     headWipeCount = {};
     applyAllBlueprints();
   }
@@ -708,16 +785,18 @@
             (document.head || document.documentElement).appendChild(previewStyle);
           }
           previewStyle.textContent = message.cssText || '';
+          handlePreviewText(message);
         } finally {
           resumeObserver();
         }
         sendResponse({ success: true });
-    return true;
-  }
+        return true;
+      }
 
       case 'CLEAR_PREVIEW_CSS': {
         pauseObserver();
         try {
+          clearPreviewText();
           var previewEl = document.getElementById('webedit-preview-style');
           if (previewEl) {
             previewEl.remove();
@@ -726,7 +805,19 @@
           resumeObserver();
         }
         sendResponse({ success: true });
-      return true;
+        return true;
+      }
+
+      case 'SNAPSHOT_ELEMENT_TEXT': {
+        var out = { originalText: '' };
+        try {
+          if (message.selector) {
+            var snapEl = document.querySelector(message.selector);
+            if (snapEl) out.originalText = snapEl.textContent;
+          }
+        } catch (_) {}
+        sendResponse(out);
+        return true;
       }
 
     }
