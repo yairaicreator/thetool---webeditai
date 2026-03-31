@@ -21,6 +21,8 @@
   var decorationHist = null;
   var alignHist = null;
   var visibilityHist = null;
+  var colorPickerSyncers = [];
+  var textPreviousValue = '';
 
   function notify(text) {
     if (window.WebEditPanel && typeof window.WebEditPanel.showNotification === 'function') {
@@ -156,6 +158,443 @@
     });
   }
 
+  function bindHistPointerDown(el, hist) {
+    if (!el || !hist) return;
+    el.addEventListener('pointerdown', function () {
+      hist.beforeChange();
+    });
+  }
+
+  function tryCssColorToHex(val) {
+    if (val === undefined || val === null || val === '') return null;
+    var t = String(val).trim();
+    if (/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(t)) return hexToInput(t);
+    var m = t.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+    if (m) {
+      return rgbToHex(parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10));
+    }
+    return null;
+  }
+
+  function rgbToHexPart(n) {
+    var h = Math.round(Math.max(0, Math.min(255, n))).toString(16);
+    return h.length === 1 ? '0' + h : h;
+  }
+
+  function rgbToHex(r, g, b) {
+    return '#' + rgbToHexPart(r) + rgbToHexPart(g) + rgbToHexPart(b);
+  }
+
+  function hexToRgb(hex) {
+    var h = hexToInput(hex).slice(1);
+    return {
+      r: parseInt(h.slice(0, 2), 16),
+      g: parseInt(h.slice(2, 4), 16),
+      b: parseInt(h.slice(4, 6), 16)
+    };
+  }
+
+  function rgbToHsv(r, g, b) {
+    r /= 255;
+    g /= 255;
+    b /= 255;
+    var max = Math.max(r, g, b);
+    var min = Math.min(r, g, b);
+    var d = max - min;
+    var hh = 0;
+    if (d !== 0) {
+      if (max === r) hh = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+      else if (max === g) hh = ((b - r) / d + 2) / 6;
+      else hh = ((r - g) / d + 4) / 6;
+    }
+    hh *= 360;
+    var s = max === 0 ? 0 : d / max;
+    var v = max;
+    return { h: hh, s: s, v: v };
+  }
+
+  function hsvToRgb(hh, s, v) {
+    hh = ((hh % 360) + 360) % 360;
+    var c = v * s;
+    var x = c * (1 - Math.abs(((hh / 60) % 2) - 1));
+    var m = v - c;
+    var rp = 0;
+    var gp = 0;
+    var bp = 0;
+    if (hh < 60) {
+      rp = c;
+      gp = x;
+    } else if (hh < 120) {
+      rp = x;
+      gp = c;
+    } else if (hh < 180) {
+      gp = c;
+      bp = x;
+    } else if (hh < 240) {
+      gp = x;
+      bp = c;
+    } else if (hh < 300) {
+      rp = x;
+      bp = c;
+    } else {
+      rp = c;
+      bp = x;
+    }
+    return {
+      r: Math.round((rp + m) * 255),
+      g: Math.round((gp + m) * 255),
+      b: Math.round((bp + m) * 255)
+    };
+  }
+
+  function syncColorPickersFromStyles() {
+    for (var i = 0; i < colorPickerSyncers.length; i++) {
+      try {
+        colorPickerSyncers[i]();
+      } catch (e) {}
+    }
+  }
+
+  /**
+   * @param {HTMLElement} card
+   * @param {string} keyForHex
+   * @param {{ beforeChange: Function }} hist
+   * @param {string[]} swatches
+   * @param {boolean} borderRing
+   */
+  function mountColorPicker(card, keyForHex, hist, swatches, borderRing) {
+    var hsv = { h: 200, s: 0.6, v: 0.55 };
+    var wrap = document.createElement('div');
+    wrap.className = 'webedit-ee-cpicker';
+    wrap.dataset.webeditCpicker = keyForHex;
+
+    var main = document.createElement('div');
+    main.className = 'webedit-ee-cpicker-main';
+    var preview = document.createElement('div');
+    preview.className = 'webedit-ee-cpicker-preview';
+    preview.setAttribute('aria-hidden', 'true');
+
+    var svOuter = document.createElement('div');
+    svOuter.className = 'webedit-ee-cpicker-sv-outer';
+    var svCanvas = document.createElement('canvas');
+    svCanvas.className = 'webedit-ee-cpicker-sv';
+    svCanvas.width = 200;
+    svCanvas.height = 160;
+    var svCursor = document.createElement('div');
+    svCursor.className = 'webedit-ee-cpicker-sv-cursor';
+    svOuter.appendChild(svCanvas);
+    svOuter.appendChild(svCursor);
+
+    main.appendChild(preview);
+    main.appendChild(svOuter);
+    wrap.appendChild(main);
+
+    var hueOuter = document.createElement('div');
+    hueOuter.className = 'webedit-ee-cpicker-hue-outer';
+    var hueCanvas = document.createElement('canvas');
+    hueCanvas.className = 'webedit-ee-cpicker-hue';
+    hueCanvas.width = 280;
+    hueCanvas.height = 22;
+    var hueThumb = document.createElement('div');
+    hueThumb.className = 'webedit-ee-cpicker-hue-thumb';
+    hueOuter.appendChild(hueCanvas);
+    hueOuter.appendChild(hueThumb);
+    wrap.appendChild(hueOuter);
+
+    function drawHueStrip() {
+      var ctx = hueCanvas.getContext('2d');
+      var w = hueCanvas.width;
+      var h = hueCanvas.height;
+      var img = ctx.createImageData(w, h);
+      var d = img.data;
+      for (var x = 0; x < w; x++) {
+        var hh = (x / (w - 1 || 1)) * 360;
+        var rgb = hsvToRgb(hh, 1, 1);
+        for (var y = 0; y < h; y++) {
+          var i = (y * w + x) * 4;
+          d[i] = rgb.r;
+          d[i + 1] = rgb.g;
+          d[i + 2] = rgb.b;
+          d[i + 3] = 255;
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+    }
+
+    function drawSV() {
+      var ctx = svCanvas.getContext('2d');
+      var w = svCanvas.width;
+      var h = svCanvas.height;
+      var img = ctx.createImageData(w, h);
+      var d = img.data;
+      var hh = hsv.h;
+      for (var y = 0; y < h; y++) {
+        var vv = 1 - y / (h - 1 || 1);
+        for (var x = 0; x < w; x++) {
+          var ss = x / (w - 1 || 1);
+          var rgb = hsvToRgb(hh, ss, vv);
+          var i = (y * w + x) * 4;
+          d[i] = rgb.r;
+          d[i + 1] = rgb.g;
+          d[i + 2] = rgb.b;
+          d[i + 3] = 255;
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+    }
+
+    function positionSVCursor() {
+      svCursor.style.left = (hsv.s * 100) + '%';
+      svCursor.style.top = ((1 - hsv.v) * 100) + '%';
+    }
+
+    function positionHueThumb() {
+      hueThumb.style.left = (hsv.h / 360 * 100) + '%';
+      var th = hsvToRgb(hsv.h, 1, 1);
+      hueThumb.style.background = rgbToHex(th.r, th.g, th.b);
+    }
+
+    function updatePreviewFromHSV() {
+      var rgb = hsvToRgb(hsv.h, hsv.s, hsv.v);
+      var hx = rgbToHex(rgb.r, rgb.g, rgb.b);
+      preview.classList.remove('webedit-ee-cpicker-preview-empty');
+      preview.style.background = hx;
+    }
+
+    function applyFromHSV(skipHist) {
+      if (!skipHist) hist.beforeChange();
+      var rgb = hsvToRgb(hsv.h, hsv.s, hsv.v);
+      var hx = rgbToHex(rgb.r, rgb.g, rgb.b);
+      collectedStyles[keyForHex] = hx;
+      hexInput.value = hx;
+      updatePreviewFromHSV();
+      schedulePreview();
+    }
+
+    drawHueStrip();
+
+    var hexRow = document.createElement('div');
+    hexRow.className = 'webedit-ee-cpicker-hex-row';
+    var hexLab = document.createElement('span');
+    hexLab.className = 'webedit-ee-hex-lab';
+    hexLab.textContent = 'HEX';
+    var hexInput = document.createElement('input');
+    hexInput.type = 'text';
+    hexInput.className = 'webedit-ee-hex-input webedit-ee-cpicker-hex-input';
+    hexInput.placeholder = '#000000';
+    hexInput.dataset.styleKey = keyForHex;
+    hexInput.addEventListener('change', function () {
+      var raw = hexInput.value.trim();
+      if (/^#[0-9a-f]{3}$/i.test(raw) || /^#[0-9a-f]{6}$/i.test(raw)) {
+        hist.beforeChange();
+        var norm = hexToInput(raw);
+        collectedStyles[keyForHex] = norm;
+        var rgb = hexToRgb(norm);
+        var o = rgbToHsv(rgb.r, rgb.g, rgb.b);
+        hsv.h = o.h;
+        hsv.s = o.s;
+        hsv.v = o.v;
+        hexInput.value = norm;
+        drawSV();
+        positionSVCursor();
+        positionHueThumb();
+        updatePreviewFromHSV();
+        schedulePreview();
+      }
+    });
+
+    var copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'webedit-ee-cpicker-copy';
+    copyBtn.setAttribute('aria-label', 'Copy hex');
+    copyBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+    copyBtn.addEventListener('click', function () {
+      var t = hexInput.value.trim();
+      if (!/^#[0-9a-f]{3,6}$/i.test(t)) return;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(hexToInput(t)).catch(function () {
+          notify('Could not copy');
+        });
+      } else {
+        notify('Could not copy');
+      }
+    });
+
+    var clearBtn = document.createElement('button');
+    clearBtn.type = 'button';
+    clearBtn.className = 'webedit-ee-cpicker-clear';
+    clearBtn.textContent = 'Clear';
+    clearBtn.addEventListener('click', function () {
+      hist.beforeChange();
+      delete collectedStyles[keyForHex];
+      hexInput.value = '';
+      preview.classList.add('webedit-ee-cpicker-preview-empty');
+      preview.style.background = '';
+      schedulePreview();
+      updateBorderStatusIfAny();
+    });
+
+    var eye = document.createElement('button');
+    eye.type = 'button';
+    eye.className = 'webedit-ee-eyedropper';
+    eye.setAttribute('aria-label', 'Pick color');
+    eye.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/><circle cx="12" cy="12" r="3"/></svg>';
+    attachEyedropper(eye, function (hex) {
+      hist.beforeChange();
+      var norm = hexToInput(hex);
+      collectedStyles[keyForHex] = norm;
+      var rgb = hexToRgb(norm);
+      var o = rgbToHsv(rgb.r, rgb.g, rgb.b);
+      hsv.h = o.h;
+      hsv.s = o.s;
+      hsv.v = o.v;
+      hexInput.value = norm;
+      drawSV();
+      positionSVCursor();
+      positionHueThumb();
+      updatePreviewFromHSV();
+      schedulePreview();
+      updateBorderStatusIfAny();
+    });
+
+    hexRow.appendChild(hexLab);
+    hexRow.appendChild(hexInput);
+    hexRow.appendChild(copyBtn);
+    hexRow.appendChild(clearBtn);
+    hexRow.appendChild(eye);
+    wrap.appendChild(hexRow);
+
+    function updateBorderStatusIfAny() {
+      if (typeof window._webeditUpdateBorderStatus === 'function') {
+        window._webeditUpdateBorderStatus();
+      }
+    }
+
+    var sw = document.createElement('div');
+    sw.className = 'webedit-ee-swatches';
+    swatches.forEach(function (c) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'webedit-ee-swatch' + (c === '' ? ' webedit-ee-swatch-none' : '');
+      if (c === '') {
+        b.innerHTML = '<span class="webedit-ee-swatch-slash"></span>';
+      } else {
+        b.style.background = c;
+        if (borderRing) b.style.boxShadow = 'inset 0 0 0 2px ' + c;
+      }
+      b.addEventListener('click', function () {
+        hist.beforeChange();
+        if (c === '') {
+          delete collectedStyles[keyForHex];
+          hexInput.value = '';
+          preview.classList.add('webedit-ee-cpicker-preview-empty');
+          preview.style.background = '';
+        } else {
+          var norm = hexToInput(c);
+          collectedStyles[keyForHex] = norm;
+          var rgb = hexToRgb(norm);
+          var o = rgbToHsv(rgb.r, rgb.g, rgb.b);
+          hsv.h = o.h;
+          hsv.s = o.s;
+          hsv.v = o.v;
+          hexInput.value = norm;
+          drawSV();
+          positionSVCursor();
+          positionHueThumb();
+          updatePreviewFromHSV();
+        }
+        schedulePreview();
+        updateBorderStatusIfAny();
+      });
+      sw.appendChild(b);
+    });
+    wrap.appendChild(sw);
+
+    function syncFromCollected() {
+      var hx = tryCssColorToHex(collectedStyles[keyForHex]);
+      if (!hx) {
+        hexInput.value = '';
+        preview.classList.add('webedit-ee-cpicker-preview-empty');
+        preview.style.background = '';
+        drawSV();
+        positionSVCursor();
+        positionHueThumb();
+        return;
+      }
+      hexInput.value = hx;
+      var rgb = hexToRgb(hx);
+      var o = rgbToHsv(rgb.r, rgb.g, rgb.b);
+      hsv.h = o.h;
+      hsv.s = o.s;
+      hsv.v = o.v;
+      drawSV();
+      positionSVCursor();
+      positionHueThumb();
+      updatePreviewFromHSV();
+    }
+
+    function onHuePointer(ev) {
+      var rect = hueOuter.getBoundingClientRect();
+      var x = Math.max(0, Math.min(rect.width, ev.clientX - rect.left));
+      hsv.h = (x / (rect.width || 1)) * 360;
+      positionHueThumb();
+      drawSV();
+      applyFromHSV(true);
+      updateBorderStatusIfAny();
+    }
+
+    hueOuter.addEventListener('pointerdown', function (ev) {
+      hist.beforeChange();
+      hueOuter.setPointerCapture(ev.pointerId);
+      onHuePointer(ev);
+      function move(e) {
+        onHuePointer(e);
+      }
+      function up(e) {
+        hueOuter.releasePointerCapture(e.pointerId);
+        hueOuter.removeEventListener('pointermove', move);
+        hueOuter.removeEventListener('pointerup', up);
+        hueOuter.removeEventListener('pointercancel', up);
+      }
+      hueOuter.addEventListener('pointermove', move);
+      hueOuter.addEventListener('pointerup', up);
+      hueOuter.addEventListener('pointercancel', up);
+    });
+
+    function onSVPointer(ev) {
+      var rect = svOuter.getBoundingClientRect();
+      var x = Math.max(0, Math.min(rect.width, ev.clientX - rect.left));
+      var y = Math.max(0, Math.min(rect.height, ev.clientY - rect.top));
+      hsv.s = x / (rect.width || 1);
+      hsv.v = 1 - y / (rect.height || 1);
+      positionSVCursor();
+      applyFromHSV(true);
+      updateBorderStatusIfAny();
+    }
+
+    svOuter.addEventListener('pointerdown', function (ev) {
+      hist.beforeChange();
+      svOuter.setPointerCapture(ev.pointerId);
+      onSVPointer(ev);
+      function move(e) {
+        onSVPointer(e);
+      }
+      function up(e) {
+        svOuter.releasePointerCapture(e.pointerId);
+        svOuter.removeEventListener('pointermove', move);
+        svOuter.removeEventListener('pointerup', up);
+        svOuter.removeEventListener('pointercancel', up);
+      }
+      svOuter.addEventListener('pointermove', move);
+      svOuter.addEventListener('pointerup', up);
+      svOuter.addEventListener('pointercancel', up);
+    });
+
+    colorPickerSyncers.push(syncFromCollected);
+    card.appendChild(wrap);
+    syncFromCollected();
+  }
+
   function refreshAllInputs() {
     if (!dashboardEl) return;
     dashboardEl.querySelectorAll('[data-style-key]').forEach(function (el) {
@@ -197,6 +636,7 @@
     syncDecorationToggles();
     syncAlignToggles();
     syncVisibilityToggle();
+    syncColorPickersFromStyles();
   }
 
   function syncDecorationToggles() {
@@ -244,6 +684,7 @@
   }
 
   function buildColorsTab(hists) {
+    colorPickerSyncers.length = 0;
     var root = document.createElement('div');
     root.className = 'webedit-ee-tab-panel';
     root.dataset.tabPanel = 'colors';
@@ -276,74 +717,26 @@
       }
       head.appendChild(cardToolbar(hist));
       card.appendChild(head);
-
-      var row = document.createElement('div');
-      row.className = 'webedit-ee-hex-row';
-      var hexLab = document.createElement('span');
-      hexLab.className = 'webedit-ee-hex-lab';
-      hexLab.textContent = 'HEX';
-      var hexInput = document.createElement('input');
-      hexInput.type = 'text';
-      hexInput.className = 'webedit-ee-hex-input';
-      hexInput.placeholder = '#000000';
-      hexInput.dataset.styleKey = keyForHex;
-      hexInput.addEventListener('input', function () {
-        hist.beforeChange();
-        var raw = hexInput.value.trim();
-        if (/^#[0-9a-f]{3,8}$/i.test(raw)) {
-          collectedStyles[keyForHex] = hexToInput(raw);
-          schedulePreview();
-        }
-      });
-      var eye = document.createElement('button');
-      eye.type = 'button';
-      eye.className = 'webedit-ee-eyedropper';
-      eye.setAttribute('aria-label', 'Pick color');
-      eye.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/><circle cx="12" cy="12" r="3"/></svg>';
-      attachEyedropper(eye, function (hex) {
-        hist.beforeChange();
-        collectedStyles[keyForHex] = hex;
-        hexInput.value = hex;
-        schedulePreview();
-        refreshAllInputs();
-      });
-      row.appendChild(hexLab);
-      row.appendChild(hexInput);
-      row.appendChild(eye);
-      card.appendChild(row);
-
-      var sw = document.createElement('div');
-      sw.className = 'webedit-ee-swatches';
-      swatches.forEach(function (c) {
-        var b = document.createElement('button');
-        b.type = 'button';
-        b.className = 'webedit-ee-swatch' + (c === '' ? ' webedit-ee-swatch-none' : '');
-        b.dataset.styleKey = keyForHex;
-        if (c === '') {
-          b.innerHTML = '<span class="webedit-ee-swatch-slash"></span>';
-        } else {
-          b.style.background = c;
-          if (borderRing) b.style.boxShadow = 'inset 0 0 0 2px ' + c;
-        }
-        b.addEventListener('click', function () {
-          hist.beforeChange();
-          var key = keyForHex;
-          if (c === '') delete collectedStyles[key];
-          else collectedStyles[key] = c;
-          hexInput.value = c ? hexToInput(c) : '';
-          schedulePreview();
-          refreshAllInputs();
-          updateBorderStatus();
-        });
-        sw.appendChild(b);
-      });
-      card.appendChild(sw);
+      mountColorPicker(card, keyForHex, hist, swatches, borderRing);
 
       if (prop === 'border') {
-        var bwHist = hists.borderMeta;
+        var metaWrap = document.createElement('div');
+        metaWrap.className = 'webedit-ee-border-meta';
+        var metaHead = document.createElement('div');
+        metaHead.className = 'webedit-ee-card-head webedit-ee-card-head-sub';
+        var metaLab = document.createElement('span');
+        metaLab.className = 'webedit-ee-card-label';
+        metaLab.textContent = 'BORDER SIZE';
+        metaHead.appendChild(metaLab);
+        metaHead.appendChild(cardToolbar(hists.borderMeta));
+        metaWrap.appendChild(metaHead);
+
         var bwRow = document.createElement('div');
         bwRow.className = 'webedit-ee-mini-row';
-        bwRow.innerHTML = '<label class="webedit-ee-mini-label">Border width</label>';
+        var bwLbl = document.createElement('label');
+        bwLbl.className = 'webedit-ee-mini-label';
+        bwLbl.textContent = 'Border width';
+        bwRow.appendChild(bwLbl);
         var bw = document.createElement('input');
         bw.type = 'range';
         bw.min = '0';
@@ -351,21 +744,20 @@
         bw.step = '1';
         bw.className = 'webedit-ee-range';
         bw.dataset.styleKey = 'border-width';
+        bindHistPointerDown(bw, hists.borderMeta);
         bw.addEventListener('input', function () {
-          bwHist.beforeChange();
           collectedStyles['border-width'] = bw.value + 'px';
           schedulePreview();
           updateBorderStatus();
-          var dr = bw.closest('.webedit-ee-mini-row').querySelector('.webedit-ee-slider-val');
+          var dr = bwRow.querySelector('.webedit-ee-slider-val');
           if (dr) dr.textContent = collectedStyles['border-width'];
         });
         var bwVal = document.createElement('span');
         bwVal.className = 'webedit-ee-slider-val';
         bwRow.appendChild(bw);
         bwRow.appendChild(bwVal);
-        card.appendChild(bwRow);
+        metaWrap.appendChild(bwRow);
 
-        var bsHist = hists.borderMeta;
         var bsLab = document.createElement('label');
         bsLab.className = 'webedit-ee-mini-label';
         bsLab.textContent = 'Border style';
@@ -379,13 +771,14 @@
           bs.appendChild(opt);
         });
         bs.addEventListener('change', function () {
-          bsHist.beforeChange();
+          hists.borderMeta.beforeChange();
           collectedStyles['border-style'] = bs.value;
           schedulePreview();
           updateBorderStatus();
         });
-        card.appendChild(bsLab);
-        card.appendChild(bs);
+        metaWrap.appendChild(bsLab);
+        metaWrap.appendChild(bs);
+        card.appendChild(metaWrap);
       }
 
       return card;
@@ -402,9 +795,7 @@
 
     hists.bg = createCardHistory('bg', function () { return ['background-color']; });
     hists.fg = createCardHistory('fg', function () { return ['color']; });
-    hists.border = createCardHistory('border', function () {
-      return ['border-color', 'border-width', 'border-style'];
-    });
+    hists.border = createCardHistory('border', function () { return ['border-color']; });
     hists.borderMeta = createCardHistory('borderMeta', function () {
       return ['border-width', 'border-style'];
     });
@@ -432,8 +823,8 @@
     opSlider.step = '1';
     opSlider.className = 'webedit-ee-range webedit-ee-range-wide';
     opSlider.dataset.styleKey = 'opacity';
+    bindHistPointerDown(opSlider, hists.op);
     opSlider.addEventListener('input', function () {
-      hists.op.beforeChange();
       var p = parseInt(opSlider.value, 10);
       collectedStyles['opacity'] = String(p / 100);
       opPct.textContent = p + '%';
@@ -462,21 +853,19 @@
     };
     var textPast = [];
     var textFuture = [];
-    var textSnap = function () { return textInputEl ? textInputEl.value : ''; };
-    textHist.beforeChange = function () {
-      textPast.push(textSnap());
-      textFuture = [];
-    };
+    textHist.beforeChange = function () {};
     textHist.undo = function () {
-      if (!textPast.length) return;
-      textFuture.push(textSnap());
+      if (!textPast.length || !textInputEl) return;
+      textFuture.push(textInputEl.value);
       textInputEl.value = textPast.pop();
+      textPreviousValue = textInputEl.value;
       schedulePreview();
     };
     textHist.redo = function () {
-      if (!textFuture.length) return;
-      textPast.push(textSnap());
+      if (!textFuture.length || !textInputEl) return;
+      textPast.push(textInputEl.value);
       textInputEl.value = textFuture.pop();
+      textPreviousValue = textInputEl.value;
       schedulePreview();
     };
 
@@ -493,7 +882,9 @@
     tin.id = 'webedit-editor-text-input';
     tin.placeholder = 'Enter custom label…';
     tin.addEventListener('input', function () {
-      textHist.beforeChange();
+      textPast.push(textPreviousValue);
+      textFuture = [];
+      textPreviousValue = tin.value;
       schedulePreview();
     });
     textCard.appendChild(tin);
@@ -586,8 +977,8 @@
       rng.step = step;
       rng.className = 'webedit-ee-range webedit-ee-range-wide';
       rng.dataset.styleKey = key;
+      bindHistPointerDown(rng, hists.fd);
       rng.addEventListener('input', function () {
-        hists.fd.beforeChange();
         var n = parseFloat(rng.value);
         var out = fmt(n);
         collectedStyles[key] = out;
@@ -715,8 +1106,8 @@
       rng.step = spec[4];
       rng.className = 'webedit-ee-range webedit-ee-range-wide';
       rng.dataset.styleKey = spec[1];
+      bindHistPointerDown(rng, hists.wh);
       rng.addEventListener('input', function () {
-        hists.wh.beforeChange();
         collectedStyles[spec[1]] = rng.value + spec[5];
         lab.querySelector('.webedit-ee-dim-val').textContent = collectedStyles[spec[1]];
         schedulePreview();
@@ -1021,6 +1412,7 @@
     refreshAllInputs();
     if (textInputEl && textBaseline !== undefined) {
       textInputEl.value = textBaseline;
+      textPreviousValue = textBaseline;
     }
     var op = dashboardEl && dashboardEl.querySelector('[data-style-key="opacity"]');
     if (op) {
@@ -1049,6 +1441,7 @@
     dashboardEl = buildDashboard();
     textInputEl = dashboardEl.querySelector('#webedit-editor-text-input');
     if (textInputEl) textInputEl.value = textBaseline;
+    textPreviousValue = textBaseline;
 
     var mainContent = document.getElementById('webedit-main-content');
     if (mainContent) mainContent.appendChild(dashboardEl);
@@ -1076,6 +1469,8 @@
     currentResumeEditId = null;
     collectedStyles = {};
     textBaseline = '';
+    textPreviousValue = '';
+    colorPickerSyncers.length = 0;
     clearTimeout(previewDebounceTimer);
 
     document.getElementById('webedit-bottom-controls') && document.getElementById('webedit-bottom-controls').classList.remove('hidden');
