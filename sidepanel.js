@@ -48,10 +48,22 @@
   navChat:         document.getElementById('webedit-nav-chat'),
   navHistory:      document.getElementById('webedit-nav-history'),
   navBrowse:       document.getElementById('webedit-nav-browse'),
+  profileView:     document.getElementById('webedit-profile-view'),
+  profileBack:     document.getElementById('webedit-profile-back'),
+  profileOverflow: document.getElementById('webedit-profile-overflow'),
+  profileAvatarImg: document.getElementById('webedit-profile-avatar-img'),
+  profileAvatarLetter: document.getElementById('webedit-profile-avatar-letter'),
+  profileAvatarEdit: document.getElementById('webedit-profile-avatar-edit'),
+  profileDisplayName: document.getElementById('webedit-profile-display-name'),
+  profileEmailEl:  document.getElementById('webedit-profile-email'),
+  profileUpgrade:  document.getElementById('webedit-profile-upgrade'),
+  profilePricingLink: document.getElementById('webedit-profile-pricing-link'),
+  profilePrefAccount: document.getElementById('webedit-profile-pref-account'),
+  profilePrefNotifications: document.getElementById('webedit-profile-pref-notifications'),
+  profilePrefPrivacy: document.getElementById('webedit-profile-pref-privacy'),
+  profileLogout:   document.getElementById('webedit-profile-logout'),
+  profileVersion:  document.getElementById('webedit-profile-version'),
 };
-
-/** @type {HTMLElement | null} Dropdown under header profile (signed-in only) */
-let accountMenuElement = null;
 
 // ── Keep-Alive Port: holds the service worker alive during long Add flows ────
 
@@ -212,6 +224,12 @@ let selectedHistoryCategory = 'all';
 let panelRevisionEditId = null;
 let panelRevisionKind = null;
 
+/** Panel mode to restore when leaving Profile (back). */
+let panelModeBeforeProfile = 'chat';
+
+const WEBEDIT_PRICING_URL = 'https://www.webeditai.com/#/pricing';
+const WEBEDIT_SITE_URL = 'https://www.webeditai.com/';
+
 function isAuthenticated() {
   return authState === 'authenticated';
 }
@@ -220,14 +238,18 @@ function updateSidebarNavActive() {
   if (els.sidebarNavRecentEdits) {
     els.sidebarNavRecentEdits.classList.toggle('is-active', currentPanelMode === 'history');
   }
-  [els.sidebarNavNewChat, els.sidebarNavSettings].forEach(function (el) {
-    if (el) el.classList.remove('is-active');
-  });
+  if (els.sidebarNavNewChat) {
+    els.sidebarNavNewChat.classList.remove('is-active');
+  }
+  if (els.sidebarNavSettings) {
+    els.sidebarNavSettings.classList.toggle('is-active', currentPanelMode === 'profile');
+  }
 }
 
 function updateBottomNavActive() {
+  const onProfile = currentPanelMode === 'profile';
   if (els.navChat) {
-    const on = currentPanelMode === 'chat';
+    const on = currentPanelMode === 'chat' && !onProfile;
     els.navChat.classList.toggle('active', on);
     els.navChat.classList.remove('active-history-tab');
     if (on) {
@@ -237,7 +259,7 @@ function updateBottomNavActive() {
     }
   }
   if (els.navHistory) {
-    const on = currentPanelMode === 'history';
+    const on = currentPanelMode === 'history' && !onProfile;
     els.navHistory.classList.toggle('active', on);
     els.navHistory.classList.toggle('active-history-tab', on);
     if (on) {
@@ -265,6 +287,12 @@ function getUserDisplayName(user) {
   return at > 0 ? em.slice(0, at) : em;
 }
 
+function getUserAvatarUrl(user) {
+  if (!user) return '';
+  const meta = user.user_metadata && typeof user.user_metadata === 'object' ? user.user_metadata : {};
+  return String(meta.avatar_url || meta.picture || '').trim();
+}
+
 function updateHistorySidebarProfile() {
   if (!els.historyProfileCard || !els.historyProfileName || !els.historyProfileAvatar) return;
   if (currentUser && (currentUser.email || currentUser.id)) {
@@ -283,13 +311,62 @@ function updateHistorySidebarProfile() {
 }
 
 function openAccountMenu() {
-  if (accountMenuElement) {
-    setTimeout(function () {
-      accountMenuElement.classList.add('visible');
-    }, 0);
+  window.open('https://webeditai.com/#/signup?from=extension', '_blank');
+}
+
+function renderProfileView() {
+  if (!els.profileView || !currentUser) return;
+  const name = getUserDisplayName(currentUser);
+  const email = String(currentUser.email || '').trim();
+  if (els.profileDisplayName) els.profileDisplayName.textContent = name || 'User';
+  if (els.profileEmailEl) els.profileEmailEl.textContent = email;
+  const avatarUrl = getUserAvatarUrl(currentUser);
+  if (els.profileAvatarImg && els.profileAvatarLetter) {
+    if (avatarUrl) {
+      els.profileAvatarImg.src = avatarUrl;
+      els.profileAvatarImg.alt = name || 'Profile photo';
+      els.profileAvatarImg.classList.remove('hidden');
+      els.profileAvatarLetter.classList.add('hidden');
+    } else {
+      els.profileAvatarImg.removeAttribute('src');
+      els.profileAvatarImg.classList.add('hidden');
+      els.profileAvatarLetter.classList.remove('hidden');
+      els.profileAvatarLetter.textContent = (email || name || 'U')[0].toUpperCase();
+    }
+  }
+  if (els.profileVersion) {
+    try {
+      const v = chrome.runtime.getManifest().version || '';
+      els.profileVersion.textContent = 'WebEdit AI Extension v' + v + ' · Built with Intelligence';
+    } catch (_) {
+      els.profileVersion.textContent = 'WebEdit AI Extension';
+    }
+  }
+}
+
+function openProfile() {
+  if (!isAuthenticated()) {
+    openAccountMenu();
     return;
   }
-  window.open('https://webeditai.com/#/signup?from=extension', '_blank');
+  if (currentPanelMode !== 'profile') {
+    panelModeBeforeProfile = currentPanelMode === 'history' ? 'history' : 'chat';
+  }
+  if (window.WebEditPanel && typeof window.WebEditPanel.closeCustomizeDashboard === 'function') {
+    const hadCustomize = document.querySelector('.webedit-ee-root');
+    window.WebEditPanel.closeCustomizeDashboard();
+    if (hadCustomize) {
+      sendToBrain('CUSTOMIZE_CANCEL');
+    }
+  }
+  toggleHistorySidebar(false);
+  setPanelMode('profile');
+  renderProfileView();
+}
+
+function closeProfile() {
+  const back = panelModeBeforeProfile === 'history' ? 'history' : 'chat';
+  setPanelMode(back);
 }
 
 function startNewChatSession() {
@@ -1005,73 +1082,66 @@ function updateAuthUI() {
 
   if (currentUser) {
     renderSignedInButton(currentUser);
-    } else {
+  } else {
     renderSignInButton();
   }
 
   updateHistorySidebarProfile();
-      renderHistoryList();
+  renderHistoryList();
   if (!isAuthenticated()) {
     chatMessages = [];
     historyError = '';
     historyLoading = false;
     setHistorySites([]);
     renderChatMessages();
+    if (currentPanelMode === 'profile') {
+      setPanelMode('chat');
+    }
   } else if (currentPanelMode === 'history' && historySites.length === 0 && !historyLoading) {
     loadEditHistory(false);
   }
   renderEditHistoryView();
+  if (isAuthenticated() && currentPanelMode === 'profile') {
+    renderProfileView();
   }
+}
 
-  function renderSignInButton() {
-    if (!els.signinBtn) return;
-    accountMenuElement = null;
+function renderSignInButton() {
+  if (!els.signinBtn) return;
   els.signinBtn.className = 'webedit-nav-btn signin-btn';
   els.signinBtn.textContent = 'Log in';
   els.signinBtn.onclick = function () {
     window.open('https://webeditai.com/#/signup?from=extension', '_blank');
-    };
-  }
+  };
+}
 
-  function renderSignedInButton(user) {
-    if (!els.signinBtn) return;
+function renderSignedInButton(user) {
+  if (!els.signinBtn) return;
   els.signinBtn.className = 'webedit-nav-btn signin-btn webedit-avatar-container';
   els.signinBtn.title = user?.email || 'Account';
   els.signinBtn.innerHTML = '';
 
-  const avatar = document.createElement('div');
-  avatar.className = 'webedit-avatar';
-  avatar.textContent = (user?.email || 'U')[0].toUpperCase();
+  const avatarUrl = getUserAvatarUrl(user);
+  if (avatarUrl) {
+    const img = document.createElement('img');
+    img.className = 'webedit-avatar webedit-avatar-img';
+    img.src = avatarUrl;
+    img.alt = '';
+    img.width = 32;
+    img.height = 32;
+    els.signinBtn.appendChild(img);
+  } else {
+    const avatar = document.createElement('div');
+    avatar.className = 'webedit-avatar';
+    avatar.textContent = (user?.email || 'U')[0].toUpperCase();
     els.signinBtn.appendChild(avatar);
+  }
 
-  const menu = document.createElement('div');
-  menu.className = 'webedit-avatar-menu';
-  menu.innerHTML =
-    '<div class="webedit-avatar-menu-header">' +
-      '<div class="webedit-avatar-menu-email">' + escapeHtml(user?.email || 'User') + '</div>' +
-    '</div>' +
-    '<div class="webedit-avatar-menu-item" data-action="signout">' +
-      '<span class="webedit-avatar-menu-icon">&#128075;</span>' +
-      '<span>Sign out</span>' +
-    '</div>';
-    els.signinBtn.appendChild(menu);
-  accountMenuElement = menu;
-
-  avatar.addEventListener('click', function (e) {
-            e.preventDefault();
-      e.stopPropagation();
-    menu.classList.toggle('visible');
-    });
-  document.addEventListener('click', function () { menu.classList.remove('visible'); });
-  menu.addEventListener('click', function (e) {
-      e.stopPropagation();
-    const action = e.target?.closest('.webedit-avatar-menu-item')?.dataset?.action;
-      if (!action) return;
-    menu.classList.remove('visible');
-    if (action === 'signout') {
-      sendToBrain('WEBEDIT_SIGN_OUT');
-        }
-    });
+  els.signinBtn.onclick = function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    openProfile();
+  };
 }
 
 function setSelectedFeature(tool) {
@@ -1082,23 +1152,33 @@ function setSelectedFeature(tool) {
 }
 
 function setPanelMode(mode) {
-  currentPanelMode = mode === 'history' ? 'history' : 'chat';
+  if (mode === 'history') {
+    currentPanelMode = 'history';
+  } else if (mode === 'profile') {
+    currentPanelMode = 'profile';
+  } else {
+    currentPanelMode = 'chat';
+  }
+
   const showHistory = currentPanelMode === 'history';
+  const showProfile = currentPanelMode === 'profile';
 
   if (els.chatPanel) {
     els.chatPanel.classList.toggle('webedit-panel-mode-history', showHistory);
+    els.chatPanel.classList.toggle('webedit-panel-mode-profile', showProfile);
   }
 
-  els.blueprintList?.classList.toggle('hidden', showHistory);
-  els.chatMessages?.classList.toggle('hidden', showHistory);
-  els.editHistoryView?.classList.toggle('hidden', !showHistory);
-  els.bottomControls?.classList.toggle('hidden', showHistory);
-  els.inputContainer?.classList.toggle('hidden', showHistory);
-  els.mainContent?.classList.toggle('history-mode', showHistory);
+  els.blueprintList?.classList.toggle('hidden', showHistory || showProfile);
+  els.chatMessages?.classList.toggle('hidden', showHistory || showProfile);
+  els.editHistoryView?.classList.toggle('hidden', !showHistory || showProfile);
+  els.profileView?.classList.toggle('hidden', !showProfile);
+  els.bottomControls?.classList.toggle('hidden', showHistory || showProfile);
+  els.inputContainer?.classList.toggle('hidden', showHistory || showProfile);
+  els.mainContent?.classList.toggle('history-mode', showHistory || showProfile);
 
   if (showHistory) {
     loadEditHistory(false);
-  } else {
+  } else if (!showProfile) {
     renderChatMessages();
     renderBlueprintList();
     renderPageEditsPicker();
@@ -1307,7 +1387,50 @@ function registerEventListeners() {
   els.sidebarNavSettings?.addEventListener('click', function (e) {
     e.preventDefault();
     e.stopPropagation();
-    openAccountMenu();
+    if (isAuthenticated()) {
+      openProfile();
+    } else {
+      openAccountMenu();
+    }
+    toggleHistorySidebar(false);
+  });
+
+  els.profileBack?.addEventListener('click', function (e) {
+    e.preventDefault();
+    closeProfile();
+  });
+
+  els.profileOverflow?.addEventListener('click', function () {
+    window.open(WEBEDIT_SITE_URL, '_blank');
+  });
+
+  function openPricingPage() {
+    window.open(WEBEDIT_PRICING_URL, '_blank');
+  }
+
+  els.profileUpgrade?.addEventListener('click', openPricingPage);
+  els.profilePricingLink?.addEventListener('click', function (e) {
+    e.preventDefault();
+    openPricingPage();
+  });
+
+  els.profileAvatarEdit?.addEventListener('click', function () {
+    window.open(WEBEDIT_SITE_URL, '_blank');
+  });
+
+  els.profilePrefAccount?.addEventListener('click', function () {
+    window.open(WEBEDIT_SITE_URL, '_blank');
+  });
+  els.profilePrefNotifications?.addEventListener('click', function () {
+    window.open(WEBEDIT_SITE_URL, '_blank');
+  });
+  els.profilePrefPrivacy?.addEventListener('click', function () {
+    window.open(WEBEDIT_SITE_URL, '_blank');
+  });
+
+  els.profileLogout?.addEventListener('click', function () {
+    sendToBrain('WEBEDIT_SIGN_OUT');
+    setPanelMode('chat');
   });
 
   // Auth guard sign-in

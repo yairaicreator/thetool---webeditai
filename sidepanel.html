@@ -74,6 +74,77 @@
         <div class="webedit-chat-thread" id="webedit-chat-thread"></div>
       </div>
       <div class="webedit-edit-history-view hidden" id="webedit-edit-history-view"></div>
+
+      <div class="webedit-profile-view hidden" id="webedit-profile-view" aria-label="Profile">
+        <header class="webedit-profile-toolbar">
+          <button type="button" class="webedit-profile-icon-btn" id="webedit-profile-back" aria-label="Back">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+          </button>
+          <h1 class="webedit-profile-toolbar-title">Profile</h1>
+          <button type="button" class="webedit-profile-icon-btn" id="webedit-profile-overflow" aria-label="More options">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+          </button>
+        </header>
+
+        <div class="webedit-profile-scroll">
+          <div class="webedit-profile-hero">
+            <div class="webedit-profile-avatar-block">
+              <div class="webedit-profile-avatar-ring" id="webedit-profile-avatar-ring">
+                <img class="webedit-profile-avatar-img hidden" id="webedit-profile-avatar-img" alt="" width="96" height="96" />
+                <div class="webedit-profile-avatar-letter" id="webedit-profile-avatar-letter">U</div>
+              </div>
+              <button type="button" class="webedit-profile-avatar-edit" id="webedit-profile-avatar-edit" aria-label="Edit profile on website">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+              </button>
+            </div>
+            <div class="webedit-profile-display-name" id="webedit-profile-display-name">User</div>
+            <div class="webedit-profile-email" id="webedit-profile-email"></div>
+          </div>
+
+          <section class="webedit-profile-plan-card" aria-labelledby="webedit-profile-plan-heading">
+            <div class="webedit-profile-plan-card-top">
+              <span class="webedit-profile-plan-kicker" id="webedit-profile-plan-heading">Current plan</span>
+              <span class="webedit-profile-plan-sparkles" aria-hidden="true">✦ ✦ ✦</span>
+            </div>
+            <div class="webedit-profile-plan-row">
+              <span class="webedit-profile-plan-name">Subscription: Freemium</span>
+              <span class="webedit-profile-plan-badge">FREE</span>
+            </div>
+            <p class="webedit-profile-plan-desc">You're using the basic editor toolkit. Unlock AI-powered style generation and cloud sync.</p>
+            <button type="button" class="webedit-profile-btn-primary" id="webedit-profile-upgrade">
+              Upgrade to Pro
+              <span class="webedit-profile-btn-rocket" aria-hidden="true">🚀</span>
+            </button>
+            <button type="button" class="webedit-profile-link" id="webedit-profile-pricing-link">View Pricing &amp; Plans</button>
+          </section>
+
+          <p class="webedit-profile-section-label">Preference &amp; security</p>
+          <div class="webedit-profile-settings-card">
+            <button type="button" class="webedit-profile-settings-row" id="webedit-profile-pref-account">
+              <span class="webedit-profile-settings-icon" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg></span>
+              <span class="webedit-profile-settings-label">Account Settings</span>
+              <span class="webedit-profile-settings-chevron" aria-hidden="true">›</span>
+            </button>
+            <button type="button" class="webedit-profile-settings-row" id="webedit-profile-pref-notifications">
+              <span class="webedit-profile-settings-icon" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 7-3 7h18s-3 0-3-7M13.73 21a2 2 0 0 1-3.46 0"/></svg></span>
+              <span class="webedit-profile-settings-label">Notifications</span>
+              <span class="webedit-profile-settings-chevron" aria-hidden="true">›</span>
+            </button>
+            <button type="button" class="webedit-profile-settings-row" id="webedit-profile-pref-privacy">
+              <span class="webedit-profile-settings-icon" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span>
+              <span class="webedit-profile-settings-label">Privacy &amp; Security</span>
+              <span class="webedit-profile-settings-chevron" aria-hidden="true">›</span>
+            </button>
+          </div>
+
+          <button type="button" class="webedit-profile-logout" id="webedit-profile-logout">
+            <span class="webedit-profile-logout-icon" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg></span>
+            Log out
+          </button>
+
+          <p class="webedit-profile-version" id="webedit-profile-version"></p>
+        </div>
+      </div>
     </div>
 
     <div class="webedit-bottom-controls" id="webedit-bottom-controls">

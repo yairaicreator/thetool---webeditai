@@ -207,6 +207,14 @@
   transform: scale(0.98);
 }
 
+.webedit-avatar-container img.webedit-avatar-img {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+}
+
 .webedit-avatar-letter {
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
 }
@@ -2458,4 +2466,345 @@
   height: 3px;
   border-radius: 0 0 3px 3px;
   background: var(--webedit-editor-accent);
+}
+
+/* ── Profile page ─────────────────────────────────────────────────── */
+.webedit-profile-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: linear-gradient(180deg, #f8fbff 0%, #eef2ff 55%, #f1f5f9 100%);
+  overflow: hidden;
+}
+
+.webedit-profile-view.hidden {
+  display: none !important;
+}
+
+.webedit-profile-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 8px 12px;
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.85);
+  border-bottom: 1px solid rgba(226, 232, 240, 0.9);
+}
+
+.webedit-profile-icon-btn {
+  width: 40px;
+  height: 40px;
+  border: none;
+  background: transparent;
+  border-radius: 10px;
+  color: #0f172a;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.webedit-profile-icon-btn:hover {
+  background: rgba(93, 95, 239, 0.1);
+  color: var(--we-primary);
+}
+
+.webedit-profile-toolbar-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: #0f172a;
+  flex: 1;
+  text-align: center;
+}
+
+.webedit-profile-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 16px 24px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.webedit-profile-hero {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.webedit-profile-avatar-block {
+  position: relative;
+  display: inline-block;
+  margin-bottom: 14px;
+}
+
+.webedit-profile-avatar-ring {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  overflow: hidden;
+  margin: 0 auto;
+  background: linear-gradient(145deg, #e0e7ff 0%, #c7d2fe 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 8px 24px rgba(79, 70, 229, 0.15);
+}
+
+.webedit-profile-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.webedit-profile-avatar-img.hidden {
+  display: none !important;
+}
+
+.webedit-profile-avatar-letter {
+  font-size: 36px;
+  font-weight: 700;
+  color: var(--we-primary);
+}
+
+.webedit-profile-avatar-letter.hidden {
+  display: none !important;
+}
+
+.webedit-profile-avatar-edit {
+  position: absolute;
+  right: 0;
+  bottom: 4px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 3px solid #fff;
+  background: var(--we-primary);
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(93, 95, 239, 0.4);
+}
+
+.webedit-profile-avatar-edit:hover {
+  filter: brightness(1.08);
+}
+
+.webedit-profile-display-name {
+  font-size: 22px;
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: -0.02em;
+}
+
+.webedit-profile-email {
+  margin-top: 6px;
+  font-size: 14px;
+  color: #64748b;
+}
+
+.webedit-profile-plan-card {
+  background: linear-gradient(135deg, #eef2ff 0%, #e8e0ff 100%);
+  border-radius: 20px;
+  padding: 18px 18px 20px;
+  margin-bottom: 22px;
+  box-shadow: 0 4px 20px rgba(99, 102, 241, 0.12);
+}
+
+.webedit-profile-plan-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 8px;
+}
+
+.webedit-profile-plan-kicker {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #64748b;
+  text-transform: uppercase;
+}
+
+.webedit-profile-plan-sparkles {
+  font-size: 12px;
+  color: #8b5cf6;
+  letter-spacing: 2px;
+  opacity: 0.85;
+}
+
+.webedit-profile-plan-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.webedit-profile-plan-name {
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.webedit-profile-plan-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #dbeafe;
+  color: #2563eb;
+}
+
+.webedit-profile-plan-desc {
+  margin: 0 0 16px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #475569;
+}
+
+.webedit-profile-btn-primary {
+  width: 100%;
+  border: none;
+  border-radius: 14px;
+  padding: 14px 18px;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  background: var(--we-primary);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-shadow: 0 6px 20px rgba(93, 95, 239, 0.35);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.webedit-profile-btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 24px rgba(93, 95, 239, 0.4);
+}
+
+.webedit-profile-btn-rocket {
+  font-size: 16px;
+}
+
+.webedit-profile-link {
+  display: block;
+  width: 100%;
+  margin-top: 14px;
+  border: none;
+  background: none;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--we-primary);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.webedit-profile-section-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #64748b;
+  text-transform: uppercase;
+  margin: 0 0 10px 4px;
+}
+
+.webedit-profile-settings-card {
+  background: #fff;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 2px 12px rgba(15, 23, 42, 0.06);
+  margin-bottom: 24px;
+}
+
+.webedit-profile-settings-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 14px;
+  border: none;
+  border-bottom: 1px solid #f1f5f9;
+  background: #fff;
+  cursor: pointer;
+  text-align: left;
+  font-size: 15px;
+  font-weight: 500;
+  color: #0f172a;
+}
+
+.webedit-profile-settings-row:last-child {
+  border-bottom: none;
+}
+
+.webedit-profile-settings-row:hover {
+  background: #f8fafc;
+}
+
+.webedit-profile-settings-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: #e8f0fe;
+  color: var(--we-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.webedit-profile-settings-icon svg {
+  stroke: currentColor;
+}
+
+.webedit-profile-settings-label {
+  flex: 1;
+}
+
+.webedit-profile-settings-chevron {
+  color: #94a3b8;
+  font-size: 20px;
+  font-weight: 300;
+}
+
+.webedit-profile-logout {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding: 14px;
+  border: none;
+  background: transparent;
+  font-size: 16px;
+  font-weight: 700;
+  color: #dc2626;
+  cursor: pointer;
+  margin-bottom: 20px;
+}
+
+.webedit-profile-logout:hover {
+  color: #b91c1c;
+}
+
+.webedit-profile-logout-icon {
+  display: flex;
+  color: #dc2626;
+}
+
+.webedit-profile-version {
+  text-align: center;
+  font-size: 11px;
+  color: #94a3b8;
+  margin: 0;
+  padding-bottom: 8px;
 }
