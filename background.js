@@ -2,6 +2,7 @@
 
 importScripts('supabaseClient.js');
 importScripts('elementLabels.js');
+importScripts('gatekeeper.js');
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 0: Feature Module Registry (must load before feature importScripts)
@@ -32,6 +33,11 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel
     .setPanelBehavior({ openPanelOnActionClick: true })
     .catch((error) => console.error('[Brain] sidePanel behavior error:', error));
+  SupabaseClient.getSession({ allowRefresh: true }).then(function (res) {
+    if (res?.data?.session?.user?.id) {
+      WebeditGatekeeper.refreshCachedPlan('install').catch(function () {});
+    }
+  }).catch(function () {});
 });
 
 chrome.runtime.onStartup.addListener(() => {
@@ -39,6 +45,11 @@ chrome.runtime.onStartup.addListener(() => {
     chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })
       .catch(function (error) { console.error('[Brain] sidePanel behavior error:', error); });
   }
+  SupabaseClient.getSession({ allowRefresh: true }).then(function (res) {
+    if (res?.data?.session?.user?.id) {
+      WebeditGatekeeper.refreshCachedPlan('startup').catch(function () {});
+    }
+  }).catch(function () {});
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -148,6 +159,9 @@ async function storeSupabaseSession(session) {
 
   const stored = await getStoredSupabaseSessionRecord();
   await broadcastSessionUpdate(stored.session);
+  if (stored.session?.user?.id) {
+    WebeditGatekeeper.refreshCachedPlan('session_change').catch(function () {});
+  }
   return {
     ok: true,
     success: true,
@@ -1430,6 +1444,28 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
         case 'WEBEDIT_SIGN_OUT':
           sendResponse(await storeSupabaseSession(null));
           return;
+        case 'WEBEDIT_GET_PLAN': {
+          const rec = await getStoredSupabaseSessionRecord();
+          const uid = rec.session?.user?.id || null;
+          if (!uid) {
+            sendResponse({ success: true, plan: 'Free' });
+            return;
+          }
+          const planKey = 'webedit_plan::' + uid;
+          const pr = await chrome.storage.local.get([planKey]);
+          let plan = await WebeditGatekeeper.getCachedPlanForUser(uid);
+          if (!pr[planKey] || !pr[planKey].fetchedAt) {
+            const refreshed = await WebeditGatekeeper.refreshCachedPlan('get_plan');
+            if (refreshed) plan = refreshed;
+          }
+          sendResponse({ success: true, plan: plan });
+          return;
+        }
+        case 'WEBEDIT_REFRESH_PLAN': {
+          const plan = await WebeditGatekeeper.refreshCachedPlan('panel');
+          sendResponse({ success: true, plan: plan || 'Free' });
+          return;
+        }
       }
 
       // ── Step 1: Strict Data Validation ──
@@ -1497,6 +1533,11 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
           break;
 
         case 'GENERATE_FEATURE': {
+          const chatGate = await WebeditGatekeeper.assertGate('chat', {});
+          if (!chatGate.ok) {
+            response = { success: false, error: chatGate.message, gateCode: chatGate.code };
+            break;
+          }
           if (brainState.current === BRAIN_STATES.PREVIEWING
               && brainState.activeFlow?.feature === 'add') {
             const addGenHandler = getFeatureHandler('add', 'onGenerate');

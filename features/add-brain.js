@@ -311,6 +311,13 @@ registerFeature('add', {
 
     var reviseEditId = flow.reviseEditId ? String(flow.reviseEditId).trim() : '';
 
+    if (!reviseEditId) {
+      var gateAdd = await WebeditGatekeeper.assertGate('add', { url: url });
+      if (!gateAdd.ok) {
+        return { success: false, error: gateAdd.message, gateCode: gateAdd.code };
+      }
+    }
+
     try {
       // ── Step 0: Close the Preview Lab ──────────────────────────────────
       if (lockedTabId) {
@@ -423,6 +430,8 @@ registerFeature('add', {
         } catch (e) {
           console.warn('[Add-Brain] Post-sync blueprint dispatch failed:', e.message);
         }
+
+        await WebeditGatekeeper.recordUsage('add', url);
       }
 
       // ── Step 4: Broadcast history ──────────────────────────────────────

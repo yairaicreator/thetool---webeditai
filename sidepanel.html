@@ -106,16 +106,20 @@
               <span class="webedit-profile-plan-kicker" id="webedit-profile-plan-heading">Current plan</span>
               <span class="webedit-profile-plan-sparkles" aria-hidden="true">✦ ✦ ✦</span>
             </div>
+            <p class="webedit-profile-payment-line" id="webedit-profile-payment-line">
+              <span class="webedit-profile-payment-label">Payment status</span>
+              <strong class="webedit-profile-payment-status" id="webedit-profile-payment-status">Free</strong>
+            </p>
             <div class="webedit-profile-plan-row">
-              <span class="webedit-profile-plan-name">Subscription: Freemium</span>
-              <span class="webedit-profile-plan-badge">FREE</span>
+              <span class="webedit-profile-plan-name" id="webedit-profile-plan-name">Free plan</span>
+              <span class="webedit-profile-plan-badge" id="webedit-profile-plan-badge">FREE</span>
             </div>
-            <p class="webedit-profile-plan-desc">You're using the basic editor toolkit. Unlock AI-powered style generation and cloud sync.</p>
+            <p class="webedit-profile-plan-desc" id="webedit-profile-plan-desc">You're on the free editor. Upgrade for unlimited edits and AI chat.</p>
             <button type="button" class="webedit-profile-btn-primary" id="webedit-profile-upgrade">
-              Upgrade to Pro
+              Upgrade on webeditai.com
               <span class="webedit-profile-btn-rocket" aria-hidden="true">🚀</span>
             </button>
-            <button type="button" class="webedit-profile-link" id="webedit-profile-pricing-link">View Pricing &amp; Plans</button>
+            <button type="button" class="webedit-profile-link" id="webedit-profile-pricing-link">View pricing &amp; plans</button>
           </section>
 
           <p class="webedit-profile-section-label">Preference &amp; security</p>
@@ -167,6 +171,13 @@
 
     <!-- Chat Input Bar -->
     <div class="webedit-input-container" id="webedit-input-container">
+      <div class="webedit-chat-lifetime-hint hidden" id="webedit-chat-lifetime-hint" role="note">
+        <span class="webedit-chat-lock-icon" aria-hidden="true" title="Locked">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        </span>
+        <span class="webedit-chat-lifetime-hint-text">AI chat is a <strong>Lifetime</strong> feature.</span>
+        <button type="button" class="webedit-chat-lifetime-upgrade" id="webedit-chat-lifetime-upgrade">View pricing</button>
+      </div>
       <div class="webedit-input-row">
         <textarea 
           class="webedit-chat-input" 

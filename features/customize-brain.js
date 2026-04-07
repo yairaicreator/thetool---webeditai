@@ -60,6 +60,13 @@ registerFeature('customize', {
     var syncFailed = false;
     var originalTextForPayload;
 
+    if (!resumeEditId) {
+      var gateCust = await WebeditGatekeeper.assertGate('customize', { url: url });
+      if (!gateCust.ok) {
+        return { success: false, error: gateCust.message, gateCode: gateCust.code };
+      }
+    }
+
     try {
       // ── Step 1: Clear the temporary preview CSS ──────────────────────────
       if (lockedTabId) {
@@ -202,6 +209,8 @@ registerFeature('customize', {
         } catch (e) {
           console.warn('[Customize-Brain] Post-sync blueprint dispatch failed:', e.message);
         }
+
+        await WebeditGatekeeper.recordUsage('customize', url);
       }
 
       // ── Step 5: Broadcast history ────────────────────────────────────────

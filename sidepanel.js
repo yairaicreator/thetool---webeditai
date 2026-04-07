@@ -58,6 +58,12 @@
   profileEmailEl:  document.getElementById('webedit-profile-email'),
   profileUpgrade:  document.getElementById('webedit-profile-upgrade'),
   profilePricingLink: document.getElementById('webedit-profile-pricing-link'),
+  profilePlanName: document.getElementById('webedit-profile-plan-name'),
+  profilePlanBadge: document.getElementById('webedit-profile-plan-badge'),
+  profilePlanDesc: document.getElementById('webedit-profile-plan-desc'),
+  profilePaymentStatus: document.getElementById('webedit-profile-payment-status'),
+  chatLifetimeHint: document.getElementById('webedit-chat-lifetime-hint'),
+  chatLifetimeUpgrade: document.getElementById('webedit-chat-lifetime-upgrade'),
   profilePrefAccount: document.getElementById('webedit-profile-pref-account'),
   profilePrefNotifications: document.getElementById('webedit-profile-pref-notifications'),
   profilePrefPrivacy: document.getElementById('webedit-profile-pref-privacy'),
@@ -227,11 +233,73 @@ let panelRevisionKind = null;
 /** Panel mode to restore when leaving Profile (back). */
 let panelModeBeforeProfile = 'chat';
 
+/** Cached from Brain (`WEBEDIT_GET_PLAN` / `WEBEDIT_PLAN_UPDATED`). */
+let currentPaymentPlan = 'Free';
+
+let profilePlanRefreshTimer = null;
+
 const WEBEDIT_PRICING_URL = 'https://www.webeditai.com/#/pricing';
 const WEBEDIT_SITE_URL = 'https://www.webeditai.com/';
 
 function isAuthenticated() {
   return authState === 'authenticated';
+}
+
+function isLifetimePlan() {
+  return String(currentPaymentPlan || '').trim() === 'LifeTime';
+}
+
+async function syncPlanFromBrain() {
+  if (!isAuthenticated()) {
+    currentPaymentPlan = 'Free';
+    updateChatPlanControls();
+    return;
+  }
+  const r = await sendToBrain('WEBEDIT_GET_PLAN');
+  if (r.success && r.plan) {
+    currentPaymentPlan = r.plan;
+  }
+  updateChatPlanControls();
+}
+
+function debouncedRefreshPlanFromServer() {
+  if (!isAuthenticated()) return;
+  clearTimeout(profilePlanRefreshTimer);
+  profilePlanRefreshTimer = setTimeout(function () {
+    sendToBrain('WEBEDIT_REFRESH_PLAN').then(function (r) {
+      if (r.success && r.plan) {
+        currentPaymentPlan = r.plan;
+      }
+      updateChatPlanControls();
+      if (currentPanelMode === 'profile') {
+        renderProfileView();
+      }
+    });
+  }, 400);
+}
+
+function updateChatPlanControls() {
+  const auth = isAuthenticated();
+  const lockedForPlan = auth && !isLifetimePlan();
+  const inputDisabled = !auth || lockedForPlan;
+  if (els.chatInput) {
+    els.chatInput.disabled = inputDisabled;
+    els.chatInput.setAttribute('aria-disabled', inputDisabled ? 'true' : 'false');
+    if (!auth) {
+      els.chatInput.placeholder = 'Ask AI to edit this page…';
+    } else if (lockedForPlan) {
+      els.chatInput.placeholder = 'AI chat — upgrade to Lifetime to unlock…';
+    } else {
+      els.chatInput.placeholder = 'Ask AI to edit this page…';
+    }
+  }
+  if (els.sendBtn) {
+    els.sendBtn.disabled = inputDisabled;
+    els.sendBtn.setAttribute('aria-disabled', inputDisabled ? 'true' : 'false');
+  }
+  if (els.chatLifetimeHint) {
+    els.chatLifetimeHint.classList.toggle('hidden', !lockedForPlan);
+  }
 }
 
 function updateSidebarNavActive() {
@@ -342,6 +410,29 @@ function renderProfileView() {
       els.profileVersion.textContent = 'WebEdit AI Extension';
     }
   }
+
+  const lifetime = isLifetimePlan();
+  if (els.profilePaymentStatus) {
+    els.profilePaymentStatus.textContent = lifetime ? 'LifeTime' : 'Free';
+  }
+  if (els.profilePlanName) {
+    els.profilePlanName.textContent = lifetime ? 'WebEdit AI — Lifetime' : 'WebEdit AI — Free';
+  }
+  if (els.profilePlanBadge) {
+    els.profilePlanBadge.textContent = lifetime ? 'LIFETIME' : 'FREE';
+    els.profilePlanBadge.classList.toggle('webedit-profile-plan-badge-lifetime', lifetime);
+  }
+  if (els.profilePlanDesc) {
+    els.profilePlanDesc.textContent = lifetime
+      ? 'You have full access: unlimited edits and AI chat on every site.'
+      : 'Limited free edits per feature. Upgrade for unlimited edits and AI chat.';
+  }
+  if (els.profileUpgrade) {
+    els.profileUpgrade.hidden = lifetime;
+  }
+  if (els.profilePricingLink) {
+    els.profilePricingLink.textContent = lifetime ? 'Open webeditai.com' : 'View pricing & plans';
+  }
 }
 
 function openProfile() {
@@ -362,6 +453,7 @@ function openProfile() {
   toggleHistorySidebar(false);
   setPanelMode('profile');
   renderProfileView();
+  debouncedRefreshPlanFromServer();
 }
 
 function closeProfile() {
@@ -1075,10 +1167,14 @@ function updateAuthUI() {
     if (els.authGuardSignin) { els.authGuardSignin.textContent = 'Log in'; els.authGuardSignin.hidden = false; }
   }
 
-  [els.newChatBtn, els.sendBtn, els.chatInput].filter(Boolean).forEach(function (el) {
-    if ('disabled' in el) el.disabled = !isAuthenticated();
-    el.setAttribute('aria-disabled', isAuthenticated() ? 'false' : 'true');
-  });
+  if (els.newChatBtn) {
+    if ('disabled' in els.newChatBtn) els.newChatBtn.disabled = !isAuthenticated();
+    els.newChatBtn.setAttribute('aria-disabled', isAuthenticated() ? 'false' : 'true');
+  }
+  if (!isAuthenticated()) {
+    currentPaymentPlan = 'Free';
+  }
+  updateChatPlanControls();
 
   if (currentUser) {
     renderSignedInButton(currentUser);
@@ -1235,9 +1331,27 @@ chrome.runtime.onMessage.addListener(function (message) {
       updateAuthUI();
       if (isAuthenticated()) {
         loadChatSessions();
+        syncPlanFromBrain();
       }
       break;
     }
+
+    case 'WEBEDIT_PLAN_UPDATED': {
+      if (message.plan) {
+        currentPaymentPlan = message.plan;
+      }
+      updateChatPlanControls();
+      if (currentPanelMode === 'profile') {
+        renderProfileView();
+      }
+      break;
+    }
+
+    case 'WEBEDIT_GATE_BLOCKED':
+      if (message.message) {
+        showNotification(message.message);
+      }
+      break;
 
     case 'BLUEPRINTS_UPDATED':
       if (!message.pageKey || normalizePageKey(message.pageKey) === currentBlueprintPageKey) {
@@ -1411,6 +1525,15 @@ function registerEventListeners() {
   els.profileUpgrade?.addEventListener('click', openPricingPage);
   els.profilePricingLink?.addEventListener('click', function (e) {
     e.preventDefault();
+    if (isLifetimePlan()) {
+      window.open(WEBEDIT_SITE_URL, '_blank');
+    } else {
+      openPricingPage();
+    }
+  });
+
+  els.chatLifetimeUpgrade?.addEventListener('click', function (e) {
+    e.preventDefault();
     openPricingPage();
   });
 
@@ -1466,6 +1589,10 @@ function registerEventListeners() {
     const text = (els.chatInput?.value || '').trim();
     if (!text) return;
     if (!isAuthenticated()) { showNotification('Please log in to use WebEdit'); return; }
+    if (!isLifetimePlan()) {
+      showNotification('AI chat is a Lifetime feature. Upgrade: ' + WEBEDIT_PRICING_URL);
+      return;
+    }
     els.chatInput.value = '';
     addChatMessage('user', text);
     addChatMessage('system', 'Processing...');
@@ -1544,6 +1671,7 @@ function registerEventListeners() {
     authState = currentUser ? 'authenticated' : 'unauthenticated';
   }
   updateAuthUI();
+  await syncPlanFromBrain();
 
   // 3. Get active blueprints for current tab
   const url = await getCurrentTabUrl();

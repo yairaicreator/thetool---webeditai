@@ -1341,6 +1341,55 @@
   display: none !important;
 }
 
+/* Free plan: AI chat locked — hint above input */
+.webedit-chat-lifetime-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin: 0 28px 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  font-size: 12px;
+  color: #475569;
+  line-height: 1.35;
+}
+
+.webedit-chat-lifetime-hint .webedit-chat-lock-icon {
+  display: flex;
+  color: #64748b;
+  flex-shrink: 0;
+}
+
+.webedit-chat-lifetime-hint .webedit-chat-lifetime-hint-text {
+  flex: 1;
+  min-width: 140px;
+}
+
+.webedit-chat-lifetime-upgrade {
+  border: none;
+  background: transparent;
+  color: var(--we-primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+  font-family: inherit;
+}
+
+.webedit-chat-lifetime-upgrade:hover {
+  color: var(--we-primary-hover);
+}
+
+.webedit-chat-input:disabled,
+.webedit-send-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
 /* Chat Input Bar at Bottom */
 .webedit-input-container {
   padding: 10px 28px 16px;
@@ -2805,6 +2854,29 @@
   border-radius: 999px;
   background: #dbeafe;
   color: #2563eb;
+}
+
+.webedit-profile-plan-badge-lifetime {
+  background: linear-gradient(135deg, #ecfdf5, #d1fae5);
+  color: #047857;
+}
+
+.webedit-profile-payment-line {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: #475569;
+  line-height: 1.4;
+}
+
+.webedit-profile-payment-label {
+  display: inline-block;
+  margin-right: 6px;
+  color: #64748b;
+}
+
+.webedit-profile-payment-status {
+  color: #0f172a;
+  font-weight: 700;
 }
 
 .webedit-profile-plan-desc {

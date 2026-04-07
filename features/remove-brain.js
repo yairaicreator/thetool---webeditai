@@ -22,6 +22,13 @@ registerFeature('remove', {
     var editId;
     var syncFailed = false;
 
+    var gateRem = await WebeditGatekeeper.assertGate('remove', { url: url });
+    if (!gateRem.ok) {
+      WebeditGatekeeper.notifyGateBlocked(gateRem.message, gateRem.code);
+      resetState();
+      return { success: false, error: gateRem.message, gateCode: gateRem.code };
+    }
+
     try {
       // ── Step 1: Save to Global Ledger ────────────────────────────────────
 
@@ -107,6 +114,8 @@ registerFeature('remove', {
         summary: summary,
         syncFailed: syncFailed
       }).catch(function () {});
+
+      await WebeditGatekeeper.recordUsage('remove', url);
     } finally {
       // ── Step 6: Reset state machine (always runs) ────────────────────────
       resetState();
