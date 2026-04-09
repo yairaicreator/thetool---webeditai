@@ -152,6 +152,7 @@ const PANEL_SCHEMAS = {
   RENAME_CHAT_SESSION:   ['sessionId', 'title'],
   ARM_REVISE_ADD:        ['editId', 'url'],
   RESUME_CUSTOMIZE_EDIT: ['editId', 'url'],
+  SYNC_LEDGER_PAGE:      ['url'],
 };
 
 function validateBeforeSend(type, payload) {
@@ -628,13 +629,30 @@ function ensureSessionId() {
   }
   }
 
-  function addChatMessage(type, content) {
+  function addChatMessage(type, content, extra) {
   ensureSessionId();
-  chatMessages.push({ type, content, timestamp: Date.now() });
+  const msg = { type: type, content: content, timestamp: Date.now() };
+  if (extra && typeof extra === 'object') {
+    Object.assign(msg, extra);
+  }
+  chatMessages.push(msg);
     if (chatMessages.length > MAX_MESSAGES) {
       chatMessages = chatMessages.slice(-MAX_MESSAGES);
     }
     renderChatMessages();
+  persistCurrentSession();
+}
+
+function filterOutStaleAddSpecPending(messages) {
+  if (!Array.isArray(messages)) return [];
+  return messages.filter(function (m) { return !m.addSpecPending; });
+}
+
+function stripAddSpecPendingFromChat() {
+  const next = chatMessages.filter(function (m) { return !m.addSpecPending; });
+  if (next.length === chatMessages.length) return;
+  chatMessages = next;
+  renderChatMessages();
   persistCurrentSession();
 }
 
@@ -678,7 +696,86 @@ function updateChatHomeVisibility() {
     contentEl.textContent = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content || '');
         msgEl.appendChild(contentEl);
 
-    if (msg.editId) {
+    if (msg.addSpecPending) {
+      const specRow = document.createElement('div');
+      specRow.className = 'webedit-chat-action-buttons webedit-chat-spec-actions';
+
+      const applySpecBtn = document.createElement('button');
+      applySpecBtn.type = 'button';
+      applySpecBtn.className = 'webedit-chat-action-btn webedit-chat-spec-apply-btn';
+      applySpecBtn.textContent = 'Apply';
+      applySpecBtn.addEventListener('click', debounce(function () {
+        const specIdx = chatMessages.indexOf(msg);
+        if (specIdx === -1) return;
+        chatMessages.splice(specIdx, 1);
+        chatMessages.push({ type: 'system', content: 'Applying feature...', timestamp: Date.now() });
+        if (chatMessages.length > MAX_MESSAGES) {
+          chatMessages = chatMessages.slice(-MAX_MESSAGES);
+        }
+        renderChatMessages();
+        persistCurrentSession();
+        chrome.runtime.sendMessage({ type: 'ADD_APPLY' }, function (resp) {
+          if (chrome.runtime.lastError) {
+            console.warn('[Panel] ADD_APPLY failed:', chrome.runtime.lastError.message);
+          }
+          if (resp && !resp.success) {
+            showNotification('Could not apply feature: ' + (resp.error || 'unknown'));
+          }
+        });
+      }));
+      specRow.appendChild(applySpecBtn);
+
+      const refineSpecBtn = document.createElement('button');
+      refineSpecBtn.type = 'button';
+      refineSpecBtn.className = 'webedit-chat-action-btn webedit-chat-spec-refine-btn';
+      refineSpecBtn.textContent = 'Refine';
+      refineSpecBtn.addEventListener('click', debounce(function () {
+        const specIdx = chatMessages.indexOf(msg);
+        if (specIdx === -1) return;
+        chatMessages.splice(specIdx, 1);
+        chatMessages.push({
+          type: 'assistant',
+          content: 'Describe what you\u2019d like to improve and send it.',
+          timestamp: Date.now()
+        });
+        if (chatMessages.length > MAX_MESSAGES) {
+          chatMessages = chatMessages.slice(-MAX_MESSAGES);
+        }
+        renderChatMessages();
+        persistCurrentSession();
+        const chatInput = document.getElementById('webedit-chat-input');
+        if (chatInput) {
+          chatInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          chatInput.focus();
+          chatInput.setAttribute('placeholder', 'Describe what to improve...');
+        }
+      }));
+      specRow.appendChild(refineSpecBtn);
+
+      const cancelSpecBtn = document.createElement('button');
+      cancelSpecBtn.type = 'button';
+      cancelSpecBtn.className = 'webedit-chat-action-btn webedit-chat-spec-cancel-btn';
+      cancelSpecBtn.textContent = 'Cancel';
+      cancelSpecBtn.addEventListener('click', debounce(function () {
+        const specIdx = chatMessages.indexOf(msg);
+        if (specIdx === -1) return;
+        chatMessages.splice(specIdx, 1);
+        chatMessages.push({ type: 'system', content: 'Feature cancelled.', timestamp: Date.now() });
+        if (chatMessages.length > MAX_MESSAGES) {
+          chatMessages = chatMessages.slice(-MAX_MESSAGES);
+        }
+        renderChatMessages();
+        persistCurrentSession();
+        chrome.runtime.sendMessage({ type: 'ADD_CANCEL' }, function () {
+          if (chrome.runtime.lastError) {
+            console.warn('[Panel] ADD_CANCEL failed:', chrome.runtime.lastError.message);
+          }
+        });
+      }));
+      specRow.appendChild(cancelSpecBtn);
+
+      msgEl.appendChild(specRow);
+    } else if (msg.editId) {
       const btnRow = document.createElement('div');
       btnRow.className = 'webedit-chat-action-buttons';
 
@@ -748,6 +845,11 @@ function renderSingleEditHistoryCard(edit, categoryKey) {
   html += '<div class="webedit-edit-history-card-title">' + escapeHtml(edit.summary || 'Untitled edit') + '</div>';
   html += '<div class="webedit-edit-history-card-meta">' + escapeHtml(meta) + '</div>';
   html += '</div>';
+  if (categoryKey === 'add' || categoryKey === 'customize') {
+    html += '<div class="webedit-edit-history-card-corner">';
+    html += '<button type="button" class="webedit-edit-modify-btn" data-edit-id="' + escapeHtml(edit.id) + '" data-page-key="' + escapeHtml(edit.pageKey) + '" data-history-cat="' + escapeHtml(categoryKey) + '">Modify</button>';
+    html += '</div>';
+  }
   html += '</div>';
   html += '<p class="webedit-edit-history-card-description">' + escapeHtml(edit.description || '') + '</p>';
   if (categoryKey === 'customize') {
@@ -892,6 +994,35 @@ function formatPageEditLabel(edit, editId) {
   if (sum) return tag + ': ' + sum;
   const shortId = String(editId || '').slice(0, 8);
   return tag + ' · ' + (shortId || 'edit');
+}
+
+function historyEditLabelForReference(edit, categoryKey) {
+  const cat = String(categoryKey || '').toLowerCase();
+  const action = cat === 'customize' ? 'customize' : 'add';
+  return formatPageEditLabel(
+    { action: action, payload: { summary: (edit && edit.summary) || '' } },
+    edit && edit.id
+  );
+}
+
+function findHistoryEntryById(editId) {
+  const want = String(editId || '').trim();
+  if (!want) return null;
+  let found = null;
+  let category = '';
+  historySites.some(function (site) {
+    return HISTORY_CAT_KEYS.some(function (cat) {
+      const arr = site.categories[cat] || [];
+      const hit = arr.find(function (e) { return e.id === want; });
+      if (hit) {
+        found = hit;
+        category = cat;
+        return true;
+      }
+      return false;
+    });
+  });
+  return found ? { edit: found, category: category } : null;
 }
 
 function clearPanelRevisionSelection() {
@@ -1191,7 +1322,9 @@ function renderHistoryList() {
         const resp = await sendToBrain('GET_CHAT_SESSION', { sessionId: session.id });
         if (resp.success && resp.session) {
           currentSessionId = resp.session.id;
-          chatMessages = Array.isArray(resp.session.messages) ? resp.session.messages : [];
+          chatMessages = filterOutStaleAddSpecPending(
+            Array.isArray(resp.session.messages) ? resp.session.messages : []
+          );
           renderChatMessages();
           renderHistoryList();
         }
@@ -1430,6 +1563,7 @@ chrome.runtime.onMessage.addListener(function (message) {
         renderPageEditsPicker();
       }
       if (st === 'IDLE') {
+        stripAddSpecPendingFromChat();
         closeKeepAlivePort();
         clearPanelRevisionSelection();
         renderPageEditsPicker();
@@ -1500,6 +1634,65 @@ chrome.runtime.onMessage.addListener(function (message) {
 // SECTION 7: Event Listener Registration
 // One listener per button. Pattern: debounce -> validate -> sendToBrain.
 // ═══════════════════════════════════════════════════════════════════════════════
+
+const runHistoryModifyFromHistory = debounce(async function (modifyBtn) {
+  if (!isAuthenticated()) {
+    showNotification('Please log in to modify an edit');
+    return;
+  }
+  const editId = modifyBtn.dataset.editId;
+  const pageKeyAttr = modifyBtn.dataset.pageKey || '';
+  const historyCat = String(modifyBtn.dataset.historyCat || '').toLowerCase();
+  const resolved = findHistoryEntryById(editId);
+  const edit = resolved && resolved.edit;
+  if (!edit) {
+    showNotification('Could not find this edit');
+    return;
+  }
+  const rawUrl = await getCurrentTabUrl();
+  if (!rawUrl || !rawUrl.startsWith('http')) {
+    showNotification('Open a website tab first');
+    return;
+  }
+  const nk = normalizePageKey(rawUrl);
+  if (normalizePageKey(pageKeyAttr) !== nk) {
+    showNotification('Open the tab where this edit was made, then try again.');
+    return;
+  }
+  if (!validateBeforeSend('SYNC_LEDGER_PAGE', { url: nk })) return;
+  const syncResp = await sendToBrain('SYNC_LEDGER_PAGE', { url: nk });
+  if (!syncResp.success) {
+    showNotification(syncResp.error || 'Could not sync edits for this page');
+    return;
+  }
+  const cat = historyCat || resolved.category;
+  const label = historyEditLabelForReference(edit, cat);
+  if (cat === 'customize') {
+    if (!validateBeforeSend('RESUME_CUSTOMIZE_EDIT', { editId: editId, url: nk })) return;
+    const resp = await sendToBrain('RESUME_CUSTOMIZE_EDIT', { editId: editId, url: nk });
+    if (!resp.success) {
+      showNotification(resp.error || 'Could not open customization');
+      return;
+    }
+    panelRevisionEditId = editId;
+    panelRevisionKind = 'customize';
+    addChatMessage('system', 'Reference: customization — ' + label + '. Adjust styles in the dashboard, then Apply.');
+  } else {
+    if (!validateBeforeSend('ARM_REVISE_ADD', { editId: editId, url: nk })) return;
+    const resp = await sendToBrain('ARM_REVISE_ADD', { editId: editId, url: nk });
+    if (!resp.success) {
+      showNotification(resp.error || 'Could not arm revise mode');
+      return;
+    }
+    openKeepAlivePort();
+    panelRevisionEditId = editId;
+    panelRevisionKind = 'add';
+    addChatMessage('system', 'Reference: Add feature — ' + label + '. Describe changes below; when the preview looks right, use Apply.');
+  }
+  setPanelMode('chat');
+  toggleHistorySidebar(false);
+  await refreshBlueprintsAndPicker();
+}, 300);
 
 function registerEventListeners() {
   // Header
@@ -1702,6 +1895,14 @@ function registerEventListeners() {
         return;
       }
 
+    const modifyHistBtn = e.target.closest('.webedit-edit-modify-btn');
+    if (modifyHistBtn?.dataset?.editId) {
+      e.preventDefault();
+      e.stopPropagation();
+      void runHistoryModifyFromHistory(modifyHistBtn);
+      return;
+    }
+
     const actionBtn = e.target.closest('.webedit-edit-action-btn');
     if (!actionBtn?.dataset?.editId) return;
 
@@ -1763,7 +1964,9 @@ function registerEventListeners() {
       const chatResp = await sendToBrain('GET_CHAT_SESSION', { sessionId: lastSession.id });
       if (chatResp.success && chatResp.session) {
         currentSessionId = chatResp.session.id;
-        chatMessages = Array.isArray(chatResp.session.messages) ? chatResp.session.messages : [];
+        chatMessages = filterOutStaleAddSpecPending(
+          Array.isArray(chatResp.session.messages) ? chatResp.session.messages : []
+        );
       }
     }
   }

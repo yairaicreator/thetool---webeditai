@@ -4,13 +4,13 @@
 // Add Feature — Panel Module
 // Runs inside sidepanel.html after sidepanel.js.
 // Manages the Add flow chat messages: pick confirmation, description prompt,
-// spec-ready confirmation with Apply/Cancel action bar, and completion.
+// spec-ready confirmation (Apply / Refine / Cancel on the assistant message),
+// and completion.
 // Communication: JSON messages only (chrome.runtime).
 // ═══════════════════════════════════════════════════════════════════════════════
 
 (function () {
 
-  var actionBarEl = null;
   var pickBarEl = null;
 
   function notify(text) {
@@ -70,79 +70,6 @@
     pickBarEl = null;
   }
 
-  // ─── Apply / Cancel action bar: inserted in the chat area ──────────────
-
-  function showActionBar() {
-    hideActionBar();
-
-    var chatContainer = document.getElementById('webedit-chat-messages');
-    if (!chatContainer) return;
-
-    actionBarEl = document.createElement('div');
-    actionBarEl.className = 'webedit-add-action-bar';
-    actionBarEl.id = 'webedit-add-action-bar';
-
-    var applyBtn = document.createElement('button');
-    applyBtn.className = 'webedit-add-action-btn webedit-add-apply-btn';
-    applyBtn.type = 'button';
-    applyBtn.textContent = 'Apply';
-    applyBtn.addEventListener('click', function () {
-      applyBtn.disabled = true;
-      cancelBtn.disabled = true;
-      chat('system', 'Applying feature...');
-      chrome.runtime.sendMessage({ type: 'ADD_APPLY' }, function (resp) {
-        if (chrome.runtime.lastError) {
-          console.warn('[Add-Panel] ADD_APPLY failed:', chrome.runtime.lastError.message);
-        }
-        if (resp && !resp.success) {
-          notify('Could not apply feature: ' + (resp.error || 'unknown'));
-          applyBtn.disabled = false;
-          cancelBtn.disabled = false;
-        }
-      });
-    });
-
-    var refineBtn = document.createElement('button');
-    refineBtn.className = 'webedit-add-action-btn webedit-add-refine-btn';
-    refineBtn.type = 'button';
-    refineBtn.textContent = 'Refine';
-    refineBtn.addEventListener('click', function () {
-      chat('assistant', 'Describe what you\u2019d like to improve and send it.');
-      var chatInput = document.getElementById('webedit-chat-input');
-      if (chatInput) {
-        chatInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        chatInput.focus();
-        chatInput.setAttribute('placeholder', 'Describe what to improve...');
-      }
-    });
-
-    var cancelBtn = document.createElement('button');
-    cancelBtn.className = 'webedit-add-action-btn webedit-add-cancel-btn';
-    cancelBtn.type = 'button';
-    cancelBtn.textContent = 'Cancel';
-    cancelBtn.addEventListener('click', function () {
-      hideActionBar();
-      chat('system', 'Feature cancelled.');
-      chrome.runtime.sendMessage({ type: 'ADD_CANCEL' }, function () {
-        if (chrome.runtime.lastError) {
-          console.warn('[Add-Panel] ADD_CANCEL failed:', chrome.runtime.lastError.message);
-        }
-      });
-    });
-
-    actionBarEl.appendChild(applyBtn);
-    actionBarEl.appendChild(refineBtn);
-    actionBarEl.appendChild(cancelBtn);
-    chatContainer.appendChild(actionBarEl);
-    chatContainer.scrollTop = chatContainer.scrollHeight;
-  }
-
-  function hideActionBar() {
-    if (!actionBarEl) return;
-    try { actionBarEl.remove(); } catch (_) {}
-    actionBarEl = null;
-  }
-
   // ─── Message listener ────────────────────────────────────────────────────
 
   chrome.runtime.onMessage.addListener(function (message) {
@@ -154,7 +81,6 @@
           showPickBar(message.pickPhase === 'secondary');
         } else if (message.state === 'IDLE') {
           hidePickBar();
-          hideActionBar();
         }
         break;
 
@@ -192,13 +118,15 @@
       }
 
       case 'ADD_SPEC_READY': {
-        chat('assistant', 'Feature generated! Review the preview on the page. Click Apply to keep it, Refine to improve it, or Cancel to discard.');
-        showActionBar();
+        chat(
+          'assistant',
+          'Feature generated! Review the preview on the page. Click Apply to keep it, Refine to improve it, or Cancel to discard.',
+          { addSpecPending: true }
+        );
         break;
       }
 
       case 'ADD_COMPLETED': {
-        hideActionBar();
         var text = 'Feature added! You can review it in EditHistory.';
         if (message.syncFailed) {
           text = 'Feature added locally \u2014 could not sync to cloud.';

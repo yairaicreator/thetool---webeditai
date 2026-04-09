@@ -1176,6 +1176,7 @@ const MESSAGE_SCHEMAS = {
   RENAME_CHAT_SESSION:   ['sessionId', 'title'],
   ARM_REVISE_ADD:        ['editId', 'url'],
   RESUME_CUSTOMIZE_EDIT: ['editId', 'url'],
+  SYNC_LEDGER_PAGE:      ['url'],
 };
 
 function validateMessage(message) {
@@ -1345,6 +1346,19 @@ async function handleGetActiveBlueprints(message) {
   const ledger = await getLedger();
   const active = getActiveBlueprintsForPage(ledger, message.url);
   return { success: true, pageKey: active.pageKey, blueprints: active.blueprints };
+}
+
+async function handleSyncLedgerPage(message) {
+  const url = normalizePageKey(message.url || '');
+  if (!url) {
+    return { success: false, error: 'Missing url' };
+  }
+  const result = await syncLedgerPageFromSupabase(url);
+  if (!result.success) {
+    return { success: false, error: result.error || 'Sync failed' };
+  }
+  await dispatchBlueprintsForPage(result.pageKey, null);
+  return { success: true, pageKey: result.pageKey };
 }
 
 async function handleGenerateFeature(message) {
@@ -1801,6 +1815,10 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
 
         case 'RESUME_CUSTOMIZE_EDIT':
           response = await handleResumeCustomizeEdit(message, callerTabId);
+          break;
+
+        case 'SYNC_LEDGER_PAGE':
+          response = await handleSyncLedgerPage(message);
           break;
 
         default:
