@@ -656,6 +656,73 @@ function stripAddSpecPendingFromChat() {
   persistCurrentSession();
 }
 
+function handleChatThreadSpecClick(e) {
+  const btn = e.target.closest('[data-chat-spec-action]');
+  if (!btn) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const action = btn.getAttribute('data-chat-spec-action');
+  const idx = parseInt(btn.getAttribute('data-spec-msg-index'), 10);
+  if (Number.isNaN(idx) || idx < 0 || idx >= chatMessages.length) return;
+  const msg = chatMessages[idx];
+  if (!msg || !msg.addSpecPending) return;
+
+  if (action === 'apply') {
+    chatMessages.splice(idx, 1);
+    chatMessages.push({ type: 'system', content: 'Applying feature...', timestamp: Date.now() });
+    if (chatMessages.length > MAX_MESSAGES) {
+      chatMessages = chatMessages.slice(-MAX_MESSAGES);
+    }
+    renderChatMessages();
+    persistCurrentSession();
+    chrome.runtime.sendMessage({ type: 'ADD_APPLY' }, function (resp) {
+      if (chrome.runtime.lastError) {
+        console.warn('[Panel] ADD_APPLY failed:', chrome.runtime.lastError.message);
+      }
+      if (resp && !resp.success) {
+        showNotification('Could not apply feature: ' + (resp.error || 'unknown'));
+      }
+    });
+    return;
+  }
+
+  if (action === 'refine') {
+    chatMessages.splice(idx, 1);
+    chatMessages.push({
+      type: 'assistant',
+      content: 'Describe what you\u2019d like to improve and send it.',
+      timestamp: Date.now()
+    });
+    if (chatMessages.length > MAX_MESSAGES) {
+      chatMessages = chatMessages.slice(-MAX_MESSAGES);
+    }
+    renderChatMessages();
+    persistCurrentSession();
+    const chatInput = document.getElementById('webedit-chat-input');
+    if (chatInput) {
+      chatInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      chatInput.focus();
+      chatInput.setAttribute('placeholder', 'Describe what to improve...');
+    }
+    return;
+  }
+
+  if (action === 'cancel') {
+    chatMessages.splice(idx, 1);
+    chatMessages.push({ type: 'system', content: 'Feature cancelled.', timestamp: Date.now() });
+    if (chatMessages.length > MAX_MESSAGES) {
+      chatMessages = chatMessages.slice(-MAX_MESSAGES);
+    }
+    renderChatMessages();
+    persistCurrentSession();
+    chrome.runtime.sendMessage({ type: 'ADD_CANCEL' }, function () {
+      if (chrome.runtime.lastError) {
+        console.warn('[Panel] ADD_CANCEL failed:', chrome.runtime.lastError.message);
+      }
+    });
+  }
+}
+
 function showNotification(text) {
   ensureSessionId();
   chatMessages.push({ type: 'system', content: text, timestamp: Date.now() });
@@ -704,74 +771,24 @@ function updateChatHomeVisibility() {
       applySpecBtn.type = 'button';
       applySpecBtn.className = 'webedit-chat-action-btn webedit-chat-spec-apply-btn';
       applySpecBtn.textContent = 'Apply';
-      applySpecBtn.addEventListener('click', debounce(function () {
-        const specIdx = chatMessages.indexOf(msg);
-        if (specIdx === -1) return;
-        chatMessages.splice(specIdx, 1);
-        chatMessages.push({ type: 'system', content: 'Applying feature...', timestamp: Date.now() });
-        if (chatMessages.length > MAX_MESSAGES) {
-          chatMessages = chatMessages.slice(-MAX_MESSAGES);
-        }
-        renderChatMessages();
-        persistCurrentSession();
-        chrome.runtime.sendMessage({ type: 'ADD_APPLY' }, function (resp) {
-          if (chrome.runtime.lastError) {
-            console.warn('[Panel] ADD_APPLY failed:', chrome.runtime.lastError.message);
-          }
-          if (resp && !resp.success) {
-            showNotification('Could not apply feature: ' + (resp.error || 'unknown'));
-          }
-        });
-      }));
+      applySpecBtn.setAttribute('data-chat-spec-action', 'apply');
+      applySpecBtn.setAttribute('data-spec-msg-index', String(idx));
       specRow.appendChild(applySpecBtn);
 
       const refineSpecBtn = document.createElement('button');
       refineSpecBtn.type = 'button';
       refineSpecBtn.className = 'webedit-chat-action-btn webedit-chat-spec-refine-btn';
       refineSpecBtn.textContent = 'Refine';
-      refineSpecBtn.addEventListener('click', debounce(function () {
-        const specIdx = chatMessages.indexOf(msg);
-        if (specIdx === -1) return;
-        chatMessages.splice(specIdx, 1);
-        chatMessages.push({
-          type: 'assistant',
-          content: 'Describe what you\u2019d like to improve and send it.',
-          timestamp: Date.now()
-        });
-        if (chatMessages.length > MAX_MESSAGES) {
-          chatMessages = chatMessages.slice(-MAX_MESSAGES);
-        }
-        renderChatMessages();
-        persistCurrentSession();
-        const chatInput = document.getElementById('webedit-chat-input');
-        if (chatInput) {
-          chatInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          chatInput.focus();
-          chatInput.setAttribute('placeholder', 'Describe what to improve...');
-        }
-      }));
+      refineSpecBtn.setAttribute('data-chat-spec-action', 'refine');
+      refineSpecBtn.setAttribute('data-spec-msg-index', String(idx));
       specRow.appendChild(refineSpecBtn);
 
       const cancelSpecBtn = document.createElement('button');
       cancelSpecBtn.type = 'button';
       cancelSpecBtn.className = 'webedit-chat-action-btn webedit-chat-spec-cancel-btn';
       cancelSpecBtn.textContent = 'Cancel';
-      cancelSpecBtn.addEventListener('click', debounce(function () {
-        const specIdx = chatMessages.indexOf(msg);
-        if (specIdx === -1) return;
-        chatMessages.splice(specIdx, 1);
-        chatMessages.push({ type: 'system', content: 'Feature cancelled.', timestamp: Date.now() });
-        if (chatMessages.length > MAX_MESSAGES) {
-          chatMessages = chatMessages.slice(-MAX_MESSAGES);
-        }
-        renderChatMessages();
-        persistCurrentSession();
-        chrome.runtime.sendMessage({ type: 'ADD_CANCEL' }, function () {
-          if (chrome.runtime.lastError) {
-            console.warn('[Panel] ADD_CANCEL failed:', chrome.runtime.lastError.message);
-          }
-        });
-      }));
+      cancelSpecBtn.setAttribute('data-chat-spec-action', 'cancel');
+      cancelSpecBtn.setAttribute('data-spec-msg-index', String(idx));
       specRow.appendChild(cancelSpecBtn);
 
       msgEl.appendChild(specRow);
@@ -1635,66 +1652,76 @@ chrome.runtime.onMessage.addListener(function (message) {
 // One listener per button. Pattern: debounce -> validate -> sendToBrain.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const runHistoryModifyFromHistory = debounce(async function (modifyBtn) {
-  if (!isAuthenticated()) {
-    showNotification('Please log in to modify an edit');
-    return;
-  }
-  const editId = modifyBtn.dataset.editId;
-  const pageKeyAttr = modifyBtn.dataset.pageKey || '';
-  const historyCat = String(modifyBtn.dataset.historyCat || '').toLowerCase();
-  const resolved = findHistoryEntryById(editId);
-  const edit = resolved && resolved.edit;
-  if (!edit) {
-    showNotification('Could not find this edit');
-    return;
-  }
-  const rawUrl = await getCurrentTabUrl();
-  if (!rawUrl || !rawUrl.startsWith('http')) {
-    showNotification('Open a website tab first');
-    return;
-  }
-  const nk = normalizePageKey(rawUrl);
-  if (normalizePageKey(pageKeyAttr) !== nk) {
-    showNotification('Open the tab where this edit was made, then try again.');
-    return;
-  }
-  if (!validateBeforeSend('SYNC_LEDGER_PAGE', { url: nk })) return;
-  const syncResp = await sendToBrain('SYNC_LEDGER_PAGE', { url: nk });
-  if (!syncResp.success) {
-    showNotification(syncResp.error || 'Could not sync edits for this page');
-    return;
-  }
-  const cat = historyCat || resolved.category;
-  const label = historyEditLabelForReference(edit, cat);
-  if (cat === 'customize') {
-    if (!validateBeforeSend('RESUME_CUSTOMIZE_EDIT', { editId: editId, url: nk })) return;
-    const resp = await sendToBrain('RESUME_CUSTOMIZE_EDIT', { editId: editId, url: nk });
-    if (!resp.success) {
-      showNotification(resp.error || 'Could not open customization');
+let historyModifyInFlight = false;
+
+async function runHistoryModifyFromHistory(modifyBtn) {
+  if (historyModifyInFlight) return;
+  historyModifyInFlight = true;
+  try {
+    if (!isAuthenticated()) {
+      showNotification('Please log in to modify an edit');
       return;
     }
-    panelRevisionEditId = editId;
-    panelRevisionKind = 'customize';
-    addChatMessage('system', 'Reference: customization — ' + label + '. Adjust styles in the dashboard, then Apply.');
-  } else {
-    if (!validateBeforeSend('ARM_REVISE_ADD', { editId: editId, url: nk })) return;
-    const resp = await sendToBrain('ARM_REVISE_ADD', { editId: editId, url: nk });
-    if (!resp.success) {
-      showNotification(resp.error || 'Could not arm revise mode');
+    const editId = modifyBtn.dataset.editId;
+    const pageKeyAttr = modifyBtn.dataset.pageKey || '';
+    const historyCat = String(modifyBtn.dataset.historyCat || '').toLowerCase();
+    const resolved = findHistoryEntryById(editId);
+    const edit = resolved && resolved.edit;
+    if (!edit) {
+      showNotification('Could not find this edit');
       return;
     }
-    openKeepAlivePort();
-    panelRevisionEditId = editId;
-    panelRevisionKind = 'add';
-    addChatMessage('system', 'Reference: Add feature — ' + label + '. Describe changes below; when the preview looks right, use Apply.');
+    const rawUrl = await getCurrentTabUrl();
+    if (!rawUrl || !rawUrl.startsWith('http')) {
+      showNotification('Open a website tab first');
+      return;
+    }
+    const nk = normalizePageKey(rawUrl);
+    if (normalizePageKey(pageKeyAttr) !== nk) {
+      showNotification('Open the tab where this edit was made, then try again.');
+      return;
+    }
+    if (!validateBeforeSend('SYNC_LEDGER_PAGE', { url: nk })) return;
+    const syncResp = await sendToBrain('SYNC_LEDGER_PAGE', { url: nk });
+    if (!syncResp.success) {
+      showNotification(syncResp.error || 'Could not sync edits for this page');
+      return;
+    }
+    const cat = historyCat || resolved.category;
+    const label = historyEditLabelForReference(edit, cat);
+    if (cat === 'customize') {
+      if (!validateBeforeSend('RESUME_CUSTOMIZE_EDIT', { editId: editId, url: nk })) return;
+      const resp = await sendToBrain('RESUME_CUSTOMIZE_EDIT', { editId: editId, url: nk });
+      if (!resp.success) {
+        showNotification(resp.error || 'Could not open customization');
+        return;
+      }
+      panelRevisionEditId = editId;
+      panelRevisionKind = 'customize';
+      addChatMessage('system', 'Reference: customization — ' + label + '. Adjust styles in the dashboard, then Apply.');
+    } else {
+      if (!validateBeforeSend('ARM_REVISE_ADD', { editId: editId, url: nk })) return;
+      const resp = await sendToBrain('ARM_REVISE_ADD', { editId: editId, url: nk });
+      if (!resp.success) {
+        showNotification(resp.error || 'Could not arm revise mode');
+        return;
+      }
+      openKeepAlivePort();
+      panelRevisionEditId = editId;
+      panelRevisionKind = 'add';
+      addChatMessage('system', 'Reference: Add feature — ' + label + '. Describe changes below; when the preview looks right, use Apply.');
+    }
+    setPanelMode('chat');
+    toggleHistorySidebar(false);
+    await refreshBlueprintsAndPicker();
+  } finally {
+    historyModifyInFlight = false;
   }
-  setPanelMode('chat');
-  toggleHistorySidebar(false);
-  await refreshBlueprintsAndPicker();
-}, 300);
+}
 
 function registerEventListeners() {
+  els.chatThread?.addEventListener('click', handleChatThreadSpecClick);
+
   // Header
   if (els.headerHamburger && els.historySidebar) {
     els.headerHamburger.addEventListener('click', function (e) {

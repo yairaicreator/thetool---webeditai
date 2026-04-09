@@ -1354,6 +1354,8 @@
 /* Add spec review — buttons under assistant message (same row as chat actions) */
 .webedit-chat-spec-actions {
   flex-wrap: wrap;
+  position: relative;
+  z-index: 2;
 }
 
 .webedit-chat-spec-apply-btn {
