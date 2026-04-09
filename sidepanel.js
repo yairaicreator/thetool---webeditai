@@ -17,6 +17,7 @@
   chatPanel:       document.getElementById('webedit-chat-panel'),
   headerHamburger: document.getElementById('webedit-header-hamburger'),
   homeBtn:         document.getElementById('webedit-home-btn'),
+  headerUpgrade:   document.getElementById('webedit-header-upgrade'),
   signinBtn:       document.getElementById('webedit-signin-btn'),
   authGuard:       document.getElementById('webedit-auth-guard'),
   authGuardTitle:  document.getElementById('webedit-auth-guard-title'),
@@ -62,8 +63,6 @@
   profilePlanBadge: document.getElementById('webedit-profile-plan-badge'),
   profilePlanDesc: document.getElementById('webedit-profile-plan-desc'),
   profilePaymentStatus: document.getElementById('webedit-profile-payment-status'),
-  chatLifetimeHint: document.getElementById('webedit-chat-lifetime-hint'),
-  chatLifetimeUpgrade: document.getElementById('webedit-chat-lifetime-upgrade'),
   profilePrefAccount: document.getElementById('webedit-profile-pref-account'),
   profilePrefNotifications: document.getElementById('webedit-profile-pref-notifications'),
   profilePrefPrivacy: document.getElementById('webedit-profile-pref-privacy'),
@@ -238,6 +237,13 @@ let currentPaymentPlan = 'Free';
 
 let profilePlanRefreshTimer = null;
 
+/** True while Brain reports Add flow (pick / preview / generate). */
+let addBrainFlowActive = false;
+
+/** Free-tier Add usage (from WEBEDIT_GET_FREE_ADD_USAGE). */
+let freeAddUsageCount = 0;
+let freeAddMax = 1;
+
 const WEBEDIT_PRICING_URL = 'https://www.webeditai.com/#/pricing';
 const WEBEDIT_SITE_URL = 'https://www.webeditai.com/';
 
@@ -249,9 +255,30 @@ function isLifetimePlan() {
   return String(currentPaymentPlan || '').trim() === 'LifeTime';
 }
 
+async function refreshFreeAddUsage() {
+  if (!isAuthenticated() || isLifetimePlan()) {
+    freeAddUsageCount = 0;
+    freeAddMax = 1;
+    return;
+  }
+  const r = await sendToBrain('WEBEDIT_GET_FREE_ADD_USAGE');
+  if (r && r.success && r.maxCount != null) {
+    freeAddUsageCount = Math.max(0, Number(r.count) || 0);
+    freeAddMax = Math.max(1, Number(r.maxCount) || 1);
+  }
+}
+
+function updateHeaderUpgradeVisibility() {
+  if (!els.headerUpgrade) return;
+  els.headerUpgrade.hidden = !isAuthenticated() || isLifetimePlan();
+}
+
 async function syncPlanFromBrain() {
   if (!isAuthenticated()) {
     currentPaymentPlan = 'Free';
+    freeAddUsageCount = 0;
+    freeAddMax = 1;
+    addBrainFlowActive = false;
     updateChatPlanControls();
     return;
   }
@@ -259,6 +286,7 @@ async function syncPlanFromBrain() {
   if (r.success && r.plan) {
     currentPaymentPlan = r.plan;
   }
+  await refreshFreeAddUsage();
   updateChatPlanControls();
 }
 
@@ -270,6 +298,8 @@ function debouncedRefreshPlanFromServer() {
       if (r.success && r.plan) {
         currentPaymentPlan = r.plan;
       }
+      return refreshFreeAddUsage();
+    }).then(function () {
       updateChatPlanControls();
       if (currentPanelMode === 'profile') {
         renderProfileView();
@@ -280,26 +310,39 @@ function debouncedRefreshPlanFromServer() {
 
 function updateChatPlanControls() {
   const auth = isAuthenticated();
-  const lockedForPlan = auth && !isLifetimePlan();
-  const inputDisabled = !auth || lockedForPlan;
+  const lifetime = isLifetimePlan();
+  const freeAddExhausted = auth && !lifetime && freeAddUsageCount >= freeAddMax;
+
+  let inputDisabled;
+  let placeholder;
+
+  if (!auth) {
+    inputDisabled = true;
+    placeholder = 'Ask AI to edit this page…';
+  } else if (lifetime) {
+    inputDisabled = false;
+    placeholder = 'Ask AI to edit this page…';
+  } else if (addBrainFlowActive) {
+    inputDisabled = false;
+    placeholder = 'Describe the feature or how you want to refine it…';
+  } else if (freeAddExhausted) {
+    inputDisabled = true;
+    placeholder = 'You’ve used your free Add. Upgrade for unlimited AI chat and edits…';
+  } else {
+    inputDisabled = true;
+    placeholder = 'Use Add below, pick where to place it, then describe your feature here…';
+  }
+
   if (els.chatInput) {
     els.chatInput.disabled = inputDisabled;
     els.chatInput.setAttribute('aria-disabled', inputDisabled ? 'true' : 'false');
-    if (!auth) {
-      els.chatInput.placeholder = 'Ask AI to edit this page…';
-    } else if (lockedForPlan) {
-      els.chatInput.placeholder = 'AI chat — upgrade to Lifetime to unlock…';
-    } else {
-      els.chatInput.placeholder = 'Ask AI to edit this page…';
-    }
+    els.chatInput.placeholder = placeholder;
   }
   if (els.sendBtn) {
     els.sendBtn.disabled = inputDisabled;
     els.sendBtn.setAttribute('aria-disabled', inputDisabled ? 'true' : 'false');
   }
-  if (els.chatLifetimeHint) {
-    els.chatLifetimeHint.classList.toggle('hidden', !lockedForPlan);
-  }
+  updateHeaderUpgradeVisibility();
 }
 
 function updateSidebarNavActive() {
@@ -1340,10 +1383,12 @@ chrome.runtime.onMessage.addListener(function (message) {
       if (message.plan) {
         currentPaymentPlan = message.plan;
       }
-      updateChatPlanControls();
-      if (currentPanelMode === 'profile') {
-        renderProfileView();
-      }
+      void refreshFreeAddUsage().then(function () {
+        updateChatPlanControls();
+        if (currentPanelMode === 'profile') {
+          renderProfileView();
+        }
+      });
       break;
     }
 
@@ -1370,18 +1415,32 @@ chrome.runtime.onMessage.addListener(function (message) {
       renderEditHistoryView();
       break;
 
-    case 'FLOW_STATE_CHANGED':
-      if (message.state === 'PICKING' && message.feature) {
+    case 'FLOW_STATE_CHANGED': {
+      const st = message.state;
+      const feat = message.feature;
+      if (feat === 'add' && (st === 'PICKING' || st === 'PREVIEWING' || st === 'PROCESSING')) {
+        addBrainFlowActive = true;
+      } else if (st === 'IDLE' || feat !== 'add') {
+        addBrainFlowActive = false;
+      }
+
+      if (st === 'PICKING' && message.feature) {
         clearPanelRevisionSelection();
         showNotification('Pick an element on the page for: ' + message.feature);
         renderPageEditsPicker();
       }
-      if (message.state === 'IDLE') {
+      if (st === 'IDLE') {
         closeKeepAlivePort();
         clearPanelRevisionSelection();
         renderPageEditsPicker();
+        void refreshFreeAddUsage().then(function () {
+          updateChatPlanControls();
+        });
+      } else {
+        updateChatPlanControls();
       }
       break;
+    }
 
     case 'WEBEDIT_FLOW_CANCELLED':
       if (message.text) {
@@ -1456,6 +1515,7 @@ function registerEventListeners() {
       if (els.headerHamburger.contains(e.target)) return;
       if (els.bottomNav && els.bottomNav.contains(e.target)) return;
       if (els.signinBtn && els.signinBtn.contains(e.target)) return;
+      if (els.headerUpgrade && els.headerUpgrade.contains(e.target)) return;
       toggleHistorySidebar(false);
     });
   }
@@ -1532,7 +1592,7 @@ function registerEventListeners() {
     }
   });
 
-  els.chatLifetimeUpgrade?.addEventListener('click', function (e) {
+  els.headerUpgrade?.addEventListener('click', function (e) {
     e.preventDefault();
     openPricingPage();
   });
@@ -1589,10 +1649,21 @@ function registerEventListeners() {
     const text = (els.chatInput?.value || '').trim();
     if (!text) return;
     if (!isAuthenticated()) { showNotification('Please log in to use WebEdit'); return; }
-    if (!isLifetimePlan()) {
-      showNotification('AI chat is a Lifetime feature. Upgrade: ' + WEBEDIT_PRICING_URL);
+
+    if (!isLifetimePlan() && !addBrainFlowActive) {
+      els.chatInput.value = '';
+      addChatMessage('user', text);
+      const exhausted = freeAddUsageCount >= freeAddMax;
+      addChatMessage(
+        'assistant',
+        exhausted
+          ? 'You’ve used your free Add. Use Upgrade in the header for unlimited AI chat and edits.'
+          : 'To use the chat here, start the Add flow: tap Add below, pick where the feature goes on the page, then describe it in this box. Full AI chat for every tool is a Lifetime feature.'
+      );
+      persistCurrentSession();
       return;
     }
+
     els.chatInput.value = '';
     addChatMessage('user', text);
     addChatMessage('system', 'Processing...');

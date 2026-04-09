@@ -1466,6 +1466,11 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
           sendResponse({ success: true, plan: plan || 'Free' });
           return;
         }
+        case 'WEBEDIT_GET_FREE_ADD_USAGE': {
+          const summary = await WebeditGatekeeper.getFreeAddUsageSummary();
+          sendResponse(summary);
+          return;
+        }
       }
 
       // ── Step 1: Strict Data Validation ──
@@ -1533,11 +1538,6 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
           break;
 
         case 'GENERATE_FEATURE': {
-          const chatGate = await WebeditGatekeeper.assertGate('chat', {});
-          if (!chatGate.ok) {
-            response = { success: false, error: chatGate.message, gateCode: chatGate.code };
-            break;
-          }
           if (brainState.current === BRAIN_STATES.PREVIEWING
               && brainState.activeFlow?.feature === 'add') {
             const addGenHandler = getFeatureHandler('add', 'onGenerate');
@@ -1545,6 +1545,11 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
               response = await addGenHandler(message);
               break;
             }
+          }
+          const chatGate = await WebeditGatekeeper.assertGate('chat', {});
+          if (!chatGate.ok) {
+            response = { success: false, error: chatGate.message, gateCode: chatGate.code };
+            break;
           }
           transitionState(BRAIN_STATES.PROCESSING, { feature: 'add', tabId: callerTabId });
           try {

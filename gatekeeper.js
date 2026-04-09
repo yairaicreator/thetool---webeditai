@@ -138,6 +138,26 @@ async function webeditSaveUsage(userId, usage) {
   await chrome.storage.local.set({ [webeditUsageStorageKey(userId)]: usage });
 }
 
+async function webeditGetFreeAddUsageSummary() {
+  const { data } = await SupabaseClient.getSession({ allowRefresh: false });
+  const uid = data?.session?.user?.id;
+  const maxCount = WEBEDIT_GATE_LIMITS.add.maxCount;
+  if (!uid) {
+    return { success: true, count: 0, maxCount: maxCount };
+  }
+  const plan = await webeditGetCachedPlanForUser(uid);
+  if (plan === 'LifeTime') {
+    return { success: true, count: 0, maxCount: maxCount, lifetime: true };
+  }
+  const usage = await webeditLoadUsage(uid);
+  const bucket = usage.add || { count: 0 };
+  return {
+    success: true,
+    count: Math.max(0, Number(bucket.count) || 0),
+    maxCount: maxCount
+  };
+}
+
 function webeditGateQuotaMessage(feature, kind, lim) {
   const names = { add: 'Add', customize: 'Customize', remove: 'Remove' };
   const n = names[feature] || feature;
@@ -182,7 +202,7 @@ async function webeditAssertGate(feature, context) {
       ok: false,
       code: 'GATE_CHAT',
       message:
-        'AI chat is a Lifetime feature. Upgrade to unlock unlimited chat and edits: https://www.webeditai.com/#/pricing'
+        'Full AI chat for every mode is a Lifetime feature. On Free, use Add: pick a spot on the page, then describe your feature in the chat box. Upgrade: https://www.webeditai.com/#/pricing'
     };
   }
   const pageUrl = String(ctx.url || '').trim();
@@ -244,5 +264,6 @@ var WebeditGatekeeper = {
   fetchPaymentPlanFromSupabase: webeditFetchPaymentPlanFromSupabase,
   assertGate: webeditAssertGate,
   recordUsage: webeditRecordUsage,
-  notifyGateBlocked: webeditNotifyGateBlocked
+  notifyGateBlocked: webeditNotifyGateBlocked,
+  getFreeAddUsageSummary: webeditGetFreeAddUsageSummary
 };

@@ -41,7 +41,7 @@
 /* Header Navigation Bar */
 .webedit-panel-header {
   display: grid;
-  grid-template-columns: 44px 1fr 56px;
+  grid-template-columns: 44px 1fr auto;
   align-items: center;
   column-gap: 4px;
   padding: 0 8px;
@@ -52,6 +52,31 @@
   position: relative;
   flex-shrink: 0;
   height: 48px;
+}
+
+.webedit-header-trailing {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-self: end;
+}
+
+.webedit-header-upgrade {
+  border: 1.5px solid var(--we-primary);
+  background: transparent;
+  color: var(--we-primary);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-family: inherit;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.webedit-header-upgrade:hover {
+  background: var(--we-primary-soft);
 }
 
 .webedit-panel-header .webedit-nav-btn {
@@ -66,10 +91,6 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.webedit-panel-header .webedit-nav-btn.signin-btn {
-  justify-self: end;
 }
 
 .webedit-nav-btn {
@@ -1231,6 +1252,27 @@
   opacity: 1;
 }
 
+.webedit-feature-btn-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.webedit-feature-beta {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #64748b;
+  opacity: 0.9;
+  line-height: 1;
+}
+
+.webedit-feature-btn.active .webedit-feature-beta {
+  color: var(--we-primary-hover);
+  opacity: 1;
+}
+
 /* Remove-feature cancel bar — sits above the feature buttons */
 .webedit-remove-cancel-bar {
   display: flex;
@@ -1339,49 +1381,6 @@
 .webedit-tools-menu,
 .webedit-tool-btn {
   display: none !important;
-}
-
-/* Free plan: AI chat locked — hint above input */
-.webedit-chat-lifetime-hint {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 10px;
-  margin: 0 28px 8px;
-  padding: 8px 12px;
-  border-radius: 10px;
-  background: #f1f5f9;
-  border: 1px solid #e2e8f0;
-  font-size: 12px;
-  color: #475569;
-  line-height: 1.35;
-}
-
-.webedit-chat-lifetime-hint .webedit-chat-lock-icon {
-  display: flex;
-  color: #64748b;
-  flex-shrink: 0;
-}
-
-.webedit-chat-lifetime-hint .webedit-chat-lifetime-hint-text {
-  flex: 1;
-  min-width: 140px;
-}
-
-.webedit-chat-lifetime-upgrade {
-  border: none;
-  background: transparent;
-  color: var(--we-primary);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  text-decoration: underline;
-  padding: 0;
-  font-family: inherit;
-}
-
-.webedit-chat-lifetime-upgrade:hover {
-  color: var(--we-primary-hover);
 }
 
 .webedit-chat-input:disabled,
