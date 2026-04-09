@@ -1358,6 +1358,13 @@
   z-index: 2;
 }
 
+.webedit-chat-spec-actions .webedit-chat-action-btn {
+  pointer-events: auto;
+  cursor: pointer;
+  position: relative;
+  z-index: 2;
+}
+
 .webedit-chat-spec-apply-btn {
   background: #1d4ed8;
   color: #ffffff;

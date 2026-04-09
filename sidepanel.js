@@ -656,16 +656,16 @@ function stripAddSpecPendingFromChat() {
   persistCurrentSession();
 }
 
-function handleChatThreadSpecClick(e) {
-  const btn = e.target.closest('[data-chat-spec-action]');
-  if (!btn) return;
-  e.preventDefault();
-  e.stopPropagation();
-  const action = btn.getAttribute('data-chat-spec-action');
-  const idx = parseInt(btn.getAttribute('data-spec-msg-index'), 10);
-  if (Number.isNaN(idx) || idx < 0 || idx >= chatMessages.length) return;
+function executeAddSpecActionAtIndex(idx, action) {
+  if (idx < 0 || idx >= chatMessages.length) {
+    showNotification('Could not run that action. Try reloading the panel.');
+    return;
+  }
   const msg = chatMessages[idx];
-  if (!msg || !msg.addSpecPending) return;
+  if (!msg || !msg.addSpecPending) {
+    showNotification('That preview action is no longer available.');
+    return;
+  }
 
   if (action === 'apply') {
     chatMessages.splice(idx, 1);
@@ -767,28 +767,38 @@ function updateChatHomeVisibility() {
       const specRow = document.createElement('div');
       specRow.className = 'webedit-chat-action-buttons webedit-chat-spec-actions';
 
+      const specIdx = idx;
+      const bindSpecBtn = function (btn, act) {
+        btn.addEventListener(
+          'click',
+          function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            executeAddSpecActionAtIndex(specIdx, act);
+          },
+          { capture: true }
+        );
+      };
+
       const applySpecBtn = document.createElement('button');
       applySpecBtn.type = 'button';
       applySpecBtn.className = 'webedit-chat-action-btn webedit-chat-spec-apply-btn';
       applySpecBtn.textContent = 'Apply';
-      applySpecBtn.setAttribute('data-chat-spec-action', 'apply');
-      applySpecBtn.setAttribute('data-spec-msg-index', String(idx));
+      bindSpecBtn(applySpecBtn, 'apply');
       specRow.appendChild(applySpecBtn);
 
       const refineSpecBtn = document.createElement('button');
       refineSpecBtn.type = 'button';
       refineSpecBtn.className = 'webedit-chat-action-btn webedit-chat-spec-refine-btn';
       refineSpecBtn.textContent = 'Refine';
-      refineSpecBtn.setAttribute('data-chat-spec-action', 'refine');
-      refineSpecBtn.setAttribute('data-spec-msg-index', String(idx));
+      bindSpecBtn(refineSpecBtn, 'refine');
       specRow.appendChild(refineSpecBtn);
 
       const cancelSpecBtn = document.createElement('button');
       cancelSpecBtn.type = 'button';
       cancelSpecBtn.className = 'webedit-chat-action-btn webedit-chat-spec-cancel-btn';
       cancelSpecBtn.textContent = 'Cancel';
-      cancelSpecBtn.setAttribute('data-chat-spec-action', 'cancel');
-      cancelSpecBtn.setAttribute('data-spec-msg-index', String(idx));
+      bindSpecBtn(cancelSpecBtn, 'cancel');
       specRow.appendChild(cancelSpecBtn);
 
       msgEl.appendChild(specRow);
@@ -1653,6 +1663,7 @@ chrome.runtime.onMessage.addListener(function (message) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 let historyModifyInFlight = false;
+let panelInteractionListenersBound = false;
 
 async function runHistoryModifyFromHistory(modifyBtn) {
   if (historyModifyInFlight) return;
@@ -1662,9 +1673,21 @@ async function runHistoryModifyFromHistory(modifyBtn) {
       showNotification('Please log in to modify an edit');
       return;
     }
-    const editId = modifyBtn.dataset.editId;
-    const pageKeyAttr = modifyBtn.dataset.pageKey || '';
-    const historyCat = String(modifyBtn.dataset.historyCat || '').toLowerCase();
+    const editId =
+      modifyBtn.getAttribute('data-edit-id') ||
+      modifyBtn.dataset.editId ||
+      '';
+    const pageKeyAttr =
+      modifyBtn.getAttribute('data-page-key') ||
+      modifyBtn.dataset.pageKey ||
+      '';
+    const historyCat = String(
+      modifyBtn.getAttribute('data-history-cat') || modifyBtn.dataset.historyCat || ''
+    ).toLowerCase();
+    if (!editId) {
+      showNotification('Could not read this edit. Try refreshing Edit History.');
+      return;
+    }
     const resolved = findHistoryEntryById(editId);
     const edit = resolved && resolved.edit;
     if (!edit) {
@@ -1720,7 +1743,8 @@ async function runHistoryModifyFromHistory(modifyBtn) {
 }
 
 function registerEventListeners() {
-  els.chatThread?.addEventListener('click', handleChatThreadSpecClick);
+  if (panelInteractionListenersBound) return;
+  panelInteractionListenersBound = true;
 
   // Header
   if (els.headerHamburger && els.historySidebar) {
@@ -1923,7 +1947,10 @@ function registerEventListeners() {
       }
 
     const modifyHistBtn = e.target.closest('.webedit-edit-modify-btn');
-    if (modifyHistBtn?.dataset?.editId) {
+    if (
+      modifyHistBtn &&
+      (modifyHistBtn.getAttribute('data-edit-id') || modifyHistBtn.dataset.editId)
+    ) {
       e.preventDefault();
       e.stopPropagation();
       void runHistoryModifyFromHistory(modifyHistBtn);
@@ -1957,6 +1984,8 @@ function registerEventListeners() {
 // SECTION 8: Init Sequence
 // On Panel load, ask the Brain for everything we need, then start listening.
 // ═══════════════════════════════════════════════════════════════════════════════
+
+registerEventListeners();
 
 (async function init() {
   // 1. Check Brain is alive
@@ -2001,12 +2030,11 @@ function registerEventListeners() {
   // 5. Start periodic Dead Receiver ping (every 30s)
   setInterval(pingBrain, 30000);
 
-  // 6. Register all event listeners
+  // 6. Finish UI (DOM listeners already registered synchronously below)
   setSelectedFeature(selectedFeature);
     renderChatMessages();
   renderEditHistoryView();
   setPanelMode(currentPanelMode);
-  registerEventListeners();
 
   chrome.tabs.onActivated.addListener(function () {
     refreshBlueprintsAndPicker();
