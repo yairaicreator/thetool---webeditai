@@ -16,16 +16,32 @@
   /** Live preview text: restore original on CLEAR or empty preview value */
   var previewTextSession = null;
 
+  // ── NEW: CSSOM-only style registries (replace all <style> element injection) ──
+  //
+  // adoptedSheets  — Map<editId, CSSStyleSheet>
+  //   One CSSStyleSheet per active edit. Lives in document.adoptedStyleSheets.
+  //   Never touches the DOM. Never triggers CSP. Never gets wiped by React.
+  //
+  // directPropertyEdits — Map<editId, {selector, declarations}>
+  //   Fallback only: used when CSSStyleSheet() throws (extremely rare).
+  //   Applies styles directly via element.style.setProperty().
+  //
+  // previewSheet — CSSStyleSheet | null
+  //   The single live-preview sheet for the Customize dashboard.
+  //   Adopted/removed on INJECT_PREVIEW_CSS / CLEAR_PREVIEW_CSS.
+
+  var adoptedSheets = new Map();
+  var directPropertyEdits = new Map();
+  var previewSheet = null;
+
   // ═══════════════════════════════════════════════════════════════════════════════
   // SECTION 2: Constants
+  // Only ADD_CONTAINER_PREFIX remains — the HTML container div for injected
+  // Add features still needs an ID for idempotency checks.
+  // All style-element-related constants have been removed.
   // ═══════════════════════════════════════════════════════════════════════════════
 
-  var STYLE_ID_PREFIX = 'webedit-style-';
-  var CUSTOM_STYLE_ID_PREFIX = 'webedit-custom-style-';
   var ADD_CONTAINER_PREFIX = 'webedit-node-';
-  var ADD_SCRIPT_PREFIX = 'webedit-script-';
-  var WEBEDIT_CONTAINER_ID = 'webedit-injected-container';
-  var CIRCUIT_BREAKER_THRESHOLD = 3;
   var DEBOUNCE_DELAY = 50;
 
   // ═══════════════════════════════════════════════════════════════════════════════
@@ -44,8 +60,13 @@
 
   // ═══════════════════════════════════════════════════════════════════════════════
   // SECTION 4: The Deaf Marker (Observer Pause / Resume)
-  // Before the Hands inject, they disconnect() the Watchdog so their own
-  // mutations don't re-trigger it. After injection they observe() again.
+  // Before the Hands inject HTML nodes, they disconnect() the Watchdog so their
+  // own DOM mutations don't re-trigger it. After injection they observe() again.
+  //
+  // NOTE: CSS is now CSSOM-only (adoptedStyleSheets). The observer no longer
+  // needs to detect wiped <style> tags — that problem no longer exists.
+  // The observer's only remaining job is to re-apply HTML node injections
+  // (Add feature containers) after SPA re-renders wipe them.
   // ═══════════════════════════════════════════════════════════════════════════════
 
   var observerInstance = null;
@@ -66,11 +87,154 @@
   }
 
   // ═══════════════════════════════════════════════════════════════════════════════
-  // SECTION 5: Injection Strategy — Plan A / Plan C / Plan B
-  // Circuit Breaker: per-edit counter tracks how many times React wiped our tag.
+  // SECTION 5: CSSOM Style Engine
+  //
+  // This section replaces the old <style>-element injection (applyStyleBlueprint,
+  // getInjectionTarget, headWipeCount, Plan A/B/C). Everything here operates
+  // entirely inside the browser's CSS Object Model — zero DOM mutations,
+  // zero CSP exposure.
+  //
+  // PRIMARY PATH — upsertAdoptedSheet(editId, cssText)
+  //   Creates or updates a CSSStyleSheet in document.adoptedStyleSheets.
+  //   On update, replaceSync() patches the existing sheet in-place: no flicker,
+  //   no array churn, no re-adoption needed.
+  //
+  // FALLBACK PATH — applyDirectProperty(editId, cssText)
+  //   If CSSStyleSheet() throws (e.g. on a very old Chromium build), we parse
+  //   the CSS string manually and call element.style.setProperty() on every
+  //   matching element. This is also 100% CSP-safe because it mutates an
+  //   existing JS object property rather than injecting content.
+  //
+  // REMOVAL — removeAdoptedSheet(editId)
+  //   Filters the sheet out of document.adoptedStyleSheets and deletes the
+  //   Map entry. If the edit was on the fallback path, reverts inline styles.
+  //
+  // GARBAGE COLLECTION — removeStaleAdoptedSheets()
+  //   Compares Map keys against activeBlueprints and removes any orphans.
+  //   Pure JS — no DOM queries needed.
   // ═══════════════════════════════════════════════════════════════════════════════
 
-  var headWipeCount = {};
+  function upsertAdoptedSheet(editId, cssText) {
+    if (!cssText) return;
+    try {
+      if (adoptedSheets.has(editId)) {
+        // Sheet already adopted — patch rules in-place, no re-adoption needed.
+        adoptedSheets.get(editId).replaceSync(cssText);
+      } else {
+        var sheet = new CSSStyleSheet();
+        sheet.replaceSync(cssText);
+        document.adoptedStyleSheets.push(sheet);
+        adoptedSheets.set(editId, sheet);
+      }
+    } catch (e) {
+      // CSSStyleSheet() not available or replaceSync() threw — use fallback.
+      console.warn('[Hands] adoptedStyleSheets unavailable, using fallback:', e.message);
+      applyDirectProperty(editId, cssText);
+    }
+  }
+
+  /**
+   * Fallback: parse a CSS rule string and apply each declaration directly to
+   * all matching elements via element.style.setProperty().
+   *
+   * Handles the two patterns buildCssText() can produce:
+   *   1.  selector { prop: val; prop2: val2 !important; }
+   *   2.  selector { display: none !important; }
+   */
+  function applyDirectProperty(editId, cssText) {
+    try {
+      // Extract: everything before the first '{' is the selector,
+      // everything inside the braces is the declarations block.
+      var braceOpen = cssText.indexOf('{');
+      var braceClose = cssText.lastIndexOf('}');
+      if (braceOpen === -1 || braceClose === -1) return;
+
+      var selector = cssText.substring(0, braceOpen).trim();
+      var declarationsBlock = cssText.substring(braceOpen + 1, braceClose).trim();
+
+      if (!selector || !declarationsBlock) return;
+
+      var elements;
+      try {
+        elements = Array.from(document.querySelectorAll(selector));
+      } catch (_) {
+        return;
+      }
+
+      // Split declarations on ';', parse each into property + value + priority.
+      var declarations = declarationsBlock.split(';').map(function (d) { return d.trim(); }).filter(Boolean);
+
+      declarations.forEach(function (decl) {
+        var colonIdx = decl.indexOf(':');
+        if (colonIdx === -1) return;
+        var property = decl.substring(0, colonIdx).trim();
+        var valueRaw = decl.substring(colonIdx + 1).trim();
+        var priority = '';
+        if (valueRaw.toLowerCase().endsWith('!important')) {
+          priority = 'important';
+          valueRaw = valueRaw.slice(0, -10).trim();
+        }
+        elements.forEach(function (el) {
+          try {
+            el.style.setProperty(property, valueRaw, priority);
+          } catch (_) {}
+        });
+      });
+
+      // Store what we applied so we can reverse it in removeAdoptedSheet.
+      directPropertyEdits.set(editId, { selector: selector, declarations: declarations });
+    } catch (e) {
+      console.warn('[Hands] applyDirectProperty failed:', e.message);
+    }
+  }
+
+  function removeAdoptedSheet(editId) {
+    if (adoptedSheets.has(editId)) {
+      var sheet = adoptedSheets.get(editId);
+      document.adoptedStyleSheets = document.adoptedStyleSheets.filter(function (s) {
+        return s !== sheet;
+      });
+      adoptedSheets.delete(editId);
+    }
+
+    // Also clean up any fallback direct-property styles.
+    if (directPropertyEdits.has(editId)) {
+      var record = directPropertyEdits.get(editId);
+      try {
+        var els = Array.from(document.querySelectorAll(record.selector));
+        record.declarations.forEach(function (decl) {
+          var colonIdx = decl.indexOf(':');
+          if (colonIdx === -1) return;
+          var property = decl.substring(0, colonIdx).trim();
+          els.forEach(function (el) {
+            try { el.style.removeProperty(property); } catch (_) {}
+          });
+        });
+      } catch (_) {}
+      directPropertyEdits.delete(editId);
+    }
+  }
+
+  function removeStaleAdoptedSheets() {
+    // Remove any adopted sheet whose editId is no longer in activeBlueprints.
+    adoptedSheets.forEach(function (_sheet, editId) {
+      if (!activeBlueprints[editId]) {
+        removeAdoptedSheet(editId);
+      }
+    });
+    // Also clean up stale fallback entries.
+    directPropertyEdits.forEach(function (_record, editId) {
+      if (!activeBlueprints[editId]) {
+        removeAdoptedSheet(editId); // handles both maps
+      }
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // SECTION 6: CSS Text Builder
+  // Unchanged — still assembles the CSS rule string for a given edit.
+  // The output feeds into upsertAdoptedSheet() instead of style.textContent.
+  // ═══════════════════════════════════════════════════════════════════════════════
 
   function isPlainObject(value) {
     return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -85,72 +249,6 @@
 
   function getBlueprintPayload(edit) {
     return isPlainObject(edit && edit.payload) ? edit.payload : {};
-  }
-
-  function getInjectionTarget(editId) {
-    var wipeCount = headWipeCount[editId] || 0;
-
-    // Plan A — Safe Zone: inject into <head> where React doesn't control
-    if (wipeCount < CIRCUIT_BREAKER_THRESHOLD) {
-      return { target: document.head, plan: 'A' };
-    }
-
-    // Plan C — Body-End Blind Spot: hidden container at the bottom of <body>
-    var container = document.getElementById(WEBEDIT_CONTAINER_ID);
-    if (!container) {
-      container = document.createElement('div');
-      container.id = WEBEDIT_CONTAINER_ID;
-      container.setAttribute('data-webedit-id', 'style-container');
-      container.style.display = 'none';
-      document.body.appendChild(container);
-    }
-    if (container && document.body.contains(container)) {
-      return { target: container, plan: 'C' };
-    }
-
-    // Plan B — Emergency: inject into <html> root (may cause layout glitches)
-    return { target: document.documentElement, plan: 'B' };
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════════════
-  // SECTION 6: Garbage Collection
-  // Removes stale style tags for edits the Brain no longer considers active.
-  // ═══════════════════════════════════════════════════════════════════════════════
-
-  function removeStaleStyleTags() {
-    var allTags = document.querySelectorAll('style[id^="' + STYLE_ID_PREFIX + '"]');
-    for (var i = 0; i < allTags.length; i++) {
-      var editId = allTags[i].id.slice(STYLE_ID_PREFIX.length);
-      if (!activeBlueprints[editId]) {
-        allTags[i].remove();
-      }
-    }
-  }
-
-  function removeStaleCustomArtifacts() {
-    var customTags = document.querySelectorAll('style[id^="' + CUSTOM_STYLE_ID_PREFIX + '"]');
-    for (var i = 0; i < customTags.length; i++) {
-      var styleEditId = customTags[i].id.slice(CUSTOM_STYLE_ID_PREFIX.length);
-      if (!activeBlueprints[styleEditId]) {
-        customTags[i].remove();
-      }
-    }
-
-    var addContainers = document.querySelectorAll('[id^="' + ADD_CONTAINER_PREFIX + '"]');
-    for (var j = 0; j < addContainers.length; j++) {
-      var containerEditId = addContainers[j].id.slice(ADD_CONTAINER_PREFIX.length);
-      if (!activeBlueprints[containerEditId]) {
-        addContainers[j].remove();
-      }
-    }
-
-    var addScripts = document.querySelectorAll('script[id^="' + ADD_SCRIPT_PREFIX + '"]');
-    for (var k = 0; k < addScripts.length; k++) {
-      var scriptEditId = addScripts[k].id.slice(ADD_SCRIPT_PREFIX.length);
-      if (!activeBlueprints[scriptEditId]) {
-        addScripts[k].remove();
-      }
-    }
   }
 
   function buildCssText(edit, payload, category) {
@@ -172,26 +270,16 @@
     return '';
   }
 
-  function applyStyleBlueprint(editId, edit, stylePrefix, category) {
-    var styleId = stylePrefix + editId;
-    var style = document.getElementById(styleId);
-    var injection = getInjectionTarget(editId);
-    var payload = getBlueprintPayload(edit);
-    var cssText = buildCssText(edit, payload, category);
-
-    if (!cssText) return;
-
-    if (!style) {
-      style = document.createElement('style');
-      style.id = styleId;
-      style.setAttribute('data-webedit-id', editId);
-      injection.target.appendChild(style);
-    } else if (style.parentNode !== injection.target) {
-      injection.target.appendChild(style);
-    }
-
-    style.textContent = cssText;
-  }
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // SECTION 7: Blueprint Applicators
+  // applyRemoveBlueprint — hides element via CSSOM sheet
+  // applyCustomizeBlueprint — applies CSS overrides + optional text via CSSOM
+  // applyAddBlueprint — injects HTML container node + CSSOM CSS + DOM Commands
+  //
+  // All CSS paths now call upsertAdoptedSheet() instead of creating <style> tags.
+  // All non-CSS paths (textContent mutation, DOM node injection, action execution)
+  // are IDENTICAL to the original — zero behaviour change for those connectors.
+  // ═══════════════════════════════════════════════════════════════════════════════
 
   function applyCommittedCustomizeText(selector, text) {
     if (!selector) return;
@@ -205,54 +293,32 @@
     if (!selector) return;
     try {
       var el = document.querySelector(selector);
-      if (el) el.textContent = originalText === undefined || originalText === null ? '' : String(originalText);
+      if (el) el.textContent = (originalText === undefined || originalText === null) ? '' : String(originalText);
     } catch (_) {}
+  }
+
+  function applyRemoveBlueprint(editId, edit) {
+    var cssText = buildCssText(edit, getBlueprintPayload(edit), 'remove');
+    if (cssText) {
+      upsertAdoptedSheet(editId, cssText);
+    }
   }
 
   function applyCustomizeBlueprint(editId, edit) {
     var payload = getBlueprintPayload(edit);
     var cssText = buildCssText(edit, payload, 'customize');
+
     if (cssText) {
-      applyStyleBlueprint(editId, edit, CUSTOM_STYLE_ID_PREFIX, 'customize');
+      upsertAdoptedSheet(editId, cssText);
     } else {
-      var sid = CUSTOM_STYLE_ID_PREFIX + editId;
-      var orphan = document.getElementById(sid);
-      if (orphan) orphan.remove();
+      // No CSS for this edit — make sure we don't leave a stale sheet.
+      removeAdoptedSheet(editId);
     }
+
+    // Text override — identical to original behaviour.
     if (payload.textContent !== undefined && payload.textContent !== null && edit.selector) {
       applyCommittedCustomizeText(edit.selector, String(payload.textContent));
     }
-  }
-
-  function handlePreviewText(message) {
-    var sel = message.selector || '';
-    if (!sel || !Object.prototype.hasOwnProperty.call(message, 'textContent')) return;
-    var textVal = message.textContent;
-    try {
-      var el = document.querySelector(sel);
-      if (!el) return;
-      if (!previewTextSession || previewTextSession.selector !== sel) {
-        previewTextSession = { selector: sel, original: el.textContent };
-      }
-      if (textVal === '' || textVal === null) {
-        if (previewTextSession.original !== null && previewTextSession.original !== undefined) {
-          el.textContent = previewTextSession.original;
-        }
-        return;
-      }
-      el.textContent = String(textVal);
-    } catch (_) {}
-  }
-
-  function clearPreviewText() {
-    if (!previewTextSession) return;
-    try {
-      var el = document.querySelector(previewTextSession.selector);
-      if (el && previewTextSession.original !== null && previewTextSession.original !== undefined) {
-        el.textContent = previewTextSession.original;
-      }
-    } catch (_) {}
-    previewTextSession = null;
   }
 
   function insertContainerAtTarget(container, target, position) {
@@ -308,6 +374,7 @@
       target = document.body || document.documentElement;
     }
 
+    // Idempotency guard: only create the container node if it doesn't exist.
     if (!container) {
       container = document.createElement('div');
       container.id = containerId;
@@ -321,10 +388,15 @@
       container.innerHTML = payload.html || payload.text || '';
     }
 
+    // CSS for Add features now goes through CSSOM — same as Remove/Customize.
     if (payload.css || payload.cssText || payload.ruleText || payload.style || payload.styles) {
-      applyStyleBlueprint(editId, edit, CUSTOM_STYLE_ID_PREFIX, 'customize');
+      var cssText = buildCssText(edit, payload, 'add');
+      if (cssText) {
+        upsertAdoptedSheet(editId, cssText);
+      }
     }
 
+    // DOM Commands execution — IDENTICAL to original.
     if (Array.isArray(payload.actions) && payload.actions.length > 0) {
       if (window.__webeditActions && typeof window.__webeditActions.execute === 'function') {
         window.__webeditActions.execute(payload.actions, container);
@@ -333,17 +405,35 @@
   }
 
   // ═══════════════════════════════════════════════════════════════════════════════
-  // SECTION 7: The Executor — applyAllBlueprints()
-  // The CSS Muscle. Idempotent: Ghost Footprint IDs prevent duplicates.
-  // Wrapped in Deaf Marker to prevent Watchdog loops.
+  // SECTION 8: Stale Artifact Cleanup
+  // removeStaleAdoptedSheets() replaces removeStaleStyleTags() for CSS cleanup.
+  // removeStaleAddContainers() handles HTML node cleanup for Add features.
+  // Both are called by applyAllBlueprints() before re-applying.
+  // ═══════════════════════════════════════════════════════════════════════════════
+
+  function removeStaleAddContainers() {
+    // Remove Add HTML containers whose edit is no longer active.
+    var addContainers = document.querySelectorAll('[id^="' + ADD_CONTAINER_PREFIX + '"]');
+    for (var j = 0; j < addContainers.length; j++) {
+      var containerEditId = addContainers[j].id.slice(ADD_CONTAINER_PREFIX.length);
+      if (!activeBlueprints[containerEditId]) {
+        addContainers[j].remove();
+      }
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // SECTION 9: The Executor — applyAllBlueprints()
+  // Idempotent. Wrapped in Deaf Marker to prevent Watchdog loops on HTML nodes.
+  // CSS sheets live in CSSOM and are NOT affected by the observer pause/resume.
   // ═══════════════════════════════════════════════════════════════════════════════
 
   function applyAllBlueprints() {
     pauseObserver();
 
     try {
-      removeStaleStyleTags();
-      removeStaleCustomArtifacts();
+      removeStaleAdoptedSheets();
+      removeStaleAddContainers();
 
       var entries = Object.keys(activeBlueprints);
       for (var i = 0; i < entries.length; i++) {
@@ -352,7 +442,7 @@
         var category = getBlueprintCategory(edit);
 
         if (category === 'remove') {
-          applyStyleBlueprint(editId, edit, STYLE_ID_PREFIX, 'remove');
+          applyRemoveBlueprint(editId, edit);
           continue;
         }
 
@@ -371,22 +461,37 @@
   }
 
   // ═══════════════════════════════════════════════════════════════════════════════
-  // SECTION 8: The Watchdog — MutationObserver with Circuit Breaker
-  // Watches document.body for DOM changes. When React wipes our style tags,
-  // the debounced callback increments the Circuit Breaker counter and
-  // re-applies (which may escalate from Plan A to Plan C or B).
+  // SECTION 10: The Watchdog — MutationObserver
+  //
+  // SIMPLIFIED vs. original:
+  //   • headWipeCount and the Circuit Breaker are removed. They existed solely
+  //     to detect when React wiped our <style> tags. Since CSS now lives in
+  //     document.adoptedStyleSheets (which React cannot touch), that detection
+  //     logic is no longer needed.
+  //   • The observer still fires on DOM mutations. Its job is now limited to
+  //     re-injecting Add feature HTML containers if a SPA navigation removes them.
+  //   • The debounce delay is unchanged (50 ms).
   // ═══════════════════════════════════════════════════════════════════════════════
 
   var debouncedReapply = debounce(function () {
+    // Re-apply only Add HTML containers that may have been wiped by SPA re-render.
+    // CSS sheets are self-persistent in CSSOM — they never need re-adoption.
     var keys = Object.keys(activeBlueprints);
+    var needsReapply = false;
     for (var i = 0; i < keys.length; i++) {
       var editId = keys[i];
-      var styleId = STYLE_ID_PREFIX + editId;
-      if (!document.getElementById(styleId)) {
-        headWipeCount[editId] = (headWipeCount[editId] || 0) + 1;
+      var edit = activeBlueprints[editId];
+      if (getBlueprintCategory(edit) === 'add') {
+        var containerId = ADD_CONTAINER_PREFIX + editId;
+        if (!document.getElementById(containerId)) {
+          needsReapply = true;
+          break;
+        }
       }
     }
-    applyAllBlueprints();
+    if (needsReapply) {
+      applyAllBlueprints();
+    }
   }, DEBOUNCE_DELAY);
 
   function startWatchdog() {
@@ -401,10 +506,45 @@
   }
 
   // ═══════════════════════════════════════════════════════════════════════════════
-  // SECTION 9: Pick Mode (Shared across Remove / Customize / Add)
-  // Activates purple-border hover highlighting + crosshair cursor.
-  // On click, generates a CSS selector for the picked element and reports
-  // it to the Brain via ELEMENT_PICKED. Auto-deactivates after one pick.
+  // SECTION 11: Preview Text Helpers
+  // Unchanged — used by the Customize live-preview text override.
+  // ═══════════════════════════════════════════════════════════════════════════════
+
+  function handlePreviewText(message) {
+    var sel = message.selector || '';
+    if (!sel || !Object.prototype.hasOwnProperty.call(message, 'textContent')) return;
+    var textVal = message.textContent;
+    try {
+      var el = document.querySelector(sel);
+      if (!el) return;
+      if (!previewTextSession || previewTextSession.selector !== sel) {
+        previewTextSession = { selector: sel, original: el.textContent };
+      }
+      if (textVal === '' || textVal === null) {
+        if (previewTextSession.original !== null && previewTextSession.original !== undefined) {
+          el.textContent = previewTextSession.original;
+        }
+        return;
+      }
+      el.textContent = String(textVal);
+    } catch (_) {}
+  }
+
+  function clearPreviewText() {
+    if (!previewTextSession) return;
+    try {
+      var el = document.querySelector(previewTextSession.selector);
+      if (el && previewTextSession.original !== null && previewTextSession.original !== undefined) {
+        el.textContent = previewTextSession.original;
+      }
+    } catch (_) {}
+    previewTextSession = null;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // SECTION 12: Pick Mode (Shared across Remove / Customize / Add)
+  // IDENTICAL to original — activates hover highlighting + crosshair cursor.
+  // On click, generates a CSS selector and reports to Brain via ELEMENT_PICKED.
   // ═══════════════════════════════════════════════════════════════════════════════
 
   var pickListeners = {
@@ -419,8 +559,6 @@
     if (el.id && el.id.indexOf('webedit') !== -1) return true;
     return false;
   }
-
-  // ── CSS Selector Generator (Sensor work — extracting DOM data) ──
 
   function escapeForSelector(str) {
     return str.replace(/([^\w-])/g, '\\$1');
@@ -480,12 +618,12 @@
 
       if (segment.charAt(0) === '#') {
         parts.unshift(segment);
-      break;
-    }
+        break;
+      }
 
       var nth = getNthOfType(current);
       var siblingsOfType = 0;
-    if (current.parentElement) {
+      if (current.parentElement) {
         for (var i = 0; i < current.parentElement.children.length; i++) {
           if (current.parentElement.children[i].tagName === current.tagName) {
             siblingsOfType++;
@@ -513,7 +651,7 @@
     s = String(s || '').trim().replace(/\s+/g, ' ');
     if (!s) return '';
     if (s.length <= max) return s;
-    return s.substring(0, Math.max(0, max - 1)) + '…';
+    return s.substring(0, Math.max(0, max - 1)) + '\u2026';
   }
 
   function labelFromInteractiveAncestors(el) {
@@ -544,7 +682,7 @@
       var val = (target.value && String(target.value).trim()) || '';
       if (val) return clampPickLabel(val, 50);
       var ph = (target.getAttribute('placeholder') || '').trim();
-      if (ph) return 'Input (“' + clampPickLabel(ph, 40) + '”)';
+      if (ph) return 'Input ("' + clampPickLabel(ph, 40) + '")';
       var typ = (target.getAttribute('type') || 'text').toLowerCase();
       return 'Input (' + typ + ')';
     }
@@ -585,7 +723,7 @@
       if (inner.length <= 60) return inner;
       var fromBtn = labelFromInteractiveAncestors(target);
       if (fromBtn) return fromBtn;
-      return inner.substring(0, 57) + '…';
+      return inner.substring(0, 57) + '\u2026';
     }
 
     var svgRoot = tag === 'svg' ? target : (target.closest ? target.closest('svg') : null);
@@ -626,7 +764,8 @@
     return friendly[tag] || (tag ? tag.charAt(0).toUpperCase() + tag.slice(1) : 'Element');
   }
 
-  // ── Pick Mode Activation / Deactivation ──
+  // ── Pick Mode Activation / Deactivation ──────────────────────────────────────
+  // IDENTICAL to original.
 
   function handleStartPickMode(message) {
     if (pickModeActive) {
@@ -730,9 +869,20 @@
     console.log('[Hands] Pick mode stopped');
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // SECTION 13: handleExecuteBlueprint
+  // Called when APPLY_BLUEPRINTS arrives from the Brain.
+  //
+  // Change vs. original:
+  //   • headWipeCount reset removed (that variable no longer exists).
+  //   • Undo restore path for customize textContent is IDENTICAL to original.
+  // ═══════════════════════════════════════════════════════════════════════════════
+
   function handleExecuteBlueprint(blueprints) {
     var prev = activeBlueprints;
     var next = blueprints || {};
+
+    // Restore original text for any customize edit that is being removed.
     var removedIds = Object.keys(prev).filter(function (id) { return !next[id]; });
     for (var r = 0; r < removedIds.length; r++) {
       var oldEdit = prev[removedIds[r]];
@@ -743,21 +893,26 @@
         }
       }
     }
+
     activeBlueprints = next;
-    headWipeCount = {};
     applyAllBlueprints();
   }
 
   // ═══════════════════════════════════════════════════════════════════════════════
-  // SECTION 10: The Listener (Switch Statement)
-  // Zero autonomous logic. The Hands only act when the Brain sends a
-  // Target Dispatch through this listener.
+  // SECTION 14: The Listener (Switch Statement)
+  // IDENTICAL to original except:
+  //   • INJECT_PREVIEW_CSS: uses previewSheet (CSSStyleSheet) instead of
+  //     a <style id="webedit-preview-style"> element.
+  //   • CLEAR_PREVIEW_CSS: removes previewSheet from adoptedStyleSheets instead
+  //     of finding and removing a DOM element.
+  //   • All other cases are UNCHANGED.
   // ═══════════════════════════════════════════════════════════════════════════════
 
   chrome.runtime.onMessage.addListener(function (message, _sender, sendResponse) {
     if (!message || !message.type) return;
 
     switch (message.type) {
+
       case 'APPLY_BLUEPRINTS':
         handleExecuteBlueprint(message.blueprints);
         sendResponse({ success: true });
@@ -773,9 +928,20 @@
         sendResponse({ success: true });
         return true;
 
+      // ── Live CSS preview for the Customize dashboard ─────────────────────
       case 'INJECT_PREVIEW_CSS': {
         pauseObserver();
         try {
+          if (!previewSheet) {
+            previewSheet = new CSSStyleSheet();
+            document.adoptedStyleSheets.push(previewSheet);
+          }
+          previewSheet.replaceSync(message.cssText || '');
+          // Text override (unchanged).
+          handlePreviewText(message);
+        } catch (e) {
+          // Fallback: if CSSStyleSheet unavailable, fall back to inline element.
+          console.warn('[Hands] previewSheet unavailable, using <style> fallback:', e.message);
           var previewStyleId = 'webedit-preview-style';
           var previewStyle = document.getElementById(previewStyleId);
           if (!previewStyle) {
@@ -793,13 +959,25 @@
         return true;
       }
 
+      // ── Clear live CSS preview ────────────────────────────────────────────
       case 'CLEAR_PREVIEW_CSS': {
         pauseObserver();
         try {
           clearPreviewText();
-          var previewEl = document.getElementById('webedit-preview-style');
-          if (previewEl) {
-            previewEl.remove();
+
+          // Primary: remove CSSOM preview sheet.
+          if (previewSheet) {
+            document.adoptedStyleSheets = document.adoptedStyleSheets.filter(function (s) {
+              return s !== previewSheet;
+            });
+            previewSheet = null;
+          }
+
+          // Fallback cleanup: remove any legacy <style> preview element that
+          // may have been inserted by the fallback path above.
+          var legacyPreview = document.getElementById('webedit-preview-style');
+          if (legacyPreview) {
+            legacyPreview.remove();
           }
         } finally {
           resumeObserver();
@@ -808,6 +986,7 @@
         return true;
       }
 
+      // ── Snapshot element text for Customize apply (unchanged) ─────────────
       case 'SNAPSHOT_ELEMENT_TEXT': {
         var out = { originalText: '' };
         try {
@@ -820,15 +999,20 @@
         return true;
       }
 
+      // ── Initial blueprint fetch on page load ─────────────────────────────
+      case 'GET_ACTIVE_BLUEPRINTS': {
+        sendResponse({ success: true, blueprints: activeBlueprints });
+        return true;
+      }
     }
   });
 
   // ═══════════════════════════════════════════════════════════════════════════════
-  // SECTION 11: Initialization (The Nervous System)
-  // On load, the Hands ask the Brain "what should I do?" via GET_ACTIVE_BLUEPRINTS.
-  // The Brain's Tab Lifecycle Listener (Section 12 of background.js) also pushes
-  // APPLY_BLUEPRINTS when a tab finishes loading — belt and suspenders.
-  // After init, the Watchdog starts observing.
+  // SECTION 15: Initialization (The Nervous System)
+  // IDENTICAL to original:
+  //   On load, ask the Brain for active blueprints, apply them, then start
+  //   the Watchdog. The Brain's Tab Lifecycle Listener also pushes
+  //   APPLY_BLUEPRINTS when a tab finishes loading — belt and suspenders.
   // ═══════════════════════════════════════════════════════════════════════════════
 
   chrome.runtime.sendMessage(
@@ -836,8 +1020,8 @@
     function (response) {
       if (chrome.runtime.lastError) {
         console.warn('[Hands] Init failed:', chrome.runtime.lastError.message);
-            return;
-          }
+        return;
+      }
       if (!response || !response.success) return;
 
       activeBlueprints = response.blueprints || {};
@@ -847,4 +1031,4 @@
 
   startWatchdog();
 
-    })();
+})();

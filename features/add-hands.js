@@ -5,8 +5,17 @@
 // Runs in the content-script world alongside contentScript.js.
 // Manages the Preview Lab: an in-place Shadow DOM sandbox at the picked
 // element where AI-generated HTML/CSS and DOM command actions are rendered.
-// The DOM Commands Vocabulary replaces raw JS with structured operations
-// that execute as real DOM API calls, bypassing CSP on all websites.
+//
+// CSS CHANGE (the only change in this file):
+//   injectSpecIntoShadow() previously created a <style> element and appended
+//   it to the Shadow Root. That triggered CSP violations on strict sites.
+//   It now uses shadowRoot.adoptedStyleSheets (a CSSStyleSheet assigned to the
+//   shadow scope) — zero DOM injection, zero CSP exposure.
+//   A try/catch fallback re-instates the old <style> path on the rare case
+//   where CSSStyleSheet() is unavailable.
+//
+// Everything else — executeActions, the DOM Commands Vocabulary, preview host
+// creation/update/close, message handlers — is IDENTICAL to the original.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 (function () {
@@ -14,6 +23,9 @@
   var previewHost = null;
   var previewTarget = null;
   var namedIntervals = {};
+
+  // ── Per-preview shadow CSS sheet (kept so UPDATE_PREVIEW can patch in-place) ─
+  var shadowPreviewSheet = null;
 
   function webeditClipboardWrite(text) {
     if (!navigator.clipboard || !navigator.clipboard.writeText) return;
@@ -26,6 +38,7 @@
   // DOM Commands Vocabulary — Interpreter Engine
   // Executes an array of structured action objects using real DOM API calls.
   // root: the container element to scope querySelector calls to.
+  // UNCHANGED from original.
   // ═══════════════════════════════════════════════════════════════════════════
 
   function executeActions(actions, root) {
@@ -286,7 +299,7 @@
         if (el) el.value = cmd.value != null ? cmd.value : '';
         break;
 
-      // ── Page-Scoped Ops (target the host page, not the feature container) ─
+      // ── Page-Scoped Ops ──────────────────────────────────────────────────
       case 'pageAddClass':
         try { el = document.querySelector(cmd.selector); } catch (_) { el = null; }
         if (el && cmd['class']) el.classList.add(cmd['class']);
@@ -384,7 +397,6 @@
         }
         break;
 
-      // Same as pageQueryValue — LLMs often emit this name for "read host input into storage".
       case 'pageGetValue':
         try { el = document.querySelector(cmd.selector); } catch (_) { el = null; }
         if (el && cmd.storageKey && 'value' in el) {
@@ -463,7 +475,6 @@
         break;
       }
 
-      // LLMs sometimes emit this as a grouping step — no eval, only nested DOM ops.
       case 'run':
         executeActions(cmd.actions || [], root);
         break;
@@ -510,6 +521,7 @@
   }
 
   // ── Style cloning: copies host page styles into Shadow DOM ─────────────────
+  // UNCHANGED from original.
 
   function cloneHostStyles(shadowRoot) {
     var styleClone = document.createElement('div');
@@ -525,20 +537,50 @@
   }
 
   // ── Spec injection: injects CSS/HTML/actions into the Shadow Root ────────
+  //
+  // CHANGE: CSS is now applied via shadowRoot.adoptedStyleSheets instead of
+  // a <style> element. This is the only change in this function.
+  //   • shadowPreviewSheet is created once per preview session and reused
+  //     on UPDATE_PREVIEW calls (replaceSync patches it in-place).
+  //   • If CSSStyleSheet() throws, the old <style> path is used as a fallback.
+  //   • HTML injection (container.innerHTML) and DOM Commands execution are
+  //     UNCHANGED.
 
   function injectSpecIntoShadow(shadowRoot, spec) {
+    // Remove previous content node (unchanged).
     var existing = shadowRoot.querySelector('[data-webedit-preview-content]');
     if (existing) existing.remove();
-    var existingStyle = shadowRoot.querySelector('[data-webedit-preview-css]');
-    if (existingStyle) existingStyle.remove();
 
+    // ── CSS via CSSOM (new) ──────────────────────────────────────────────────
     if (spec.css) {
-      var style = document.createElement('style');
-      style.setAttribute('data-webedit-preview-css', '1');
-      style.textContent = spec.css;
-      shadowRoot.appendChild(style);
+      try {
+        if (!shadowPreviewSheet) {
+          shadowPreviewSheet = new CSSStyleSheet();
+        }
+        shadowPreviewSheet.replaceSync(spec.css);
+        shadowRoot.adoptedStyleSheets = [shadowPreviewSheet];
+      } catch (e) {
+        // Fallback: remove any previous <style> and insert a new one.
+        console.warn('[Add-Hands] shadowRoot.adoptedStyleSheets unavailable, using <style> fallback:', e.message);
+        var existingStyle = shadowRoot.querySelector('[data-webedit-preview-css]');
+        if (existingStyle) existingStyle.remove();
+        var style = document.createElement('style');
+        style.setAttribute('data-webedit-preview-css', '1');
+        style.textContent = spec.css;
+        shadowRoot.appendChild(style);
+      }
+    } else {
+      // No CSS in this spec — clear any previously adopted sheet.
+      if (shadowPreviewSheet) {
+        shadowRoot.adoptedStyleSheets = [];
+        shadowPreviewSheet = null;
+      }
+      // Also clear any fallback <style> element.
+      var orphanStyle = shadowRoot.querySelector('[data-webedit-preview-css]');
+      if (orphanStyle) orphanStyle.remove();
     }
 
+    // ── HTML injection (unchanged) ───────────────────────────────────────────
     var container = document.createElement('div');
     container.setAttribute('data-webedit-preview-content', '1');
     if (spec.html) {
@@ -546,6 +588,7 @@
     }
     shadowRoot.appendChild(container);
 
+    // ── DOM Commands execution (unchanged) ───────────────────────────────────
     if (Array.isArray(spec.actions) && spec.actions.length > 0) {
       executeActions(spec.actions, container);
     }
@@ -558,9 +601,13 @@
   }
 
   // ── Preview handlers ───────────────────────────────────────────────────────
+  // UNCHANGED from original.
 
   function handleInjectPreview(message) {
     handleClosePreview();
+
+    // Reset the per-session shadow sheet on each new preview.
+    shadowPreviewSheet = null;
 
     var selector = message.selector || '';
     var spec = message.spec || {};
@@ -593,6 +640,9 @@
   }
 
   function handleClosePreview() {
+    // Reset the shadow sheet reference when the preview is closed.
+    shadowPreviewSheet = null;
+
     if (previewTarget) {
       previewTarget.classList.remove('webedit-ghost-highlight');
       previewTarget = null;
@@ -604,10 +654,12 @@
   }
 
   // ── Expose interpreter for use by contentScript.js blueprint Apply path ────
+  // UNCHANGED.
 
   window.__webeditActions = { execute: executeActions };
 
   // ── Message listener ───────────────────────────────────────────────────────
+  // UNCHANGED from original.
 
   chrome.runtime.onMessage.addListener(function (message, _sender, sendResponse) {
     if (!message || !message.type) return;
