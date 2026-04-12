@@ -818,12 +818,39 @@ function updateChatHomeVisibility() {
 
 function renderHistoryPreview(token) {
   const preview = token || {};
+  // Inline style= attributes violate the extension's own CSP (style-src 'self').
+  // We store the color values in data-attributes instead, then apply them via
+  // element.style.setProperty() after the HTML is written to the DOM.
+  // See applyHistoryPreviewSwatchColors() which is called after innerHTML is set.
   return (
     '<div class="webedit-edit-history-preview-card">' +
-      '<div class="webedit-edit-history-preview-swatch" style="--preview-color:' + escapeHtml(preview.color || '#cbd5e1') + '; --preview-accent:' + escapeHtml(preview.accent || '#f8fafc') + ';"></div>' +
+      '<div class="webedit-edit-history-preview-swatch"' +
+        ' data-preview-color="' + escapeHtml(preview.color || '#cbd5e1') + '"' +
+        ' data-preview-accent="' + escapeHtml(preview.accent || '#f8fafc') + '"' +
+      '></div>' +
       '<span>' + escapeHtml(preview.label || 'Preview') + '</span>' +
     '</div>'
   );
+}
+
+/**
+ * After renderEditHistoryView() writes HTML containing preview swatches,
+ * this function queries all swatch elements and sets their CSS custom
+ * properties via element.style.setProperty() — which is CSP-safe because
+ * it mutates an existing element's JS property rather than injecting markup.
+ */
+function applyHistoryPreviewSwatchColors() {
+  if (!els.editHistoryView) return;
+  const swatches = els.editHistoryView.querySelectorAll('.webedit-edit-history-preview-swatch[data-preview-color]');
+  swatches.forEach(function (swatch) {
+    const color = swatch.getAttribute('data-preview-color');
+    const accent = swatch.getAttribute('data-preview-accent');
+    if (color) swatch.style.setProperty('--preview-color', color);
+    if (accent) swatch.style.setProperty('--preview-accent', accent);
+    // Clean up the data-attributes — they are only needed as a transfer mechanism.
+    swatch.removeAttribute('data-preview-color');
+    swatch.removeAttribute('data-preview-accent');
+  });
 }
 
 function renderCategoryIconMarkup(categoryKey) {
@@ -981,6 +1008,8 @@ function renderEditHistoryView() {
   html += '</div>';
 
   els.editHistoryView.innerHTML = html;
+  // Apply swatch CSS custom properties via setProperty (CSP-safe).
+  applyHistoryPreviewSwatchColors();
 }
 
 function isRevisionPickableAction(action) {
