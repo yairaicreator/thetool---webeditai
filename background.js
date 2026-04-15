@@ -20,6 +20,7 @@ function getFeatureHandler(featureName, handlerName) {
   return featureModules[featureName]?.[handlerName] || null;
 }
 
+importScripts('unknown-ops-log.js');
 importScripts('features/remove-brain.js');
 importScripts('features/customize-brain.js');
 importScripts('features/add-action-ops.js');
