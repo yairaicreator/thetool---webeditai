@@ -27,11 +27,38 @@
   // ── Per-preview shadow CSS sheet (kept so UPDATE_PREVIEW can patch in-place) ─
   var shadowPreviewSheet = null;
 
+  // ── Clipboard write with Shadow DOM user-gesture relay ──────────────────────
+  // Problem: navigator.clipboard.writeText() requires a qualifying user gesture.
+  // Inside a Shadow DOM event handler, some browsers do not treat the click
+  // as a qualifying gesture, so the write fails silently.
+  //
+  // Fix: dispatch a CustomEvent ("webedit-clipboard-write") on the real window.
+  // contentScript.js listens for this event on the real document and performs
+  // the actual clipboard write from that trusted context, which always has the
+  // correct gesture state.
+  //
+  // For committed blueprints (executeActions called outside Shadow DOM), the
+  // CustomEvent fires on window in the normal page context — the listener in
+  // contentScript.js still catches it, so clipboard writes always route through
+  // the same trusted path regardless of where the action runs.
   function webeditClipboardWrite(text) {
-    if (!navigator.clipboard || !navigator.clipboard.writeText) return;
-    navigator.clipboard.writeText(text != null ? String(text) : '').catch(function (err) {
-      console.warn('[Add-Hands] Clipboard write failed:', err && err.message ? err.message : err);
-    });
+    var str = text != null ? String(text) : '';
+    // Primary path: relay through the real document context via CustomEvent.
+    try {
+      window.dispatchEvent(new CustomEvent('webedit-clipboard-write', {
+        detail: { text: str },
+        bubbles: false,
+        cancelable: false
+      }));
+      return;
+    } catch (_) {}
+    // Fallback path: direct clipboard write (works outside Shadow DOM, or when
+    // CustomEvent dispatch is unavailable).
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(str).catch(function (err) {
+        console.warn('[Add-Hands] Clipboard write failed:', err && err.message ? err.message : err);
+      });
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -58,6 +85,42 @@
     try { return Array.from(root.querySelectorAll(selector)); } catch (_) { return []; }
   }
 
+  // ── Dual-scope element resolution ────────────────────────────────────────────
+  // Many non-page ops (copyFromSelector, addClass, setStyle, etc.) only search
+  // inside the feature's own container (root). If the LLM meant to target a
+  // host-page element, it should have used the page* variant — but often doesn't.
+  //
+  // These helpers implement a two-stage lookup:
+  //   1. Try inside the feature container (root).
+  //   2. If nothing found, try the real document (host page).
+  // This silently corrects the most common LLM scope mistake without breaking
+  // features whose elements legitimately live inside the container.
+  function dualResolveEl(selector, root) {
+    if (!selector) return null;
+    try {
+      var inner = root.querySelector(selector);
+      if (inner) return inner;
+    } catch (_) {}
+    try {
+      return document.querySelector(selector);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function dualResolveAll(selector, root) {
+    if (!selector) return [];
+    var results = [];
+    try {
+      var innerAll = Array.from(root.querySelectorAll(selector));
+      if (innerAll.length) return innerAll;
+    } catch (_) {}
+    try {
+      results = Array.from(document.querySelectorAll(selector));
+    } catch (_) {}
+    return results;
+  }
+
   function executeSingleAction(cmd, root) {
     if (!cmd || !cmd.op) return;
     var op = cmd.op;
@@ -79,66 +142,70 @@
         break;
 
       // ── Class Manipulation ───────────────────────────────────────────────
+      // Uses dualResolveAll: looks inside the feature container first,
+      // falls back to the host page if the selector matches nothing inside.
       case 'addClass':
-        els = resolveAll(cmd.selector, root);
+        els = dualResolveAll(cmd.selector, root);
         els.forEach(function (el) { if (cmd['class']) el.classList.add(cmd['class']); });
         break;
 
       case 'removeClass':
-        els = resolveAll(cmd.selector, root);
+        els = dualResolveAll(cmd.selector, root);
         els.forEach(function (el) { if (cmd['class']) el.classList.remove(cmd['class']); });
         break;
 
       case 'toggleClass':
-        els = resolveAll(cmd.selector, root);
+        els = dualResolveAll(cmd.selector, root);
         els.forEach(function (el) { if (cmd['class']) el.classList.toggle(cmd['class']); });
         break;
 
       // ── Style Manipulation ───────────────────────────────────────────────
       case 'setStyle':
-        els = resolveAll(cmd.selector, root);
+        els = dualResolveAll(cmd.selector, root);
         els.forEach(function (el) {
           if (cmd.property) el.style[cmd.property] = cmd.value || '';
         });
         break;
 
       // ── Content Manipulation ─────────────────────────────────────────────
+      // All ops use dual-scope resolution: feature container first, host page
+      // as fallback. Covers the common LLM mistake of omitting the "page" prefix.
       case 'setText':
-        el = resolveEl(cmd.selector, root);
+        el = dualResolveEl(cmd.selector, root);
         if (el) el.textContent = cmd.text != null ? cmd.text : '';
         break;
 
       case 'setHTML':
-        el = resolveEl(cmd.selector, root);
+        el = dualResolveEl(cmd.selector, root);
         if (el) el.innerHTML = cmd.html != null ? cmd.html : '';
         break;
 
       case 'setAttr':
-        els = resolveAll(cmd.selector, root);
+        els = dualResolveAll(cmd.selector, root);
         els.forEach(function (el) {
           if (cmd.attr) el.setAttribute(cmd.attr, cmd.value != null ? cmd.value : '');
         });
         break;
 
       case 'appendText':
-        el = resolveEl(cmd.selector, root);
+        el = dualResolveEl(cmd.selector, root);
         if (el) el.textContent = (el.textContent || '') + (cmd.text != null ? cmd.text : '');
         break;
 
       case 'prependText':
-        el = resolveEl(cmd.selector, root);
+        el = dualResolveEl(cmd.selector, root);
         if (el) el.textContent = (cmd.text != null ? cmd.text : '') + (el.textContent || '');
         break;
 
       case 'removeAttr':
-        els = resolveAll(cmd.selector, root);
+        els = dualResolveAll(cmd.selector, root);
         els.forEach(function (el) {
           if (cmd.attr) el.removeAttribute(cmd.attr);
         });
         break;
 
       case 'toggleAttr':
-        els = resolveAll(cmd.selector, root);
+        els = dualResolveAll(cmd.selector, root);
         els.forEach(function (node) {
           if (!cmd.attr) return;
           if (cmd.onValue !== undefined && cmd.offValue !== undefined) {
@@ -156,17 +223,17 @@
 
       // ── Visibility ───────────────────────────────────────────────────────
       case 'show':
-        els = resolveAll(cmd.selector, root);
+        els = dualResolveAll(cmd.selector, root);
         els.forEach(function (el) { el.style.display = ''; });
         break;
 
       case 'hide':
-        els = resolveAll(cmd.selector, root);
+        els = dualResolveAll(cmd.selector, root);
         els.forEach(function (el) { el.style.display = 'none'; });
         break;
 
       case 'toggle':
-        els = resolveAll(cmd.selector, root);
+        els = dualResolveAll(cmd.selector, root);
         els.forEach(function (el) {
           el.style.display = (el.style.display === 'none') ? '' : 'none';
         });
@@ -207,7 +274,7 @@
         var stored = null;
         try { stored = localStorage.getItem(cmd.key); } catch (_) {}
         if (stored != null && cmd.selector) {
-          el = resolveEl(cmd.selector, root);
+          el = dualResolveEl(cmd.selector, root);
           if (el) {
             if (cmd.attr) {
               el.setAttribute(cmd.attr, stored);
@@ -238,7 +305,7 @@
       }
 
       case 'ifHasClass':
-        el = resolveEl(cmd.selector, root);
+        el = dualResolveEl(cmd.selector, root);
         if (el && el.classList.contains(cmd['class'])) {
           executeActions(cmd['then'] || [], root);
         } else {
@@ -247,7 +314,7 @@
         break;
 
       case 'ifVisible':
-        el = resolveEl(cmd.selector, root);
+        el = dualResolveEl(cmd.selector, root);
         if (el && el.style.display !== 'none') {
           executeActions(cmd['then'] || [], root);
         } else {
@@ -288,14 +355,14 @@
 
       // ── Form ─────────────────────────────────────────────────────────────
       case 'getValue':
-        el = resolveEl(cmd.selector, root);
+        el = dualResolveEl(cmd.selector, root);
         if (el && cmd.storageKey) {
           try { localStorage.setItem(cmd.storageKey, el.value || ''); } catch (_) {}
         }
         break;
 
       case 'setValue':
-        el = resolveEl(cmd.selector, root);
+        el = dualResolveEl(cmd.selector, root);
         if (el) el.value = cmd.value != null ? cmd.value : '';
         break;
 
@@ -424,7 +491,10 @@
         break;
 
       case 'copyFromSelector': {
-        var csel = resolveEl(cmd.selector, root);
+        // Dual-scope: look inside the feature container first, then the host page.
+        // This covers the common LLM mistake of writing copyFromSelector when the
+        // target element is on the host page (correct op: pageCopyFromSelector).
+        var csel = dualResolveEl(cmd.selector, root);
         if (!csel) break;
         var cstr = cmd.useValue && 'value' in csel
           ? String(csel.value != null ? csel.value : '')

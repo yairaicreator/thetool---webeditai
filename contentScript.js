@@ -34,6 +34,22 @@
   var directPropertyEdits = new Map();
   var previewSheet = null;
 
+  // ── Clipboard relay listener ─────────────────────────────────────────────────
+  // add-hands.js dispatches a CustomEvent('webedit-clipboard-write') instead of
+  // calling navigator.clipboard.writeText() directly. This is because Shadow DOM
+  // click events do not always qualify as a user gesture for clipboard access.
+  // Listening here (in the real document context) guarantees the write always
+  // has the correct gesture state. Works for both preview (Shadow DOM) and
+  // committed blueprint execution (real DOM).
+  window.addEventListener('webedit-clipboard-write', function (e) {
+    var text = e && e.detail && typeof e.detail.text === 'string' ? e.detail.text : '';
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).catch(function (err) {
+        console.warn('[Hands] Clipboard relay write failed:', err && err.message ? err.message : err);
+      });
+    }
+  });
+
   // ═══════════════════════════════════════════════════════════════════════════════
   // SECTION 2: Constants
   // Only ADD_CONTAINER_PREFIX remains — the HTML container div for injected
@@ -354,6 +370,21 @@
     }
   }
 
+  // ── HTML fingerprint helper ─────────────────────────────────────────────────
+  // Produces a lightweight integer hash of a string.
+  // Used to detect whether a spec's HTML has changed between re-applies.
+  // Not a cryptographic hash — collisions are acceptable; false positives
+  // (rebuild when not needed) are harmless; false negatives are impossible
+  // because we always store the hash immediately after writing innerHTML.
+  function simpleHash(str) {
+    var h = 0;
+    var s = String(str || '');
+    for (var i = 0; i < s.length; i++) {
+      h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
+    }
+    return String(h);
+  }
+
   function applyAddBlueprint(editId, edit) {
     var payload = getBlueprintPayload(edit);
     var containerId = ADD_CONTAINER_PREFIX + editId;
@@ -374,21 +405,25 @@
       target = document.body || document.documentElement;
     }
 
-    // Idempotency guard: only create the container node if it doesn't exist.
+    // ── Step 1: Ensure the container div exists in the DOM ───────────────────
+    // This is the idempotency guard for the container shell itself.
+    // Only the outer wrapper div is created/re-inserted here.
+    // Its inner content is managed separately below.
+    var isNewContainer = false;
     if (!container) {
       container = document.createElement('div');
       container.id = containerId;
       container.setAttribute('data-webedit-id', editId);
       insertContainerAtTarget(container, target, position);
+      isNewContainer = true;
     } else if (!container.parentNode) {
       insertContainerAtTarget(container, target, position);
+      isNewContainer = true;
     }
 
-    if (payload.html || payload.text) {
-      container.innerHTML = payload.html || payload.text || '';
-    }
-
-    // CSS for Add features now goes through CSSOM — same as Remove/Customize.
+    // ── Step 2: CSS — always idempotent via CSSOM ────────────────────────────
+    // upsertAdoptedSheet patches the sheet in-place if it already exists.
+    // This never touches the DOM, never wipes event listeners.
     if (payload.css || payload.cssText || payload.ruleText || payload.style || payload.styles) {
       var cssText = buildCssText(edit, payload, 'add');
       if (cssText) {
@@ -396,10 +431,40 @@
       }
     }
 
-    // DOM Commands execution — IDENTICAL to original.
-    if (Array.isArray(payload.actions) && payload.actions.length > 0) {
-      if (window.__webeditActions && typeof window.__webeditActions.execute === 'function') {
-        window.__webeditActions.execute(payload.actions, container);
+    // ── Step 3: HTML fingerprint guard ───────────────────────────────────────
+    // On the first build (isNewContainer) OR whenever the spec's HTML has
+    // genuinely changed (hash mismatch), rebuild inner content and re-run
+    // actions. On a plain SPA navigation where the spec hasn't changed, skip
+    // both steps — the container's existing DOM, event listeners, input values,
+    // and visible state are all preserved untouched.
+    var specHtml = payload.html || payload.text || '';
+    var currentHash = container.getAttribute('data-webedit-html-hash');
+    var newHash = simpleHash(specHtml + JSON.stringify(payload.actions || []));
+    var specChanged = isNewContainer || (currentHash !== newHash);
+
+    if (specChanged) {
+      // Write HTML fresh.
+      if (specHtml) {
+        container.innerHTML = specHtml;
+      }
+      // Stamp the hash so future re-applies can skip this work.
+      container.setAttribute('data-webedit-html-hash', newHash);
+
+      // ── Step 4: Execute DOM Commands ───────────────────────────────────────
+      // Wrapped in requestAnimationFrame so page* ops that target host-page
+      // elements (pageAddClass, pageQueryText, pageCopyFromSelector, etc.) fire
+      // AFTER the host page's own SPA re-render and initialization timers have
+      // completed. This eliminates the timing race where document.querySelector
+      // returns null because the framework hasn't rebuilt its DOM yet.
+      if (Array.isArray(payload.actions) && payload.actions.length > 0) {
+        var actionsToRun = payload.actions;
+        var containerRef  = container;
+        requestAnimationFrame(function () {
+          if (!containerRef.parentNode) return; // container was removed before frame fired
+          if (window.__webeditActions && typeof window.__webeditActions.execute === 'function') {
+            window.__webeditActions.execute(actionsToRun, containerRef);
+          }
+        });
       }
     }
   }
