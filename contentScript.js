@@ -450,23 +450,81 @@
       // Stamp the hash so future re-applies can skip this work.
       container.setAttribute('data-webedit-html-hash', newHash);
 
-      // ── Step 4: Execute DOM Commands ───────────────────────────────────────
-      // Wrapped in requestAnimationFrame so page* ops that target host-page
-      // elements (pageAddClass, pageQueryText, pageCopyFromSelector, etc.) fire
-      // AFTER the host page's own SPA re-render and initialization timers have
-      // completed. This eliminates the timing race where document.querySelector
-      // returns null because the framework hasn't rebuilt its DOM yet.
+      // ── Step 4: Execute DOM Commands — double-deferred for full reloads ───────
+      //
+      // WHY TWO PASSES:
+      // On a full page reload the host page's framework (React, Vue, etc.) often
+      // runs its own initialization timers AFTER document_idle and AFTER the first
+      // paint frame. Those timers can reset body classes, theme attributes, and
+      // scroll state — overwriting the state our ifStorage/getStorage actions just
+      // set. A single requestAnimationFrame fires too early to win that race.
+      //
+      // Pass 1 — requestAnimationFrame (~16 ms):
+      //   Runs ALL actions immediately so the feature appears correctly from the
+      //   first visible frame. No flash of unstyled or non-functional content.
+      //
+      // Pass 2 — setTimeout 350 ms (fallback / reinforcement):
+      //   Re-runs only the STATE RESTORATION subset of actions — ops that read
+      //   localStorage and apply persisted state to the page (ifStorage, getStorage,
+      //   pageAddClass, pageSetStyle, pageToggleAttr, etc.). This fires well after
+      //   the host framework has fully settled, guaranteeing our state wins.
+      //   The sentinel attribute data-webedit-settled prevents this from running
+      //   on subsequent SPA navigations (where the container already exists and
+      //   state was never wiped in the first place).
       if (Array.isArray(payload.actions) && payload.actions.length > 0) {
         var actionsToRun = payload.actions;
         var containerRef  = container;
+
+        // Pass 1: immediate first frame — full action execution.
         requestAnimationFrame(function () {
-          if (!containerRef.parentNode) return; // container was removed before frame fired
+          if (!containerRef.parentNode) return;
           if (window.__webeditActions && typeof window.__webeditActions.execute === 'function') {
             window.__webeditActions.execute(actionsToRun, containerRef);
           }
         });
+
+        // Pass 2: deferred state restoration — only on first build of this container.
+        // The sentinel prevents re-running on SPA navigations where state is intact.
+        if (!containerRef.getAttribute('data-webedit-settled')) {
+          setTimeout(function () {
+            if (!containerRef.parentNode) return;
+            // Mark settled so subsequent SPA-triggered re-applies skip this pass.
+            containerRef.setAttribute('data-webedit-settled', '1');
+            var stateRestoreOps = filterStateRestoreActions(actionsToRun);
+            if (stateRestoreOps.length > 0) {
+              if (window.__webeditActions && typeof window.__webeditActions.execute === 'function') {
+                window.__webeditActions.execute(stateRestoreOps, containerRef);
+              }
+            }
+          }, 350);
+        }
       }
     }
+  }
+
+  // ── State restoration action filter ─────────────────────────────────────────
+  // Returns only the top-level actions from an array that restore persisted state
+  // from localStorage onto the page. These are the ops most likely to be
+  // overwritten by the host framework's own post-load initialization.
+  // Deep nested actions (inside 'then'/'else' branches) are included as-is
+  // because the conditional logic itself determines whether they run.
+  var STATE_RESTORE_OPS = new Set([
+    'ifStorage', 'getStorage',
+    'ifHasClass', 'ifVisible',
+    'pageAddClass', 'pageRemoveClass', 'pageToggleClass',
+    'pageSetStyle', 'pageToggleAttr',
+    'pageShow', 'pageHide', 'pageToggle',
+    'addClass', 'removeClass', 'toggleClass',
+    'setStyle', 'show', 'hide', 'toggle',
+    'setAttr', 'removeAttr', 'toggleAttr',
+    'setText', 'setHTML'
+  ]);
+
+  function filterStateRestoreActions(actions) {
+    if (!Array.isArray(actions)) return [];
+    return actions.filter(function (cmd) {
+      return cmd && typeof cmd.op === 'string' && STATE_RESTORE_OPS.has(cmd.op);
+    });
   }
 
   // ═══════════════════════════════════════════════════════════════════════════════

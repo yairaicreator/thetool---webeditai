@@ -20,7 +20,7 @@ function getFeatureHandler(featureName, handlerName) {
   return featureModules[featureName]?.[handlerName] || null;
 }
 
-importScripts('features/unknown-ops-log.js');
+importScripts('unknown-ops-log.js');
 importScripts('features/remove-brain.js');
 importScripts('features/customize-brain.js');
 importScripts('features/add-action-ops.js');
@@ -1343,66 +1343,10 @@ async function handleToggleStatus(message) {
   return { success: true, newStatus };
 }
 
-// ─── Pattern Blueprint Helpers ────────────────────────────────────────────────
-// Pre-sequences store blueprints under URL-pattern keys.  These helpers load
-// the pattern store and merge matching blueprints into the active set for any
-// given tab URL.
-
-const PATTERN_BLUEPRINT_KEY = 'webedit_pattern_blueprints';
-
-async function getPatternBlueprintStore() {
-  const result = await chrome.storage.local.get([PATTERN_BLUEPRINT_KEY]);
-  return result[PATTERN_BLUEPRINT_KEY] || {};
-}
-
-function patternMatches(pattern, url) {
-  if (!pattern || !url) return false;
-  // Convert glob-style "*" to regex ".*" and escape everything else.
-  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
-  try {
-    return new RegExp('^' + escaped + '$').test(url);
-  } catch (_) {
-    return false;
-  }
-}
-
-async function getPatternBlueprintsForUrl(url) {
-  const store = await getPatternBlueprintStore();
-  const merged = {};
-  for (const [id, entry] of Object.entries(store)) {
-    if (entry && entry.status === 'active' && patternMatches(entry.urlPattern, url)) {
-      merged[id] = entry;
-    }
-  }
-  return merged;
-}
-
 async function handleGetActiveBlueprints(message) {
   const ledger = await getLedger();
   const active = getActiveBlueprintsForPage(ledger, message.url);
-  // Merge in any pattern blueprints that match this URL.
-  const patternBps = await getPatternBlueprintsForUrl(message.url);
-  const merged = Object.assign({}, active.blueprints, patternBps);
-  return { success: true, pageKey: active.pageKey, blueprints: merged };
-}
-
-async function reapplyPatternBlueprintsToAllTabs() {
-  const store = await getPatternBlueprintStore();
-  if (!Object.keys(store).length) return;
-  let tabs = [];
-  try { tabs = await chrome.tabs.query({}); } catch (_) {}
-  await Promise.all(tabs.map(async function (tab) {
-    if (!tab?.id || !tab?.url?.startsWith('http')) return;
-    try {
-      const ledger = await getLedger();
-      const active = getActiveBlueprintsForPage(ledger, tab.url);
-      const patternBps = await getPatternBlueprintsForUrl(tab.url);
-      const merged = Object.assign({}, active.blueprints, patternBps);
-      if (Object.keys(merged).length) {
-        await dispatchToTab(tab.id, { type: 'APPLY_BLUEPRINTS', pageKey: active.pageKey, blueprints: merged });
-      }
-    } catch (_) {}
-  }));
+  return { success: true, pageKey: active.pageKey, blueprints: active.blueprints };
 }
 
 async function handleSyncLedgerPage(message) {
@@ -1578,11 +1522,6 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
 
         case 'GET_ACTIVE_BLUEPRINTS':
           response = await handleGetActiveBlueprints(message);
-          break;
-
-        case 'REAPPLY_PATTERN_BLUEPRINTS':
-          await reapplyPatternBlueprintsToAllTabs();
-          response = { success: true };
           break;
 
         case 'FETCH_FULL_HISTORY':
@@ -1904,16 +1843,73 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (changeInfo.status !== 'complete' || !tab.url) return;
 
+  // Only handle real website tabs (not extension pages, chrome://, etc.)
+  if (!tab.url.startsWith('http')) return;
+
   try {
+    // ── Step 1: Fast path — read from local ledger ──────────────────────────
     const ledger = await getLedger();
     const active = getActiveBlueprintsForPage(ledger, tab.url);
-    // Merge pattern blueprints (pre-sequences) into the dispatch.
-    const patternBps = await getPatternBlueprintsForUrl(tab.url);
-    const merged = Object.assign({}, active.blueprints, patternBps);
+    const localBlueprints = active.blueprints;
 
-    if (Object.keys(merged).length > 0) {
-      dispatchToTab(tabId, { type: 'APPLY_BLUEPRINTS', pageKey: active.pageKey, blueprints: merged });
+    if (Object.keys(localBlueprints).length > 0) {
+      // Local cache has data — dispatch immediately for instant persistence.
+      dispatchToTab(tabId, {
+        type: 'APPLY_BLUEPRINTS',
+        pageKey: active.pageKey,
+        blueprints: localBlueprints
+      });
+      return;
     }
+
+    // ── Step 2: Cold-start recovery — ledger miss detected ──────────────────
+    // Local ledger has no blueprints for this page. This can happen when:
+    //   (a) Chrome cleared storage under memory pressure
+    //   (b) The service worker restarted cold after browser was closed
+    //   (c) The user opened a new browser profile
+    // Check Supabase for any saved edits for this page.
+
+    const auth = await getSessionInfo();
+    if (!auth) {
+      // Not authenticated — nothing to recover. Silent exit.
+      return;
+    }
+
+    console.log('[Brain] Tab lifecycle: ledger miss for', tab.url, '— attempting Supabase recovery');
+
+    // syncLedgerPageFromSupabase fetches the page's edits from Supabase,
+    // rebuilds the local ledger entry, and returns the active blueprints.
+    let recovered;
+    try {
+      recovered = await syncLedgerPageFromSupabase(tab.url);
+    } catch (syncErr) {
+      // ── Fallback: Supabase unreachable (offline, auth lapsed) ─────────────
+      // Log the failure and exit silently. The feature will reappear on the
+      // next page load once connectivity is restored. This is no worse than
+      // the current baseline behavior.
+      console.warn('[Brain] Cold-start recovery failed (Supabase unreachable):', syncErr.message);
+      return;
+    }
+
+    if (!recovered || !recovered.success) {
+      console.warn('[Brain] Cold-start recovery: sync returned failure for', tab.url);
+      return;
+    }
+
+    const recoveredBlueprints = recovered.blueprints || {};
+    if (Object.keys(recoveredBlueprints).length === 0) {
+      // No edits exist for this page in Supabase either — user hasn't made
+      // any edits here. Normal case, not an error.
+      return;
+    }
+
+    console.log('[Brain] Cold-start recovery: dispatching', Object.keys(recoveredBlueprints).length, 'blueprint(s) for', tab.url);
+    dispatchToTab(tabId, {
+      type: 'APPLY_BLUEPRINTS',
+      pageKey: recovered.pageKey,
+      blueprints: recoveredBlueprints
+    });
+
   } catch (e) {
     console.warn('[Brain] Tab lifecycle dispatch error:', e.message);
   }
