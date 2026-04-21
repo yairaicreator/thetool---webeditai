@@ -5,6 +5,119 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// ─── Gemini retry + fallback ──────────────────────────────────────────────
+// Google's generateContent endpoint returns 503 UNAVAILABLE during demand
+// spikes. We retry the primary model with exponential backoff + jitter, then
+// fall back through a list of alternate models once each before giving up.
+const GEMINI_PRIMARY_MODEL = "gemini-2.5-flash";
+const GEMINI_FALLBACK_MODELS = ["gemini-2.5-pro", "gemini-2.0-flash"];
+const GEMINI_MAX_ATTEMPTS_PER_PRIMARY = 4;
+const GEMINI_RETRY_STATUS = new Set([429, 500, 502, 503, 504]);
+
+class GeminiOverloadError extends Error {
+  status: number;
+  bodyText: string;
+  constructor(status: number, bodyText: string) {
+    super(`Gemini overloaded (${status})`);
+    this.name = "GeminiOverloadError";
+    this.status = status;
+    this.bodyText = bodyText;
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseRetryAfterMs(header: string | null): number | null {
+  if (!header) return null;
+  const asSeconds = Number(header);
+  if (Number.isFinite(asSeconds) && asSeconds >= 0) return asSeconds * 1000;
+  const asDate = Date.parse(header);
+  if (!Number.isNaN(asDate)) return Math.max(0, asDate - Date.now());
+  return null;
+}
+
+async function callGeminiOnce(
+  modelId: string,
+  payload: unknown,
+  apiKey: string,
+): Promise<Response> {
+  return fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelId)}:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+async function callGeminiWithRetry(
+  payload: unknown,
+  apiKey: string,
+): Promise<Response> {
+  const models = [GEMINI_PRIMARY_MODEL, ...GEMINI_FALLBACK_MODELS];
+  let lastStatus = 0;
+  let lastBody = "";
+
+  for (let m = 0; m < models.length; m++) {
+    const modelId = models[m];
+    const maxAttempts = m === 0 ? GEMINI_MAX_ATTEMPTS_PER_PRIMARY : 1;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      let response: Response;
+      try {
+        response = await callGeminiOnce(modelId, payload, apiKey);
+      } catch (networkError) {
+        lastStatus = 0;
+        lastBody = networkError instanceof Error ? networkError.message : String(networkError);
+        console.warn(`[Gemini] network error on ${modelId} attempt ${attempt + 1}: ${lastBody}`);
+        if (attempt < maxAttempts - 1) {
+          const base = Math.min(1000 * Math.pow(2, attempt), 8000);
+          const jittered = base * (0.8 + Math.random() * 0.4);
+          await sleep(jittered);
+        }
+        continue;
+      }
+
+      if (response.ok) {
+        if (m > 0) {
+          console.warn(`[Gemini] succeeded on fallback model ${modelId}`);
+        }
+        return response;
+      }
+
+      const errorText = await response.text().catch(() => "");
+      lastStatus = response.status;
+      lastBody = errorText;
+      console.warn(
+        `[Gemini] ${modelId} attempt ${attempt + 1} returned ${response.status}: ${errorText.slice(0, 300)}`,
+      );
+
+      // Non-retryable → surface immediately to the caller.
+      if (!GEMINI_RETRY_STATUS.has(response.status)) {
+        throw new Error(`Gemini API returned ${response.status}: ${errorText}`);
+      }
+
+      if (attempt < maxAttempts - 1) {
+        const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
+        const base = Math.min(1000 * Math.pow(2, attempt), 8000);
+        const jittered = base * (0.8 + Math.random() * 0.4);
+        const waitMs = retryAfterMs !== null ? retryAfterMs : jittered;
+        await sleep(waitMs);
+      }
+    }
+
+    if (m < models.length - 1) {
+      console.warn(`[Gemini] exhausted ${modelId}, trying fallback ${models[m + 1]}`);
+      await sleep(300);
+    }
+  }
+
+  throw new GeminiOverloadError(lastStatus || 503, lastBody);
+}
+
 /** Must match features/add-action-ops.js KNOWN (edge rejects unknown ops on the spec path). */
 const ALLOWED_ACTION_OPS = new Set([
   "on",
@@ -398,20 +511,7 @@ serve(async (req) => {
       },
     };
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(geminiPayload),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("Gemini API error:", errorText);
-      throw new Error(`Gemini API returned ${response.status}: ${errorText}`);
-    }
-
+    const response = await callGeminiWithRetry(geminiPayload, apiKey);
     const geminiData = await response.json();
     let textOutput = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
@@ -478,6 +578,20 @@ serve(async (req) => {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
+    if (error instanceof GeminiOverloadError) {
+      console.error("Gemini overloaded after retries + fallbacks:", error.status, error.bodyText.slice(0, 300));
+      return new Response(
+        JSON.stringify({
+          error: "Gemini is temporarily unavailable.",
+          code: "GEMINI_UNAVAILABLE",
+          upstreamStatus: error.status,
+        }),
+        {
+          status: 503,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
+    }
     console.error("Error in ai-generate-feature-spec:", error);
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,

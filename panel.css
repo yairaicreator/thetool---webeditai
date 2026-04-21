@@ -1106,6 +1106,63 @@
   cursor: default;
 }
 
+/* Per-message action icons (Copy / Retry / Edit). Subtle until the message
+   is hovered or focused to avoid clutter in long threads. */
+.webedit-msg-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+
+.webedit-chat-message:hover .webedit-msg-actions,
+.webedit-msg-actions:focus-within {
+  opacity: 1;
+}
+
+.webedit-msg-icon-btn {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.webedit-msg-icon-btn:hover {
+  background: rgba(15, 23, 42, 0.08);
+}
+
+.webedit-msg-icon-btn:focus-visible {
+  outline: 2px solid #5b8def;
+  outline-offset: 1px;
+}
+
+.webedit-chat-message-user .webedit-msg-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.webedit-msg-icon-btn svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.webedit-msg-icon-btn.copied {
+  color: #14b8a6;
+}
+
+.webedit-chat-message-user .webedit-msg-icon-btn.copied {
+  color: #5eead4;
+}
+
 .webedit-chat-undo-btn {
   background: #fee2e2;
   color: #991b1b;

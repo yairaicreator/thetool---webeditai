@@ -650,6 +650,50 @@ function ensureSessionId() {
   persistCurrentSession();
 }
 
+// Shared send pipeline used by both the Send button and the per-message Retry
+// icon. Mirrors the gating + validation logic that used to live inline in the
+// Send handler. Caller is responsible for clearing the chat input if it wants.
+async function submitPrompt(text) {
+  const trimmed = typeof text === 'string' ? text.trim() : '';
+  if (!trimmed) return;
+  if (!isAuthenticated()) { showNotification('Please log in to use WebEdit'); return; }
+
+  if (!isLifetimePlan() && !addBrainFlowActive) {
+    addChatMessage('user', trimmed);
+    const exhausted = freeAddUsageCount >= freeAddMax;
+    addChatMessage(
+      'assistant',
+      exhausted
+        ? 'You’ve used your free Add. Use Upgrade in the header for unlimited AI chat and edits.'
+        : 'To use the chat here, start the Add flow: tap Add below, pick where the feature goes on the page, then describe it in this box. Full AI chat for every tool is a Lifetime feature.'
+    );
+    persistCurrentSession();
+    return;
+  }
+
+  addChatMessage('user', trimmed);
+  // Mark with isProcessingMsg so stripProcessingMessages() can reliably remove
+  // it without accidentally removing another message (e.g. ADD_SPEC_READY) that
+  // arrives while the Brain is working.
+  addChatMessage('system', 'Processing…', { isProcessingMsg: true });
+
+  if (!validateBeforeSend('GENERATE_FEATURE', { prompt: trimmed })) return;
+  const resp = await sendToBrain('GENERATE_FEATURE', { prompt: trimmed, feature: selectedFeature });
+
+  if (!resp.success) {
+    // Remove the "Processing…" placeholder, then show the error.
+    stripProcessingMessages();
+    addChatMessage('assistant', resp.error || 'Something went wrong. Please try again with a clearer or smaller step-by-step description.');
+  } else if (selectedFeature !== 'add') {
+    // Non-add features resolve synchronously.
+    stripProcessingMessages();
+    addChatMessage('assistant', 'Feature spec generated. Preview coming soon.');
+  }
+  // For the 'add' feature: ADD_SPEC_READY broadcast (handled in add-panel.js)
+  // will call WebEditPanel.stripProcessingMessages() and then add the spec-ready
+  // message with Apply / Refine / Cancel buttons.  Do NOT pop() here.
+}
+
 function filterOutStaleAddSpecPending(messages) {
   if (!Array.isArray(messages)) return [];
   return messages.filter(function (m) { return !m.addSpecPending; });
@@ -766,6 +810,112 @@ function updateChatHomeVisibility() {
   els.chatHome.hidden = !showHero;
 }
 
+// ─── Per-message action buttons (Copy / Retry / Edit) ────────────────────
+// Copy shows on any "real" message; Retry + Edit show only on user messages.
+// We skip transient placeholders so the Processing…/Applying… rows stay clean.
+const MSG_ICON_SVG = {
+  copy:
+    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    + '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>'
+    + '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>'
+    + '</svg>',
+  retry:
+    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    + '<polyline points="23 4 23 10 17 10"/>'
+    + '<polyline points="1 20 1 14 7 14"/>'
+    + '<path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>'
+    + '</svg>',
+  edit:
+    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    + '<path d="M12 20h9"/>'
+    + '<path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>'
+    + '</svg>',
+  check:
+    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    + '<polyline points="20 6 9 17 4 12"/>'
+    + '</svg>',
+};
+
+function buildMsgIconBtn(kind, ariaLabel, onClick) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'webedit-msg-icon-btn webedit-msg-icon-btn-' + kind;
+  btn.setAttribute('aria-label', ariaLabel);
+  btn.title = ariaLabel;
+  btn.innerHTML = MSG_ICON_SVG[kind] || '';
+  btn.addEventListener('click', function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    try { onClick(btn); } catch (_) {}
+  });
+  return btn;
+}
+
+function copyMessageText(msg, btn) {
+  const text = typeof msg?.content === 'string' ? msg.content : JSON.stringify(msg?.content || '');
+  const showCopied = function () {
+    if (!btn) return;
+    const original = btn.innerHTML;
+    const originalLabel = btn.getAttribute('aria-label') || 'Copy';
+    btn.classList.add('copied');
+    btn.innerHTML = MSG_ICON_SVG.check;
+    btn.setAttribute('aria-label', 'Copied');
+    btn.title = 'Copied';
+    setTimeout(function () {
+      btn.classList.remove('copied');
+      btn.innerHTML = original;
+      btn.setAttribute('aria-label', originalLabel);
+      btn.title = originalLabel;
+    }, 1200);
+  };
+
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(showCopied).catch(function () {
+        fallbackCopy(text);
+        showCopied();
+      });
+      return;
+    }
+  } catch (_) {}
+  fallbackCopy(text);
+  showCopied();
+}
+
+function fallbackCopy(text) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  } catch (_) {}
+}
+
+async function resendUserMessage(idx) {
+  const msg = chatMessages[idx];
+  if (!msg || msg.type !== 'user') return;
+  const text = typeof msg.content === 'string' ? msg.content : '';
+  if (!text.trim()) return;
+  await submitPrompt(text);
+}
+
+function startEditUserMessage(idx) {
+  const msg = chatMessages[idx];
+  if (!msg || msg.type !== 'user' || !els.chatInput) return;
+  const text = typeof msg.content === 'string' ? msg.content : '';
+  els.chatInput.value = text;
+  els.chatInput.focus();
+  try {
+    const end = els.chatInput.value.length;
+    els.chatInput.setSelectionRange(end, end);
+  } catch (_) {}
+  els.chatInput.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
   function renderChatMessages() {
   if (!els.chatMessages || !els.chatThread) return;
   updateChatHomeVisibility();
@@ -789,6 +939,32 @@ function updateChatHomeVisibility() {
     contentEl.className = 'webedit-chat-message-content';
     contentEl.textContent = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content || '');
         msgEl.appendChild(contentEl);
+
+    const isTransient = msg.isProcessingMsg || msg.isApplyingMsg;
+    if (!isTransient) {
+      const actionRow = document.createElement('div');
+      actionRow.className = 'webedit-msg-actions';
+      const capturedIdx = idx;
+
+      const copyBtn = buildMsgIconBtn('copy', 'Copy message', function (btn) {
+        copyMessageText(msg, btn);
+      });
+      actionRow.appendChild(copyBtn);
+
+      if (msg.type === 'user') {
+        const retryBtn = buildMsgIconBtn('retry', 'Resend message', function () {
+          resendUserMessage(capturedIdx);
+        });
+        actionRow.appendChild(retryBtn);
+
+        const editBtn = buildMsgIconBtn('edit', 'Edit message', function () {
+          startEditUserMessage(capturedIdx);
+        });
+        actionRow.appendChild(editBtn);
+      }
+
+      msgEl.appendChild(actionRow);
+    }
 
     if (msg.addSpecPending) {
       const specRow = document.createElement('div');
@@ -1940,48 +2116,13 @@ function registerEventListeners() {
     }));
   });
 
-  // Chat Send
+  // Chat Send — thin wrapper around the shared submitPrompt pipeline so the
+  // Retry icon on user messages can reuse the exact same flow.
   const handleSend = debounce(async function () {
     const text = (els.chatInput?.value || '').trim();
     if (!text) return;
-    if (!isAuthenticated()) { showNotification('Please log in to use WebEdit'); return; }
-
-    if (!isLifetimePlan() && !addBrainFlowActive) {
-      els.chatInput.value = '';
-      addChatMessage('user', text);
-      const exhausted = freeAddUsageCount >= freeAddMax;
-      addChatMessage(
-        'assistant',
-        exhausted
-          ? 'You’ve used your free Add. Use Upgrade in the header for unlimited AI chat and edits.'
-          : 'To use the chat here, start the Add flow: tap Add below, pick where the feature goes on the page, then describe it in this box. Full AI chat for every tool is a Lifetime feature.'
-      );
-      persistCurrentSession();
-      return;
-    }
-
-    els.chatInput.value = '';
-    addChatMessage('user', text);
-    // Mark with isProcessingMsg so stripProcessingMessages() can reliably remove
-    // it without accidentally removing another message (e.g. ADD_SPEC_READY) that
-    // arrives while the Brain is working.
-    addChatMessage('system', 'Processing…', { isProcessingMsg: true });
-
-    if (!validateBeforeSend('GENERATE_FEATURE', { prompt: text })) return;
-    const resp = await sendToBrain('GENERATE_FEATURE', { prompt: text, feature: selectedFeature });
-
-    if (!resp.success) {
-      // Remove the "Processing…" placeholder, then show the error.
-      stripProcessingMessages();
-      addChatMessage('assistant', resp.error || 'Something went wrong. Please try again with a clearer or smaller step-by-step description.');
-    } else if (selectedFeature !== 'add') {
-      // Non-add features resolve synchronously.
-      stripProcessingMessages();
-      addChatMessage('assistant', 'Feature spec generated. Preview coming soon.');
-    }
-    // For the 'add' feature: ADD_SPEC_READY broadcast (handled in add-panel.js)
-    // will call WebEditPanel.stripProcessingMessages() and then add the spec-ready
-    // message with Apply / Refine / Cancel buttons.  Do NOT pop() here.
+    if (els.chatInput) els.chatInput.value = '';
+    await submitPrompt(text);
   });
 
   els.sendBtn?.addEventListener('click', handleSend);

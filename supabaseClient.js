@@ -105,11 +105,24 @@ const FEATURE_SPEC_FETCH_TIMEOUT_MS = 120000; // 2 minutes (Gemini + edge functi
 const FEATURE_SPEC_RETRY_HINT =
   'Seems we faced a small issue. Please try again — describe the feature a bit more clearly, or break it into smaller steps.';
 
+const FEATURE_SPEC_OVERLOAD_HINT =
+  'The AI service is temporarily overloaded. Your prompt is fine — please wait a few seconds and try again.';
+
 function featureSpecFriendlyFailure(detail) {
   if (detail) {
     return FEATURE_SPEC_RETRY_HINT + ' ' + detail;
   }
   return FEATURE_SPEC_RETRY_HINT;
+}
+
+function isOverloadResponse(status, json) {
+  if (status === 503 || status === 429) return true;
+  if (json && typeof json === 'object') {
+    if (json.code === 'GEMINI_UNAVAILABLE') return true;
+    const errStr = typeof json.error === 'string' ? json.error : '';
+    if (/overload|unavailable|high demand|\b503\b/i.test(errStr)) return true;
+  }
+  return false;
 }
 
 async function generateFeatureSpec(prompt, context = null, history = null) {
@@ -166,10 +179,17 @@ async function generateFeatureSpec(prompt, context = null, history = null) {
     }
 
     if (!json) {
+      if (isOverloadResponse(response.status, null)) {
+        return { ok: false, error: FEATURE_SPEC_OVERLOAD_HINT };
+      }
       return {
         ok: false,
         error: featureSpecFriendlyFailure('We got an unexpected response from the server.')
       };
+    }
+
+    if (!response.ok && isOverloadResponse(response.status, json)) {
+      return { ok: false, error: FEATURE_SPEC_OVERLOAD_HINT };
     }
 
     if (!response.ok && typeof json.error === 'string') {
