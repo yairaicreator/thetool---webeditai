@@ -20,7 +20,11 @@ function getFeatureHandler(featureName, handlerName) {
   return featureModules[featureName]?.[handlerName] || null;
 }
 
-importScripts('unknown-ops-log.js');
+// IMPORTANT: every file below lives in ./features/. Do NOT drop the
+// 'features/' prefix on any of these imports — doing so fails the service
+// worker registration with Chrome error "Status code: 15" and breaks the
+// whole extension. This has regressed twice; keep the prefix.
+importScripts('features/unknown-ops-log.js');
 importScripts('features/remove-brain.js');
 importScripts('features/customize-brain.js');
 importScripts('features/add-action-ops.js');

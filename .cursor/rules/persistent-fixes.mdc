@@ -1,0 +1,47 @@
+---
+description: Changes the user requested must persist across refactors and sessions; specific recurring regressions in this repo.
+alwaysApply: true
+---
+
+# Persistent Fixes — Do Not Silently Revert
+
+## Core principle
+
+When the user asks for a change or fix, treat it as **permanent** unless they
+later explicitly ask to revert or replace it.
+
+When touching a file that contains a prior user-requested fix:
+
+- Preserve the fix. If you don't understand why something looks the way it
+  does, ask before rewriting it.
+- Do not "clean up" a line that looks different from its neighbours — it may be
+  a deliberate correction of a prior bug.
+- When doing large refactors that rewrite big sections of a file, re-check
+  every line you produce against the current file on disk. Never replace a
+  line with an earlier (pre-fix) version from memory.
+- If you see a conspicuous inline comment warning about a known regression,
+  never delete or reword it; it's load-bearing.
+
+## Known regressions in this repo
+
+### `background.js` — feature import paths
+
+All feature files live in `./features/`. Every `importScripts` for a feature
+**must** include the `features/` prefix. Missing the prefix causes Chrome to
+fail service-worker registration with `Status code: 15`, which silently breaks
+the entire extension.
+
+```js
+// BAD — regressed twice already
+importScripts('unknown-ops-log.js');
+
+// GOOD
+importScripts('features/unknown-ops-log.js');
+importScripts('features/remove-brain.js');
+importScripts('features/customize-brain.js');
+importScripts('features/add-action-ops.js');
+importScripts('features/add-brain.js');
+```
+
+If you rewrite the top of `background.js`, keep the warning comment above the
+block of feature `importScripts` calls.
