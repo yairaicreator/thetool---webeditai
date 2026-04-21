@@ -57,6 +57,10 @@
           <span class="webedit-sidebar-nav-icon" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M2 14h4M10 8h4M18 16h4"/></svg></span>
           <span class="webedit-sidebar-nav-label">Settings</span>
         </button>
+        <button type="button" class="webedit-sidebar-nav-item" id="webedit-sidebar-nav-presequences" data-sidebar-action="presequences">
+          <span class="webedit-sidebar-nav-icon" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></span>
+          <span class="webedit-sidebar-nav-label">Pre-sequences</span>
+        </button>
       </nav>
       <div class="webedit-history-header">
         <span>Chats</span>
@@ -77,6 +81,9 @@
         <div class="webedit-chat-thread" id="webedit-chat-thread"></div>
       </div>
       <div class="webedit-edit-history-view hidden" id="webedit-edit-history-view"></div>
+
+      <!-- Pre-sequences View -->
+      <div class="webedit-presequences-view hidden" id="webedit-presequences-view" aria-label="Pre-sequences"></div>
 
       <div class="webedit-profile-view hidden" id="webedit-profile-view" aria-label="Profile">
         <header class="webedit-profile-toolbar">
@@ -209,5 +216,6 @@
   <script src="features/remove-panel.js"></script>
   <script src="features/customize-panel.js"></script>
   <script src="features/add-panel.js"></script>
+  <script src="features/presequences-panel.js"></script>
 </body>
 </html>

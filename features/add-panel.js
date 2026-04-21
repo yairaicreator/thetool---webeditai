@@ -118,6 +118,11 @@
       }
 
       case 'ADD_SPEC_READY': {
+        // Strip any "Processing…" placeholder before showing the spec-ready message.
+        // This prevents "Processing…" from persisting alongside the preview buttons.
+        if (window.WebEditPanel && typeof window.WebEditPanel.stripProcessingMessages === 'function') {
+          window.WebEditPanel.stripProcessingMessages();
+        }
         chat(
           'assistant',
           'Feature generated! Review the preview on the page. Click Apply to keep it, Refine to improve it, or Cancel to discard.',
@@ -127,10 +132,11 @@
       }
 
       case 'ADD_COMPLETED': {
-        var text = 'Feature added! You can review it in EditHistory.';
-        if (message.syncFailed) {
-          text = 'Feature added locally \u2014 could not sync to cloud.';
-        }
+        // Sync principle: this message fires ONLY when the Brain has actually
+        // committed the feature — so it is always truthful.
+        var text = message.syncFailed
+          ? '\u2713 Feature applied locally \u2014 cloud sync will retry automatically.'
+          : '\u2713 Feature applied successfully. You can review it in Edit History.';
         notify(text);
         break;
       }

@@ -1343,10 +1343,66 @@ async function handleToggleStatus(message) {
   return { success: true, newStatus };
 }
 
+// ─── Pattern Blueprint Helpers ────────────────────────────────────────────────
+// Pre-sequences store blueprints under URL-pattern keys.  These helpers load
+// the pattern store and merge matching blueprints into the active set for any
+// given tab URL.
+
+const PATTERN_BLUEPRINT_KEY = 'webedit_pattern_blueprints';
+
+async function getPatternBlueprintStore() {
+  const result = await chrome.storage.local.get([PATTERN_BLUEPRINT_KEY]);
+  return result[PATTERN_BLUEPRINT_KEY] || {};
+}
+
+function patternMatches(pattern, url) {
+  if (!pattern || !url) return false;
+  // Convert glob-style "*" to regex ".*" and escape everything else.
+  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+  try {
+    return new RegExp('^' + escaped + '$').test(url);
+  } catch (_) {
+    return false;
+  }
+}
+
+async function getPatternBlueprintsForUrl(url) {
+  const store = await getPatternBlueprintStore();
+  const merged = {};
+  for (const [id, entry] of Object.entries(store)) {
+    if (entry && entry.status === 'active' && patternMatches(entry.urlPattern, url)) {
+      merged[id] = entry;
+    }
+  }
+  return merged;
+}
+
 async function handleGetActiveBlueprints(message) {
   const ledger = await getLedger();
   const active = getActiveBlueprintsForPage(ledger, message.url);
-  return { success: true, pageKey: active.pageKey, blueprints: active.blueprints };
+  // Merge in any pattern blueprints that match this URL.
+  const patternBps = await getPatternBlueprintsForUrl(message.url);
+  const merged = Object.assign({}, active.blueprints, patternBps);
+  return { success: true, pageKey: active.pageKey, blueprints: merged };
+}
+
+async function reapplyPatternBlueprintsToAllTabs() {
+  const store = await getPatternBlueprintStore();
+  if (!Object.keys(store).length) return;
+  let tabs = [];
+  try { tabs = await chrome.tabs.query({}); } catch (_) {}
+  await Promise.all(tabs.map(async function (tab) {
+    if (!tab?.id || !tab?.url?.startsWith('http')) return;
+    try {
+      const ledger = await getLedger();
+      const active = getActiveBlueprintsForPage(ledger, tab.url);
+      const patternBps = await getPatternBlueprintsForUrl(tab.url);
+      const merged = Object.assign({}, active.blueprints, patternBps);
+      if (Object.keys(merged).length) {
+        await dispatchToTab(tab.id, { type: 'APPLY_BLUEPRINTS', pageKey: active.pageKey, blueprints: merged });
+      }
+    } catch (_) {}
+  }));
 }
 
 async function handleSyncLedgerPage(message) {
@@ -1522,6 +1578,11 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
 
         case 'GET_ACTIVE_BLUEPRINTS':
           response = await handleGetActiveBlueprints(message);
+          break;
+
+        case 'REAPPLY_PATTERN_BLUEPRINTS':
+          await reapplyPatternBlueprintsToAllTabs();
+          response = { success: true };
           break;
 
         case 'FETCH_FULL_HISTORY':
@@ -1846,10 +1907,12 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   try {
     const ledger = await getLedger();
     const active = getActiveBlueprintsForPage(ledger, tab.url);
-    const activeBlueprints = active.blueprints;
+    // Merge pattern blueprints (pre-sequences) into the dispatch.
+    const patternBps = await getPatternBlueprintsForUrl(tab.url);
+    const merged = Object.assign({}, active.blueprints, patternBps);
 
-    if (Object.keys(activeBlueprints).length > 0) {
-      dispatchToTab(tabId, { type: 'APPLY_BLUEPRINTS', pageKey: active.pageKey, blueprints: activeBlueprints });
+    if (Object.keys(merged).length > 0) {
+      dispatchToTab(tabId, { type: 'APPLY_BLUEPRINTS', pageKey: active.pageKey, blueprints: merged });
     }
   } catch (e) {
     console.warn('[Brain] Tab lifecycle dispatch error:', e.message);

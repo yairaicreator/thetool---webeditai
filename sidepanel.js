@@ -68,6 +68,8 @@
   profilePrefPrivacy: document.getElementById('webedit-profile-pref-privacy'),
   profileLogout:   document.getElementById('webedit-profile-logout'),
   profileVersion:  document.getElementById('webedit-profile-version'),
+  presequencesView: document.getElementById('webedit-presequences-view'),
+  sidebarNavPresequences: document.getElementById('webedit-sidebar-nav-presequences'),
 };
 
 // ── Keep-Alive Port: holds the service worker alive during long Add flows ────
@@ -357,6 +359,9 @@ function updateSidebarNavActive() {
   }
   if (els.sidebarNavSettings) {
     els.sidebarNavSettings.classList.toggle('is-active', currentPanelMode === 'profile');
+  }
+  if (els.sidebarNavPresequences) {
+    els.sidebarNavPresequences.classList.toggle('is-active', currentPanelMode === 'presequences');
   }
 }
 
@@ -658,49 +663,90 @@ function stripAddSpecPendingFromChat() {
   persistCurrentSession();
 }
 
+/** Removes all messages marked { isProcessingMsg: true } — call before adding spec-ready or error. */
+function stripProcessingMessages() {
+  const next = chatMessages.filter(function (m) { return !m.isProcessingMsg; });
+  if (next.length === chatMessages.length) return;
+  chatMessages = next;
+  renderChatMessages();
+  persistCurrentSession();
+}
+
+/** Removes all messages marked { isApplyingMsg: true } — call after ADD_APPLY resolves. */
+function stripApplyingMessages() {
+  const next = chatMessages.filter(function (m) { return !m.isApplyingMsg; });
+  if (next.length === chatMessages.length) return;
+  chatMessages = next;
+}
+
 async function executeAddSpecAction(idx, action) {
-  if (idx < 0 || idx >= chatMessages.length) return;
-  const msg = chatMessages[idx];
+  // Re-find the pending message by flag rather than relying on a stale index.
+  // This prevents silent failures when the messages array was modified between
+  // the last render and the button click.
+  let resolvedIdx = idx;
+  const msgAtIdx = chatMessages[idx];
+  if (!msgAtIdx || !msgAtIdx.addSpecPending) {
+    // Stale index — scan for the actual pending message.
+    resolvedIdx = chatMessages.findIndex(function (m) { return m.addSpecPending; });
+    if (resolvedIdx < 0) return; // No pending spec — nothing to do.
+  }
+
+  const msg = chatMessages[resolvedIdx];
   if (!msg || !msg.addSpecPending) return;
 
-  chatMessages.splice(idx, 1);
+  chatMessages.splice(resolvedIdx, 1);
 
   if (action === 'apply') {
-    chatMessages.push({ type: 'system', content: 'Applying feature...', timestamp: Date.now() });
+    // Show loading state.
+    chatMessages.push({ type: 'system', content: 'Applying feature…', isApplyingMsg: true, timestamp: Date.now() });
     if (chatMessages.length > MAX_MESSAGES) chatMessages = chatMessages.slice(-MAX_MESSAGES);
     renderChatMessages();
     persistCurrentSession();
+
     const resp = await sendToBrain('ADD_APPLY');
+
+    // Remove the "Applying…" placeholder.
+    stripApplyingMessages();
+
     if (!resp.success) {
-      showNotification('Could not apply feature: ' + (resp.error || 'unknown'));
+      // Sync principle: only show error if something actually went wrong.
+      addChatMessage('assistant', 'Could not apply the feature: ' + (resp.error || 'unknown error') + '. Try again or use Refine to adjust it first.');
     }
+    // On success: ADD_COMPLETED broadcast already fires "Feature applied successfully"
+    // via add-panel.js → notify() path, so we don't double-announce here.
+    renderChatMessages();
+    persistCurrentSession();
     return;
   }
 
   if (action === 'refine') {
     chatMessages.push({
       type: 'assistant',
-      content: 'Describe what you\u2019d like to improve and send it.',
+      content: 'What would you like to improve? Describe the change clearly — the AI will regenerate the feature with your feedback applied.',
       timestamp: Date.now()
     });
     if (chatMessages.length > MAX_MESSAGES) chatMessages = chatMessages.slice(-MAX_MESSAGES);
     renderChatMessages();
     persistCurrentSession();
-    const chatInput = document.getElementById('webedit-chat-input');
-    if (chatInput) {
-      chatInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      chatInput.focus();
-      chatInput.setAttribute('placeholder', 'Describe what to improve...');
+    if (els.chatInput) {
+      els.chatInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      els.chatInput.focus();
+      els.chatInput.placeholder = 'Describe what to improve…';
     }
     return;
   }
 
   if (action === 'cancel') {
-    chatMessages.push({ type: 'system', content: 'Feature cancelled.', timestamp: Date.now() });
+    const cancelResp = await sendToBrain('ADD_CANCEL');
+    // Sync principle: show cancellation message only if Brain confirmed.
+    if (cancelResp.success !== false) {
+      chatMessages.push({ type: 'system', content: 'Feature cancelled. The preview has been removed.', timestamp: Date.now() });
+    } else {
+      chatMessages.push({ type: 'system', content: 'Cancelled.', timestamp: Date.now() });
+    }
     if (chatMessages.length > MAX_MESSAGES) chatMessages = chatMessages.slice(-MAX_MESSAGES);
     renderChatMessages();
     persistCurrentSession();
-    await sendToBrain('ADD_CANCEL');
   }
 }
 
@@ -1459,28 +1505,38 @@ function setPanelMode(mode) {
     currentPanelMode = 'history';
   } else if (mode === 'profile') {
     currentPanelMode = 'profile';
+  } else if (mode === 'presequences') {
+    currentPanelMode = 'presequences';
   } else {
     currentPanelMode = 'chat';
   }
 
-  const showHistory = currentPanelMode === 'history';
-  const showProfile = currentPanelMode === 'profile';
+  const showHistory      = currentPanelMode === 'history';
+  const showProfile      = currentPanelMode === 'profile';
+  const showPresequences = currentPanelMode === 'presequences';
+  const showNonChat      = showHistory || showProfile || showPresequences;
 
   if (els.chatPanel) {
-    els.chatPanel.classList.toggle('webedit-panel-mode-history', showHistory);
-    els.chatPanel.classList.toggle('webedit-panel-mode-profile', showProfile);
+    els.chatPanel.classList.toggle('webedit-panel-mode-history',      showHistory);
+    els.chatPanel.classList.toggle('webedit-panel-mode-profile',      showProfile);
+    els.chatPanel.classList.toggle('webedit-panel-mode-presequences', showPresequences);
   }
 
-  els.blueprintList?.classList.toggle('hidden', showHistory || showProfile);
-  els.chatMessages?.classList.toggle('hidden', showHistory || showProfile);
+  els.blueprintList?.classList.toggle('hidden', showNonChat);
+  els.chatMessages?.classList.toggle('hidden', showNonChat);
   els.editHistoryView?.classList.toggle('hidden', !showHistory || showProfile);
   els.profileView?.classList.toggle('hidden', !showProfile);
-  els.bottomControls?.classList.toggle('hidden', showHistory || showProfile);
-  els.inputContainer?.classList.toggle('hidden', showHistory || showProfile);
-  els.mainContent?.classList.toggle('history-mode', showHistory || showProfile);
+  els.presequencesView?.classList.toggle('hidden', !showPresequences);
+  els.bottomControls?.classList.toggle('hidden', showNonChat);
+  els.inputContainer?.classList.toggle('hidden', showNonChat);
+  els.mainContent?.classList.toggle('history-mode', showNonChat);
 
   if (showHistory) {
     loadEditHistory(false);
+  } else if (showPresequences) {
+    if (window.WebEditPresequences && typeof window.WebEditPresequences.render === 'function') {
+      window.WebEditPresequences.render();
+    }
   } else if (!showProfile) {
     renderChatMessages();
     renderBlueprintList();
@@ -1802,6 +1858,13 @@ function registerEventListeners() {
     toggleHistorySidebar(false);
   });
 
+  els.sidebarNavPresequences?.addEventListener('click', function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    setPanelMode('presequences');
+    toggleHistorySidebar(false);
+  });
+
   els.profileBack?.addEventListener('click', function (e) {
     e.preventDefault();
     closeProfile();
@@ -1899,16 +1962,26 @@ function registerEventListeners() {
 
     els.chatInput.value = '';
     addChatMessage('user', text);
-    addChatMessage('system', 'Processing...');
+    // Mark with isProcessingMsg so stripProcessingMessages() can reliably remove
+    // it without accidentally removing another message (e.g. ADD_SPEC_READY) that
+    // arrives while the Brain is working.
+    addChatMessage('system', 'Processing…', { isProcessingMsg: true });
 
     if (!validateBeforeSend('GENERATE_FEATURE', { prompt: text })) return;
     const resp = await sendToBrain('GENERATE_FEATURE', { prompt: text, feature: selectedFeature });
-    chatMessages.pop();
+
     if (!resp.success) {
+      // Remove the "Processing…" placeholder, then show the error.
+      stripProcessingMessages();
       addChatMessage('assistant', resp.error || 'Something went wrong. Please try again with a clearer or smaller step-by-step description.');
     } else if (selectedFeature !== 'add') {
+      // Non-add features resolve synchronously.
+      stripProcessingMessages();
       addChatMessage('assistant', 'Feature spec generated. Preview coming soon.');
     }
+    // For the 'add' feature: ADD_SPEC_READY broadcast (handled in add-panel.js)
+    // will call WebEditPanel.stripProcessingMessages() and then add the spec-ready
+    // message with Apply / Refine / Cancel buttons.  Do NOT pop() here.
   });
 
   els.sendBtn?.addEventListener('click', handleSend);
@@ -2032,6 +2105,7 @@ registerEventListeners();
 window.WebEditPanel = {
   showNotification: showNotification,
   addChatMessage: addChatMessage,
+  stripProcessingMessages: stripProcessingMessages,
   openCustomizeDashboard: null,
   closeCustomizeDashboard: null,
 };
