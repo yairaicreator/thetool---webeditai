@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"C:\\\\WebEdit AI\\\\dev\\\\Extension - WebEdit AI\\\\.claude\\\\worktrees\\\\charming-hellman-d76bf8\" -Force)",
+      "Bash(Select-Object Name, FullName, PSIsContainer)",
+      "Bash(Format-Table -AutoSize)",
+      "Bash(ls \"C:\\\\Users\\\\USER\\\\.claude\\\\projects\")",
+      "Bash(ls \"C:\\\\WebEdit AI\\\\dev\\\\Extension - WebEdit AI\\\\\" --exclude node_modules 2>/dev/null || dir \"C:\\\\WebEdit AI\\\\dev\\\\Extension - WebEdit AI\\\\\" /B /A-D 2>/dev/null)",
+      "Bash(dir \"C:\\\\WebEdit AI\\\\dev\\\\Extension - WebEdit AI\\\\\" /B /A-D)"
+    ]
+  }
+}
